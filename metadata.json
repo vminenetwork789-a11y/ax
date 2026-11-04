@@ -1,0 +1,8 @@
+{
+  "name": "FRACTAL FLOW",
+  "description": "Imported from GitHub: vminenetwork789-a11y/wealthlifecyclevv",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
