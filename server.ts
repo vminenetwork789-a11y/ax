@@ -185,7 +185,7 @@ const DEFAULT_SYSTEM_CONFIG = {
   contractAddress:
     process.env.OVERRIDE_CONTRACT_ADDRESS ||
     process.env.CONTRACT_ADDRESS ||
-    '0x07953Ba884E2D05Fa543eF7EAec426C8De6d58fF',
+    '0x7FA05f1aEb74209612aEA56472d9A2e2e9D44073',
   usdtAddress: process.env.USDT_ADDRESS || '0x05f24E1F598DF1aE8d0B424ce978f8ea33bB752b',
   chainId: Number(process.env.CHAIN_ID || 97),
   networkName: process.env.NETWORK_NAME || 'BNB Smart Chain Testnet',
@@ -216,6 +216,7 @@ const SERVER_LEGACY_CONTRACTS = new Set([
   '0x2df74a86df9d32c735755e1f448a98f4cda456c5',
   '0x01fed3686a284dcac8ef7277c4657a2aa12fab54',
   '0xda7acd2ca8967e8015e0931e652d4b7ee5e1c436',
+  '0x07953ba884e2d05fa543ef7eaec426c8de6d58ff',
 ]);
 
 const SERVER_LEGACY_USDT = new Set([
