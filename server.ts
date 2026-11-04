@@ -8,9 +8,156 @@ import { exec } from 'child_process';
 import { Queue, Worker, type Job, QueueEvents } from 'bullmq';
 import Redis from 'ioredis';
 import { EventEmitter } from 'events';
+import http from 'http';
+import { WebSocketServer, WebSocket } from 'ws';
 
 const queueEventsEmitter = new EventEmitter();
 queueEventsEmitter.setMaxListeners(200);
+
+let wssServer: WebSocketServer | null = null;
+
+export function setWssServer(wss: WebSocketServer) {
+  wssServer = wss;
+}
+
+export function getAggregatedTransactions(addressFilter?: string) {
+  const transactions: any[] = [];
+  const lowerAddr = addressFilter ? addressFilter.toLowerCase() : null;
+
+  try {
+    // 1. Registrations
+    const r1Nodes = matrixDB.nodesByRank[1] || [];
+    r1Nodes.forEach((node) => {
+      const ownerLower = (node.owner || '').toLowerCase();
+      if (lowerAddr && ownerLower !== lowerAddr) return;
+
+      const nodeAny = node as any;
+      const isLeft = node.parentId === 0 ? true : nodeAny.isLeft ?? true;
+
+      transactions.push({
+        id: `reg-r1-${node.id}`,
+        category: 'REGISTER',
+        titleTh: node.isClone
+          ? `สร้างรหัสโคลน Clone #${node.id} (Rank 1)`
+          : node.isExtraId
+          ? `สร้างรหัสพิเศษ Extra ID #${node.id} (Rank 1)`
+          : `สมัครสมาชิก / สร้างรหัสหลัก Main ID #${node.id} (Rank 1)`,
+        titleEn: node.isClone
+          ? `Clone Created #${node.id} (Rank 1)`
+          : node.isExtraId
+          ? `Extra ID Created #${node.id} (Rank 1)`
+          : `Member Registration Main ID #${node.id} (Rank 1)`,
+        userAddress: node.owner,
+        mainNodeId: node.originMainId || node.id,
+        rank: 1,
+        amountUsdt: 5.0,
+        timestamp: nodeAny.createdAt || matrixDB.lastSyncedAt || new Date().toISOString(),
+        blockNumber: nodeAny.blockNumber,
+        detailsTh: `ต่อสายใต้ อัพไลน์ #${node.parentId} (${isLeft ? '↙ ฝั่งซ้าย' : '↘ ฝั่งขวา'}) • ผู้แนะนำ: ${node.directSponsor ? `${node.directSponsor.slice(0, 6)}...${node.directSponsor.slice(-4)}` : 'Root'}`,
+        detailsEn: `Placed under Parent #${node.parentId} (${isLeft ? 'Left' : 'Right'}) • Sponsor: ${node.directSponsor ? `${node.directSponsor.slice(0, 6)}...${node.directSponsor.slice(-4)}` : 'Root'}`,
+      });
+    });
+
+    // 2. Upgrades
+    const upgrades = matrixDB.upgradeLogs || [];
+    upgrades.forEach((u) => {
+      const ownerLower = (u.owner || '').toLowerCase();
+      if (lowerAddr && ownerLower !== lowerAddr) return;
+
+      const uCost =
+        parseFloat(u.rankPriceUsdt) ||
+        (u as any).costUsdt ||
+        RANK_PRICES_USDT[Number(u.toRank) - 1] ||
+        10;
+
+      transactions.push({
+        id: `upg-${u.id || `${u.mainNodeId}-${u.toRank}`}`,
+        category: 'UPGRADE',
+        titleTh: `อัพเกรดผังแรงค์ Main ID #${u.mainNodeId} → Rank ${u.toRank}`,
+        titleEn: `Rank Upgrade Main ID #${u.mainNodeId} → Rank ${u.toRank}`,
+        userAddress: u.owner,
+        mainNodeId: Number(u.mainNodeId),
+        rank: Number(u.toRank),
+        amountUsdt: uCost,
+        timestamp: u.createdAt || matrixDB.lastSyncedAt || new Date().toISOString(),
+        txHash: u.txHash,
+        detailsTh: `เลื่อนแรงค์จาก R${u.fromRank} ไปยัง R${u.toRank} (${uCost.toFixed(2)} USDT)`,
+        detailsEn: `Upgraded from R${u.fromRank} to R${u.toRank} (${uCost.toFixed(2)} USDT)`,
+      });
+    });
+
+    // 3. Payouts / Rewards
+    const rewards = matrixDB.rewardLogs || [];
+    rewards.forEach((r, idx) => {
+      const recipientLower = (r.recipient || '').toLowerCase();
+      if (lowerAddr && recipientLower !== lowerAddr) return;
+
+      const amt = parseFloat(r.amount) || 0;
+      const rTime =
+        r.createdAt ||
+        (r as any).timestamp ||
+        matrixDB.lastSyncedAt ||
+        new Date().toISOString();
+
+      transactions.push({
+        id: `rew-${r.id || idx}`,
+        category: 'PAYOUT',
+        titleTh: `รับโบนัส / ค่าคอมมิชชั่น (${r.rewardType})`,
+        titleEn: `Payout / Reward (${r.rewardType})`,
+        userAddress: r.recipient,
+        mainNodeId: Number(r.toNodeId || 1),
+        rank: Number(r.rank || 1),
+        amountUsdt: amt,
+        timestamp: rTime,
+        blockNumber: r.blockNumber,
+        detailsTh: `ได้รับจาก Node #${r.fromNodeId} → Node #${r.toNodeId} (Rank ${r.rank})`,
+        detailsEn: `Received from Node #${r.fromNodeId} → Node #${r.toNodeId} (Rank ${r.rank})`,
+      });
+    });
+
+    transactions.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  } catch (e) {
+    console.warn('[getAggregatedTransactions error]:', e);
+  }
+
+  return transactions;
+}
+
+const sseClients = new Set<Response>();
+
+export function broadcastAllMatrixUpdates() {
+  try {
+    const transactions = getAggregatedTransactions();
+    const payload = JSON.stringify({
+      type: 'ALL_MATRIX_UPDATED',
+      lastSyncedAt: matrixDB.lastSyncedAt,
+      rankCounts: matrixDB.rankCounts,
+      nodesByRank: matrixDB.nodesByRank,
+      contractAddress: CONTRACT_ADDRESS,
+      transactions,
+      rewardLogs: matrixDB.rewardLogs || [],
+      upgradeLogs: matrixDB.upgradeLogs || [],
+    });
+
+    if (wssServer) {
+      wssServer.clients.forEach((client) => {
+        if (client.readyState === 1) { // 1 = OPEN
+          client.send(payload);
+        }
+      });
+    }
+
+    sseClients.forEach((res) => {
+      try {
+        res.write(`data: ${payload}\n\n`);
+      } catch {
+        sseClients.delete(res);
+      }
+    });
+  } catch (err) {
+    console.warn('[WS/SSE Broadcast Error]:', err);
+  }
+}
 
 dotenv.config();
 
@@ -569,6 +716,7 @@ let matrixDB: PersistentMatrixDatabase = loadMatrixDBFromDisk();
 let dbWriteTimer: NodeJS.Timeout | null = null;
 
 function saveMatrixDBToDisk(immediate = false) {
+  broadcastAllMatrixUpdates();
   const writeNow = () => {
     try {
       const dir = path.dirname(MATRIX_DB_FILE_PATH);
@@ -6545,6 +6693,49 @@ async function startApp() {
     }
   });
 
+  app.get('/api/stream', (req: Request, res: Response) => {
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.flushHeaders?.();
+
+    sseClients.add(res);
+
+    try {
+      // Send 2KB padding comment to force Cloud Run / Nginx reverse proxies to flush SSE immediately
+      res.write(`: ${' '.repeat(2048)}\n\n`);
+      const initPayload = JSON.stringify({
+        type: 'INIT_MATRIX',
+        lastSyncedAt: matrixDB.lastSyncedAt,
+        rankCounts: matrixDB.rankCounts,
+        nodesByRank: matrixDB.nodesByRank,
+        contractAddress: CONTRACT_ADDRESS,
+        transactions: getAggregatedTransactions(),
+        rewardLogs: matrixDB.rewardLogs || [],
+        upgradeLogs: matrixDB.upgradeLogs || [],
+      });
+      res.write(`data: ${initPayload}\n\n`);
+    } catch (e) {
+      console.warn('[SSE Init Error]:', e);
+    }
+
+    const heartbeatTimer = setInterval(() => {
+      try {
+        res.write(`: heartbeat ${Date.now()}\n\n`);
+      } catch {
+        clearInterval(heartbeatTimer);
+        sseClients.delete(res);
+      }
+    }, 15000);
+
+    req.on('close', () => {
+      clearInterval(heartbeatTimer);
+      sseClients.delete(res);
+    });
+  });
+
   app.all('/api/*', (_req: Request, res: Response) => {
     res.status(404).json({ success: false, error: 'API route not found' });
   });
@@ -6564,8 +6755,68 @@ async function startApp() {
     app.use(vite.middlewares);
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Backend API Server running on port ${PORT} (Database-First Mode)`);
+  const server = http.createServer(app);
+
+  const wss = new WebSocketServer({ server, path: '/ws' });
+  setWssServer(wss);
+
+  wss.on('connection', (ws: WebSocket) => {
+    console.log('⚡ [WebSocket] Client connected for Real-time Binary Tree Matrix');
+
+    try {
+      ws.send(
+        JSON.stringify({
+          type: 'INIT_MATRIX',
+          lastSyncedAt: matrixDB.lastSyncedAt,
+          rankCounts: matrixDB.rankCounts,
+          nodesByRank: matrixDB.nodesByRank,
+          contractAddress: CONTRACT_ADDRESS,
+          transactions: getAggregatedTransactions(),
+          rewardLogs: matrixDB.rewardLogs || [],
+          upgradeLogs: matrixDB.upgradeLogs || [],
+        })
+      );
+    } catch (err) {
+      console.warn('[WS] Error sending initial payload:', err);
+    }
+
+    ws.on('message', (message: string) => {
+      try {
+        const payload = JSON.parse(message.toString());
+        if (payload.type === 'GET_RANK_TREE') {
+          const rank = Number(payload.rank) || 1;
+          ws.send(
+            JSON.stringify({
+              type: 'RANK_TREE_DATA',
+              rank,
+              nodes: matrixDB.nodesByRank[rank] || [],
+              rankCount: matrixDB.rankCounts[rank] || 0,
+              lastSyncedAt: matrixDB.lastSyncedAt,
+            })
+          );
+        } else if (payload.type === 'GET_TRANSACTIONS') {
+          ws.send(
+            JSON.stringify({
+              type: 'TRANSACTIONS_DATA',
+              lastSyncedAt: matrixDB.lastSyncedAt,
+              transactions: getAggregatedTransactions(payload.address),
+              rewardLogs: matrixDB.rewardLogs || [],
+              upgradeLogs: matrixDB.upgradeLogs || [],
+            })
+          );
+        }
+      } catch (err) {
+        // ignore invalid json payload
+      }
+    });
+
+    ws.on('error', (e) => {
+      console.warn('[WS Client Error]:', e);
+    });
+  });
+
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log(`Backend API Server + WebSocket running on port ${PORT} (Database-First Mode)`);
     initPlacementQueue().catch((err) => console.warn('Queue init error:', err));
     syncAllMatrixDatabase(CONTRACT_ADDRESS, true)
       .then(() => {

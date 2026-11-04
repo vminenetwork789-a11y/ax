@@ -16,6 +16,7 @@ import {
 } from '../contracts/config';
 import { calculateMainIdVaultPools } from '../utils/vaultPools';
 import { useMatrixAutoReconnect } from '../hooks/useMatrixAutoReconnect';
+import { useMatrixWebSocket } from '../hooks/useMatrixWebSocket';
 import {
   RefreshCw,
   Search,
@@ -607,6 +608,12 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
   currentUserRank = 1,
 }) => {
   const [selectedRank, setSelectedRank] = useState<number>(1);
+  const {
+    isConnected: isWsConnected,
+    retryCount: wsRetryCount,
+    nextRetryInSeconds: wsNextRetrySec,
+    manualReconnect: wsManualReconnect,
+  } = useMatrixWebSocket(selectedRank);
   const [rankNodeCounts, setRankNodeCounts] = useState<Record<number, number>>({});
   const [focusRootId, setFocusRootId] = useState<number>(1);
   const [navigationHistory, setNavigationHistory] = useState<number[]>([1]);
@@ -5316,11 +5323,34 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           )}
         </div>
 
-        {/* Row 2: Contract Address Badge & Auto-Extend Status */}
+        {/* Row 2: Contract Address Badge, Live WebSocket Badge & Auto-Extend Status */}
         <div className="flex items-center gap-2 flex-wrap">
           <span className="inline-flex items-center text-[11px] font-mono text-emerald-400 bg-emerald-950/40 border border-emerald-500/30 px-2.5 py-0.5 rounded-lg">
             Contract: {(contractAddress || CONTRACT_ADDRESS).slice(0, 6)}...{(contractAddress || CONTRACT_ADDRESS).slice(-4)}
           </span>
+          <button
+            type="button"
+            onClick={wsManualReconnect}
+            className={`inline-flex items-center text-[11px] font-semibold px-2.5 py-0.5 rounded-lg border gap-1.5 transition cursor-pointer ${
+              isWsConnected
+                ? 'bg-emerald-950/50 border-emerald-500/40 text-emerald-300 hover:bg-emerald-900/60'
+                : 'bg-amber-950/50 border-amber-500/40 text-amber-300 animate-pulse hover:bg-amber-900/60'
+            }`}
+            title="คลิกเพื่อสั่งรีคอนเนกต์สตรีมสดใหม่ทันที"
+          >
+            <span
+              className={`w-2 h-2 rounded-full ${
+                isWsConnected ? 'bg-emerald-400 animate-ping' : 'bg-amber-400'
+              }`}
+            />
+            <span>
+              {isWsConnected
+                ? '⚡ Real-time Stream: เชื่อมต่อสด'
+                : wsRetryCount > 0
+                ? `🔄 ลองใหม่รอบที่ #${wsRetryCount} (อีก ${wsNextRetrySec}s)...`
+                : '🔄 เชื่อมต่อ Real-time Stream...'}
+            </span>
+          </button>
           <button
             type="button"
             onClick={() => setAutoFollowNewNodes((prev) => !prev)}

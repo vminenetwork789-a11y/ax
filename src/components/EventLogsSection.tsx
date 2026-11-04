@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { ethers } from 'ethers';
 import { RewardLog, RankUpgradeLog } from '../types';
+import { useMatrixWebSocket } from '../hooks/useMatrixWebSocket';
 import {
   CONTRACT_ADDRESS,
   USDT_ADDRESS,
@@ -151,6 +152,13 @@ export interface TransactionRecord {
 }
 
 export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, account }) => {
+  const {
+    isConnected: isWsConnected,
+    retryCount: wsRetryCount,
+    nextRetryInSeconds: wsNextRetrySec,
+    transactions: wsTransactions,
+    manualReconnect: wsManualReconnect,
+  } = useMatrixWebSocket(1);
   const [activeTab, setActiveTab] = useState<'transactions' | 'per_id' | 'rewards' | 'upgrades'>('transactions');
   const [transactions, setTransactions] = useState<TransactionRecord[]>([]);
   const [txCategoryFilter, setTxCategoryFilter] = useState<'all' | 'REGISTRATION' | 'UPGRADE' | 'PAYOUT'>('all');
@@ -687,6 +695,37 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
     const list: TransactionRecord[] = [];
     const seenIds = new Set<string>();
 
+    // 0. Real-Time Transactions pushed over WebSocket Stream
+    if (wsTransactions && wsTransactions.length > 0) {
+      wsTransactions.forEach((tx: any) => {
+        const cat = String(tx.category || '').toUpperCase();
+        const catNorm = cat.includes('REG')
+          ? 'REGISTRATION'
+          : cat.includes('UPG')
+          ? 'UPGRADE'
+          : 'PAYOUT';
+        const key = tx.id || `${catNorm}-${tx.mainNodeId}-${tx.timestamp}`;
+        if (!seenIds.has(key)) {
+          seenIds.add(key);
+          list.push({
+            id: key,
+            category: catNorm as any,
+            titleTh: tx.titleTh || 'รายการธุรกรรม',
+            titleEn: tx.titleEn || 'Transaction Item',
+            userAddress: tx.userAddress || '',
+            mainNodeId: Number(tx.mainNodeId || 1),
+            rank: Number(tx.rank || 1),
+            amountUsdt: Number(tx.amountUsdt || 0),
+            timestamp: tx.timestamp || new Date().toISOString(),
+            blockNumber: tx.blockNumber,
+            txHash: tx.txHash,
+            detailsTh: tx.detailsTh || '',
+            detailsEn: tx.detailsEn || '',
+          });
+        }
+      });
+    }
+
     // 1. Transactions from API endpoint
     transactions.forEach((tx) => {
       if (!seenIds.has(tx.id)) {
@@ -771,7 +810,7 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
 
     list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
     return list;
-  }, [transactions, perIdReports, upgradeLogs, logs, lastSyncedAt]);
+  }, [wsTransactions, transactions, perIdReports, upgradeLogs, logs, lastSyncedAt]);
 
   const filteredTransactions = combinedTransactions.filter((t) => {
     if (onlyMyWallet && account) {
@@ -850,6 +889,31 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
             <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
               Chain ID: 97 • Local Indexer DB
             </span>
+            <button
+              type="button"
+              onClick={wsManualReconnect}
+              className={`inline-flex items-center gap-1.5 text-[10px] font-semibold px-2.5 py-0.5 rounded-full border transition cursor-pointer ${
+                isWsConnected || syncStatus === 'connected'
+                  ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300 hover:bg-emerald-900/60'
+                  : 'bg-amber-950/60 border-amber-500/40 text-amber-300 animate-pulse hover:bg-amber-900/60'
+              }`}
+              title="คลิกเพื่อสั่งซิงค์สตรีมประวัติธุรกรรมสดใหม่ทันที"
+            >
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  isWsConnected || syncStatus === 'connected'
+                    ? 'bg-emerald-400 animate-ping'
+                    : 'bg-amber-400'
+                }`}
+              />
+              <span>
+                {isWsConnected || syncStatus === 'connected'
+                  ? '⚡ WebSocket Live Stream: เชื่อมต่อสด'
+                  : wsRetryCount > 0
+                  ? `🔄 ลองใหม่รอบที่ #${wsRetryCount} (อีก ${wsNextRetrySec}s)...`
+                  : '🔄 เชื่อมต่อ Live Tx Stream...'}
+              </span>
+            </button>
             <span className="inline-flex items-center gap-1 text-[10px] font-mono px-2.5 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/35 font-bold">
               <Clock className="w-3 h-3 text-cyan-400" />
               {language === 'th'
@@ -897,8 +961,8 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
           <Zap className="w-4 h-4 text-slate-950" />
           <span>
             {language === 'th'
-              ? `⚡ ประวัติธุรกรรมรวม (${transactions.length})`
-              : `⚡ Transaction History (${transactions.length})`}
+              ? `⚡ ประวัติธุรกรรมรวม (${combinedTransactions.length})`
+              : `⚡ Transaction History (${combinedTransactions.length})`}
           </span>
         </button>
 
@@ -1013,28 +1077,31 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
               {[
                 {
                   key: 'all',
-                  label: language === 'th' ? `ทั้งหมด (${transactions.length})` : `All (${transactions.length})`,
+                  label:
+                    language === 'th'
+                      ? `ทั้งหมด (${combinedTransactions.length})`
+                      : `All (${combinedTransactions.length})`,
                 },
                 {
                   key: 'REGISTRATION',
                   label:
                     language === 'th'
-                      ? `📝 สมัครสมาชิก/สร้างรหัส (${transactions.filter((t) => t.category === 'REGISTRATION').length})`
-                      : `Registrations (${transactions.filter((t) => t.category === 'REGISTRATION').length})`,
+                      ? `📝 สมัครสมาชิก/สร้างรหัส (${combinedTransactions.filter((t) => t.category === 'REGISTRATION').length})`
+                      : `Registrations (${combinedTransactions.filter((t) => t.category === 'REGISTRATION').length})`,
                 },
                 {
                   key: 'UPGRADE',
                   label:
                     language === 'th'
-                      ? `🚀 อัพเกรดแรงค์ (${transactions.filter((t) => t.category === 'UPGRADE').length})`
-                      : `Upgrades (${transactions.filter((t) => t.category === 'UPGRADE').length})`,
+                      ? `🚀 อัพเกรดแรงค์ (${combinedTransactions.filter((t) => t.category === 'UPGRADE').length})`
+                      : `Upgrades (${combinedTransactions.filter((t) => t.category === 'UPGRADE').length})`,
                 },
                 {
                   key: 'PAYOUT',
                   label:
                     language === 'th'
-                      ? `💰 โบนัส/คอมมิชชั่น (${transactions.filter((t) => t.category === 'PAYOUT').length})`
-                      : `Payouts (${transactions.filter((t) => t.category === 'PAYOUT').length})`,
+                      ? `💰 โบนัส/คอมมิชชั่น (${combinedTransactions.filter((t) => t.category === 'PAYOUT').length})`
+                      : `Payouts (${combinedTransactions.filter((t) => t.category === 'PAYOUT').length})`,
                 },
               ].map((tab) => (
                 <button
