@@ -7,8 +7,8 @@ import { EventLogsSection } from './components/EventLogsSection';
 import { DeployContractModal } from './components/DeployContractModal';
 import { AuthAndOnboardingGate } from './components/AuthAndOnboardingGate';
 import { AdminControlCenter } from './components/AdminControlCenter';
-import { CONTRACT_ADDRESS, USDT_ADDRESS } from './contracts/config';
-import { X, LogIn, Shield } from 'lucide-react';
+import { CONTRACT_ADDRESS, USDT_ADDRESS, isAuthorizedAdminWallet } from './contracts/config';
+import { X, LogIn } from 'lucide-react';
 import { TransactionToast } from './components/TransactionToast';
 import { calculateMainIdVaultPools } from './utils/vaultPools';
 import { notifyMatrixNetworkError } from './hooks/useMatrixAutoReconnect';
@@ -20,40 +20,7 @@ export default function App() {
   const [selectedInspectRank, setSelectedInspectRank] = useState<number>(1);
   const [, setSelectedVaultBalance] = useState<string>('0.00 USDT');
   const [bypassGateToDashboard, setBypassGateToDashboard] = useState<boolean>(false);
-  const [isAdminView, setIsAdminView] = useState<boolean>(() => {
-    if (typeof window !== 'undefined') {
-      const path = window.location.pathname.toLowerCase();
-      const hash = window.location.hash.toLowerCase();
-      const q = new URLSearchParams(window.location.search).get('admin');
-      return path === '/admin' || hash === '#admin' || q === '1' || q === 'true';
-    }
-    return false;
-  });
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const handleHashChange = () => {
-      if (window.location.hash.toLowerCase() === '#admin') {
-        setIsAdminView(true);
-      }
-    };
-    window.addEventListener('hashchange', handleHashChange);
-    return () => window.removeEventListener('hashchange', handleHashChange);
-  }, []);
-
-  const toggleAdminView = () => {
-    setIsAdminView((prev) => {
-      const next = !prev;
-      if (typeof window !== 'undefined') {
-        if (next) {
-          window.history.replaceState(null, '', '#admin');
-        } else if (window.location.hash.toLowerCase() === '#admin') {
-          window.history.replaceState(null, '', window.location.pathname);
-        }
-      }
-      return next;
-    });
-  };
+  const [isAdminView, setIsAdminView] = useState<boolean>(false);
 
   const {
     account,
@@ -87,6 +54,40 @@ export default function App() {
     handleAdminUpgrade,
     clearTxState,
   } = useWeb3();
+
+  // Check if connected wallet is an authorized Admin (Root ID #1 / Contract Owner / AllSell Admin)
+  const isAdminUser = isAuthorizedAdminWallet(account, profile);
+
+  // If user is not an Admin, never allow Admin view to remain open
+  useEffect(() => {
+    if (!isAdminUser && isAdminView) {
+      setIsAdminView(false);
+      if (typeof window !== 'undefined' && window.location.hash.toLowerCase() === '#admin') {
+        window.history.replaceState(null, '', window.location.pathname);
+      }
+    } else if (isAdminUser && typeof window !== 'undefined') {
+      const hash = window.location.hash.toLowerCase();
+      const q = new URLSearchParams(window.location.search).get('admin');
+      if (hash === '#admin' || q === '1' || q === 'true') {
+        setIsAdminView(true);
+      }
+    }
+  }, [isAdminUser, isAdminView]);
+
+  const toggleAdminView = () => {
+    if (!isAdminUser) return;
+    setIsAdminView((prev) => {
+      const next = !prev;
+      if (typeof window !== 'undefined') {
+        if (next) {
+          window.history.replaceState(null, '', '#admin');
+        } else if (window.location.hash.toLowerCase() === '#admin') {
+          window.history.replaceState(null, '', window.location.pathname);
+        }
+      }
+      return next;
+    });
+  };
 
   // Check if connected wallet is already registered on-chain
   const isWalletRegistered = Boolean(
@@ -243,59 +244,47 @@ export default function App() {
 
   const handleFullLogout = () => {
     setBypassGateToDashboard(false);
+    setIsAdminView(false);
     disconnectWallet();
   };
 
   // Show Login Gate when no wallet is connected, or Onboarding Registration Form when wallet is not registered
-  // (unless user is viewing the Admin Panel or bypassed gate)
-  if (!bypassGateToDashboard && !isAdminView) {
+  // (unless user is an Admin or bypassed gate)
+  if (!bypassGateToDashboard && !(isAdminUser && isAdminView)) {
     if (!account) {
       return (
-        <div className="relative">
-          <div className="bg-slate-900 border-b border-slate-800 px-4 py-2 flex items-center justify-between text-xs">
-            <span className="text-slate-400">FractalFlowMatrix27 Control Bar</span>
-            <button
-              type="button"
-              onClick={toggleAdminView}
-              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 font-bold transition cursor-pointer"
-            >
-              <Shield className="w-3.5 h-3.5" />
-              <span>เปิดหน้า Admin (Admin Panel)</span>
-            </button>
-          </div>
-          <AuthAndOnboardingGate
-            mode="login"
-            language={language}
-            onToggleLanguage={() => setLanguage(language === 'th' ? 'en' : 'th')}
-            account={account}
-            detectedBrowserWallet={detectedBrowserWallet}
-            chainId={chainId}
-            isBscTestnet={isBscTestnet}
-            isConnecting={isConnecting}
-            isLoadingProfile={isLoadingProfile}
-            profile={profile}
-            usdtBalance={usdtBalance}
-            bnbBalance={bnbBalance}
-            allowance={allowance}
-            contractAddress={contractAddress || CONTRACT_ADDRESS}
-            usdtAddress={usdtAddress || USDT_ADDRESS}
-            txState={txState}
-            onClearTxState={clearTxState}
-            onConnectWallet={connectWallet}
-            onLoginCustomInput={loginWithCustomInput}
-            onLoginDemoUnregisteredWallet={loginWithDemoUnregisteredWallet}
-            onDisconnect={handleFullLogout}
-            onSwitchNetwork={switchToBscTestnet}
-            onRefresh={refreshUserData}
-            onEnterGuestDashboard={() => setBypassGateToDashboard(true)}
-            onApproveUsdt={handleApproveUsdt}
-            onRegister={handleRegister}
-            onExecuteOffChainBatch={handleExecuteOffChainSimulationAndBatch}
-            onCheckSponsor={checkSponsorNode}
-            onPreviewPlacement={previewNextPlacement}
-            onUpgradeToRank={handleUpgradeRank}
-          />
-        </div>
+        <AuthAndOnboardingGate
+          mode="login"
+          language={language}
+          onToggleLanguage={() => setLanguage(language === 'th' ? 'en' : 'th')}
+          account={account}
+          detectedBrowserWallet={detectedBrowserWallet}
+          chainId={chainId}
+          isBscTestnet={isBscTestnet}
+          isConnecting={isConnecting}
+          isLoadingProfile={isLoadingProfile}
+          profile={profile}
+          usdtBalance={usdtBalance}
+          bnbBalance={bnbBalance}
+          allowance={allowance}
+          contractAddress={contractAddress || CONTRACT_ADDRESS}
+          usdtAddress={usdtAddress || USDT_ADDRESS}
+          txState={txState}
+          onClearTxState={clearTxState}
+          onConnectWallet={connectWallet}
+          onLoginCustomInput={loginWithCustomInput}
+          onLoginDemoUnregisteredWallet={loginWithDemoUnregisteredWallet}
+          onDisconnect={handleFullLogout}
+          onSwitchNetwork={switchToBscTestnet}
+          onRefresh={refreshUserData}
+          onEnterGuestDashboard={() => setBypassGateToDashboard(true)}
+          onApproveUsdt={handleApproveUsdt}
+          onRegister={handleRegister}
+          onExecuteOffChainBatch={handleExecuteOffChainSimulationAndBatch}
+          onCheckSponsor={checkSponsorNode}
+          onPreviewPlacement={previewNextPlacement}
+          onUpgradeToRank={handleUpgradeRank}
+        />
       );
     }
 
@@ -336,53 +325,40 @@ export default function App() {
       );
     }
 
-    if (!isLoadingProfile && !isWalletRegistered) {
+    if (!isLoadingProfile && !isWalletRegistered && !isAdminUser) {
       return (
-        <div className="relative">
-          <div className="bg-slate-900 border-b border-slate-800 px-4 py-2 flex items-center justify-between text-xs">
-            <span className="text-slate-400">FractalFlowMatrix27 Control Bar</span>
-            <button
-              type="button"
-              onClick={toggleAdminView}
-              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 font-bold transition cursor-pointer"
-            >
-              <Shield className="w-3.5 h-3.5" />
-              <span>เปิดหน้า Admin (Admin Panel)</span>
-            </button>
-          </div>
-          <AuthAndOnboardingGate
-            mode="register_onboarding"
-            language={language}
-            onToggleLanguage={() => setLanguage(language === 'th' ? 'en' : 'th')}
-            account={account}
-            detectedBrowserWallet={detectedBrowserWallet}
-            chainId={chainId}
-            isBscTestnet={isBscTestnet}
-            isConnecting={isConnecting}
-            isLoadingProfile={isLoadingProfile}
-            profile={profile}
-            usdtBalance={usdtBalance}
-            bnbBalance={bnbBalance}
-            allowance={allowance}
-            contractAddress={contractAddress || CONTRACT_ADDRESS}
-            usdtAddress={usdtAddress || USDT_ADDRESS}
-            txState={txState}
-            onClearTxState={clearTxState}
-            onConnectWallet={connectWallet}
-            onLoginCustomInput={loginWithCustomInput}
-            onLoginDemoUnregisteredWallet={loginWithDemoUnregisteredWallet}
-            onDisconnect={handleFullLogout}
-            onSwitchNetwork={switchToBscTestnet}
-            onRefresh={refreshUserData}
-            onEnterGuestDashboard={() => setBypassGateToDashboard(true)}
-            onApproveUsdt={handleApproveUsdt}
-            onRegister={handleRegister}
-            onExecuteOffChainBatch={handleExecuteOffChainSimulationAndBatch}
-            onCheckSponsor={checkSponsorNode}
-            onPreviewPlacement={previewNextPlacement}
-            onUpgradeToRank={handleUpgradeRank}
-          />
-        </div>
+        <AuthAndOnboardingGate
+          mode="register_onboarding"
+          language={language}
+          onToggleLanguage={() => setLanguage(language === 'th' ? 'en' : 'th')}
+          account={account}
+          detectedBrowserWallet={detectedBrowserWallet}
+          chainId={chainId}
+          isBscTestnet={isBscTestnet}
+          isConnecting={isConnecting}
+          isLoadingProfile={isLoadingProfile}
+          profile={profile}
+          usdtBalance={usdtBalance}
+          bnbBalance={bnbBalance}
+          allowance={allowance}
+          contractAddress={contractAddress || CONTRACT_ADDRESS}
+          usdtAddress={usdtAddress || USDT_ADDRESS}
+          txState={txState}
+          onClearTxState={clearTxState}
+          onConnectWallet={connectWallet}
+          onLoginCustomInput={loginWithCustomInput}
+          onLoginDemoUnregisteredWallet={loginWithDemoUnregisteredWallet}
+          onDisconnect={handleFullLogout}
+          onSwitchNetwork={switchToBscTestnet}
+          onRefresh={refreshUserData}
+          onEnterGuestDashboard={() => setBypassGateToDashboard(true)}
+          onApproveUsdt={handleApproveUsdt}
+          onRegister={handleRegister}
+          onExecuteOffChainBatch={handleExecuteOffChainSimulationAndBatch}
+          onCheckSponsor={checkSponsorNode}
+          onPreviewPlacement={previewNextPlacement}
+          onUpgradeToRank={handleUpgradeRank}
+        />
       );
     }
   }
@@ -400,14 +376,15 @@ export default function App() {
         onRefresh={refreshUserData}
         language={language}
         onToggleLanguage={() => setLanguage(language === 'th' ? 'en' : 'th')}
-        onOpenDeployModal={() => setIsDeployModalOpen(true)}
+        onOpenDeployModal={() => isAdminUser && setIsDeployModalOpen(true)}
         contractAddress={contractAddress}
-        isAdminView={isAdminView}
+        isAdminUser={isAdminUser}
+        isAdminView={isAdminUser && isAdminView}
         onToggleAdminView={toggleAdminView}
       />
 
       {/* Quick Banner when browsing in Guest / Bypass mode */}
-      {(!account || !isWalletRegistered) && !isAdminView && (
+      {(!account || (!isWalletRegistered && !isAdminUser)) && !(isAdminUser && isAdminView) && (
         <div className="bg-indigo-950/60 border-b border-indigo-500/30 px-3 sm:px-6 py-2">
           <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2 text-xs">
             <span className="text-indigo-200">
@@ -446,7 +423,7 @@ export default function App() {
           language={language}
         />
 
-        {isAdminView ? (
+        {isAdminUser && isAdminView ? (
           <AdminControlCenter
             account={account}
             language={language}

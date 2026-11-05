@@ -13,6 +13,7 @@ import {
   BSC_TESTNET_PARAMS,
   MATRIX_ABI,
   RANK_PRICES_USDT,
+  isAuthorizedAdminWallet,
 } from '../contracts/config';
 import { calculateMainIdVaultPools } from '../utils/vaultPools';
 import { useMatrixAutoReconnect } from '../hooks/useMatrixAutoReconnect';
@@ -8599,28 +8600,30 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                           </div>
                         </div>
 
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <button
-                            type="button"
-                            disabled={isRunningAllSellAuto}
-                            onClick={handleToggleAutoAllSell}
-                            className={`px-2.5 py-1.5 rounded-lg font-bold text-[10.5px] border transition cursor-pointer disabled:opacity-50 ${
-                              isAutoEnabled
-                                ? 'bg-slate-900 hover:bg-slate-800 text-amber-300 border-amber-500/40'
-                                : 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-400'
-                            }`}
-                          >
-                            {isAutoEnabled ? '⏸️ ปิด Auto ชั่วคราว' : '▶️ เปิด Auto Payout'}
-                          </button>
-                          <button
-                            type="button"
-                            disabled={isRunningAllSellAuto}
-                            onClick={handleExecuteAutoAllSellNow}
-                            className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-emerald-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 text-white font-extrabold text-[10.5px] border border-emerald-400/50 shadow cursor-pointer disabled:opacity-50"
-                          >
-                            {isRunningAllSellAuto ? '⏳ กำลังประมวลผลรอบจ่าย...' : '⚡ สั่งตัดรอบจ่ายผู้ผ่านเกณฑ์ทันที'}
-                          </button>
-                        </div>
+                        {isAuthorizedAdminWallet(userAddress) && (
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <button
+                              type="button"
+                              disabled={isRunningAllSellAuto}
+                              onClick={handleToggleAutoAllSell}
+                              className={`px-2.5 py-1.5 rounded-lg font-bold text-[10.5px] border transition cursor-pointer disabled:opacity-50 ${
+                                isAutoEnabled
+                                  ? 'bg-slate-900 hover:bg-slate-800 text-amber-300 border-amber-500/40'
+                                  : 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-400'
+                              }`}
+                            >
+                              {isAutoEnabled ? '⏸️ ปิด Auto ชั่วคราว' : '▶️ เปิด Auto Payout'}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={isRunningAllSellAuto}
+                              onClick={handleExecuteAutoAllSellNow}
+                              className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-emerald-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 text-white font-extrabold text-[10.5px] border border-emerald-400/50 shadow cursor-pointer disabled:opacity-50"
+                            >
+                              {isRunningAllSellAuto ? '⏳ กำลังประมวลผลรอบจ่าย...' : '⚡ สั่งตัดรอบจ่ายผู้ผ่านเกณฑ์ทันที'}
+                            </button>
+                          </div>
+                        )}
                       </div>
 
                       {allSellAutoMsg && (

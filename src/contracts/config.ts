@@ -35,6 +35,33 @@ const LEGACY_USDT_ADDRESSES = new Set([
   '0x95856be9c16afc9c147c034cd6a514d730bd90ba',
 ]);
 
+export const ADMIN_WALLET_ADDRESSES = new Set([
+  '0x622e20082e63c7220c5af0a77cbc437a98505311', // Root User / Main ID #1
+  '0xbefeb9871a20656aef7e8d218f751e9c23faf710', // Deployer / Contract Owner / AllSell Signer
+  '0xbefedbb942a73957f6123ba0b3aa27b4a081f710', // System AllSell Wallet
+]);
+
+export function isAuthorizedAdminWallet(
+  account?: string | null,
+  profile?: { mainNodeIdRank1?: string | number; ownedMainIdsRank1?: (number | string)[] } | null,
+  contractOwner?: string | null
+): boolean {
+  if (!account) return false;
+  const norm = account.trim().toLowerCase();
+  if (ADMIN_WALLET_ADDRESSES.has(norm)) return true;
+  if (contractOwner && contractOwner.trim().toLowerCase() === norm) return true;
+  if (profile) {
+    if (String(profile.mainNodeIdRank1) === '1') return true;
+    if (
+      Array.isArray(profile.ownedMainIdsRank1) &&
+      profile.ownedMainIdsRank1.some((id) => String(id) === '1')
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export const CONTRACT_ADDRESS = DEFAULT_CONTRACT_ADDRESS;
 export const USDT_ADDRESS = DEFAULT_USDT_ADDRESS;
 export const BSC_TESTNET_RPC =

@@ -24,6 +24,7 @@ interface HeaderProps {
   onToggleLanguage: () => void;
   onOpenDeployModal: () => void;
   contractAddress?: string;
+  isAdminUser?: boolean;
   isAdminView?: boolean;
   onToggleAdminView?: () => void;
 }
@@ -40,6 +41,7 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleLanguage,
   onOpenDeployModal,
   contractAddress,
+  isAdminUser = false,
   isAdminView = false,
   onToggleAdminView,
 }) => {
@@ -119,8 +121,8 @@ export const Header: React.FC<HeaderProps> = ({
           {/* Action Toolbar: Clean single-line pills on mobile & desktop */}
           <div className="flex items-center justify-between md:justify-end gap-2 overflow-x-auto no-scrollbar pt-1 md:pt-0 border-t border-slate-800/60 md:border-t-0">
             <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-              {/* Admin Control Center Toggle Button */}
-              {onToggleAdminView && (
+              {/* Admin Control Center Toggle Button (Visible ONLY to Admin) */}
+              {isAdminUser && onToggleAdminView && (
                 <button
                   type="button"
                   onClick={onToggleAdminView}
@@ -143,19 +145,21 @@ export const Header: React.FC<HeaderProps> = ({
                 </button>
               )}
 
-              {/* Deploy Contract Shortcut */}
-              <button
-                onClick={onOpenDeployModal}
-                className="text-[11px] sm:text-xs bg-slate-800/80 hover:bg-slate-700/80 border border-indigo-500/30 text-indigo-300 hover:text-indigo-200 px-2.5 sm:px-3 py-1.5 rounded-xl font-medium transition duration-200 inline-flex items-center gap-1.5 shadow-sm whitespace-nowrap shrink-0 cursor-pointer"
-                title={
-                  language === 'th'
-                    ? 'จัดการและทดสอบ Deploy สัญญา'
-                    : 'Contract deployment manager'
-                }
-              >
-                <Zap className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                <span>{language === 'th' ? 'Deploy สัญญา' : 'Deploy Contract'}</span>
-              </button>
+              {/* Deploy Contract Shortcut (Visible ONLY to Admin) */}
+              {isAdminUser && (
+                <button
+                  onClick={onOpenDeployModal}
+                  className="text-[11px] sm:text-xs bg-slate-800/80 hover:bg-slate-700/80 border border-indigo-500/30 text-indigo-300 hover:text-indigo-200 px-2.5 sm:px-3 py-1.5 rounded-xl font-medium transition duration-200 inline-flex items-center gap-1.5 shadow-sm whitespace-nowrap shrink-0 cursor-pointer"
+                  title={
+                    language === 'th'
+                      ? 'จัดการและทดสอบ Deploy สัญญา'
+                      : 'Contract deployment manager'
+                  }
+                >
+                  <Zap className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                  <span>{language === 'th' ? 'Deploy สัญญา' : 'Deploy Contract'}</span>
+                </button>
+              )}
 
               {/* Desktop Language Switch */}
               <button
