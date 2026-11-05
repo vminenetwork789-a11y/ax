@@ -7120,6 +7120,143 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                           </button>
                         </div>
                       )}
+
+                      {/* เงื่อนไขการรับ AllSell 4 กอง ของ Main ID นี้ */}
+                      {!modalNode.isExtraLineage && (() => {
+                        const defaultPools = [
+                          {
+                            poolNumber: 1,
+                            titleTh: 'กองที่ 1 : r-13 (300 USDT)',
+                            requiredSelfRank: 13,
+                            hasSelfRank: currentMaxR >= 13,
+                            requiredDirectCount: 5,
+                            allowedDirectRanksLabel: 'r-10 หรือ r-11 หรือ r-12 หรือ r-13',
+                            qualifiedDirectCount: 0,
+                            qualifiedDirectIds: [] as Array<{ id: number; currentMaxRank: number }>,
+                            isQualified: false,
+                            poolTotalUsdt: Number(((systemPoolsData?.allSellTotalUsdt || 0) * 0.25).toFixed(2)),
+                            estimatedShareUsdt: 0,
+                          },
+                          {
+                            poolNumber: 2,
+                            titleTh: 'กองที่ 2 : r-20 (1,000 USDT)',
+                            requiredSelfRank: 20,
+                            hasSelfRank: currentMaxR >= 20,
+                            requiredDirectCount: 2,
+                            allowedDirectRanksLabel: 'r-17 หรือ r-18 หรือ r-19 หรือ r-20',
+                            qualifiedDirectCount: 0,
+                            qualifiedDirectIds: [] as Array<{ id: number; currentMaxRank: number }>,
+                            isQualified: false,
+                            poolTotalUsdt: Number(((systemPoolsData?.allSellTotalUsdt || 0) * 0.25).toFixed(2)),
+                            estimatedShareUsdt: 0,
+                          },
+                          {
+                            poolNumber: 3,
+                            titleTh: 'กองที่ 3 : r-24 (5,000 USDT)',
+                            requiredSelfRank: 24,
+                            hasSelfRank: currentMaxR >= 24,
+                            requiredDirectCount: 2,
+                            allowedDirectRanksLabel: 'r-22 หรือ r-23 หรือ r-24',
+                            qualifiedDirectCount: 0,
+                            qualifiedDirectIds: [] as Array<{ id: number; currentMaxRank: number }>,
+                            isQualified: false,
+                            poolTotalUsdt: Number(((systemPoolsData?.allSellTotalUsdt || 0) * 0.25).toFixed(2)),
+                            estimatedShareUsdt: 0,
+                          },
+                          {
+                            poolNumber: 4,
+                            titleTh: 'กองที่ 4 : r-27 (10,000 USDT)',
+                            requiredSelfRank: 27,
+                            hasSelfRank: currentMaxR >= 27,
+                            requiredDirectCount: 5,
+                            allowedDirectRanksLabel: 'r-25 หรือ r-26 หรือ r-27',
+                            qualifiedDirectCount: 0,
+                            qualifiedDirectIds: [] as Array<{ id: number; currentMaxRank: number }>,
+                            isQualified: false,
+                            poolTotalUsdt: Number(((systemPoolsData?.allSellTotalUsdt || 0) * 0.25).toFixed(2)),
+                            estimatedShareUsdt: 0,
+                          },
+                        ];
+                        const qual = mainReport?.allSellQualification || idReport?.allSellQualification;
+                        const poolsList = Array.isArray(qual?.pools) && qual.pools.length === 4 ? qual.pools : defaultPools;
+                        const totalDirectMainIds = Number(qual?.totalDirectMainIds || 0);
+                        const qualifiedPoolsCount = Number(qual?.totalQualifiedPoolsCount || 0);
+
+                        return (
+                          <div className="mt-2.5 pt-2.5 border-t border-cyan-500/30 space-y-2">
+                            <div className="flex items-center justify-between flex-wrap gap-1">
+                              <span className="text-cyan-300 font-bold text-[11px]">
+                                🌐 คุณสมบัติรับ AllSell 4 กอง (Main ID #{targetMainId})
+                              </span>
+                              <span className="text-[10px] px-2 py-0.5 rounded bg-cyan-500/15 border border-cyan-500/30 text-cyan-200 font-bold">
+                                แนะนำตรงทั้งหมด: {totalDirectMainIds} ID • ผ่านแล้ว {qualifiedPoolsCount}/4 กอง
+                              </span>
+                            </div>
+                            <div className="rounded-lg bg-amber-500/10 border border-amber-500/30 px-2.5 py-1.5 flex items-center justify-between flex-wrap gap-1 text-[10px]">
+                              <span className="text-amber-200 font-bold">
+                                🗓️ เงื่อนไขการจ่ายเงิน AllSell: จ่ายให้รหัสที่ผ่านเกณฑ์ <strong className="text-amber-300 underline">ทุกกลางเดือน และ ต้นเดือน</strong>
+                              </span>
+                              <span className="text-emerald-300 font-bold text-[9.5px]">
+                                2 รอบ/เดือน (วันที่ 1 & 15)
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[10px]">
+                              {poolsList.map((p: any) => (
+                                <div
+                                  key={`id-allsell-pool-${p.poolNumber}`}
+                                  className={`rounded-lg p-2 border ${
+                                    p.isQualified
+                                      ? 'bg-emerald-950/40 border-emerald-500/50'
+                                      : 'bg-slate-950/90 border-slate-800'
+                                  } space-y-1`}
+                                >
+                                  <div className="flex items-center justify-between gap-1">
+                                    <span className="font-extrabold text-amber-300 text-[10.5px]">{p.titleTh}</span>
+                                    <span
+                                      className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                                        p.isQualified
+                                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                                          : 'bg-slate-800 text-slate-400'
+                                      }`}
+                                    >
+                                      {p.isQualified ? '✅ ได้รับสิทธิ์' : '⏳ รอคุณสมบัติ'}
+                                    </span>
+                                  </div>
+                                  <div className="text-slate-300 flex items-center justify-between">
+                                    <span>1. ID หลักดำรงอยู่ใน r-{p.requiredSelfRank}:</span>
+                                    <span className={p.hasSelfRank ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
+                                      {p.hasSelfRank ? `✅ มี (r-${currentMaxR})` : `❌ อยู่ r-${currentMaxR}`}
+                                    </span>
+                                  </div>
+                                  <div className="text-slate-300">
+                                    <div className="flex items-center justify-between">
+                                      <span>2. แนะนำตรง {p.requiredDirectCount} ID:</span>
+                                      <span
+                                        className={
+                                          p.qualifiedDirectCount >= p.requiredDirectCount
+                                            ? 'text-emerald-400 font-bold'
+                                            : 'text-amber-300 font-bold'
+                                        }
+                                      >
+                                        {p.qualifiedDirectCount} / {p.requiredDirectCount} ID
+                                      </span>
+                                    </div>
+                                    <div className="text-[9.5px] text-slate-400">
+                                      (ต้องดำรงอยู่ใน {p.allowedDirectRanksLabel})
+                                    </div>
+                                  </div>
+                                  <div className="pt-1 border-t border-slate-800/80 flex items-center justify-between text-[9.5px]">
+                                    <span className="text-slate-400">กองละ 25% ({Number(p.poolTotalUsdt || 0).toFixed(2)} U):</span>
+                                    <span className="text-cyan-300 font-extrabold">
+                                      {p.isQualified ? `รับ +${Number(p.estimatedShareUsdt || 0).toFixed(2)} U` : '0.00 U'}
+                                    </span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
 
@@ -8240,6 +8377,170 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                   </div>
                 </div>
               </div>
+
+              {/* เงื่อนไขและการแบ่งยอด AllSell (4%) ออกเป็น 4 กอง */}
+              {(() => {
+                const fallbackFourPools = [
+                  {
+                    poolNumber: 1,
+                    titleTh: 'กองที่ 1 : r-13 (300 USDT)',
+                    targetRank: 13,
+                    targetRankPriceUsdt: 300,
+                    requiredSelfRank: 13,
+                    requiredDirectCount: 5,
+                    allowedDirectRanksLabel: 'r-10 หรือ r-11 หรือ r-12 หรือ r-13',
+                    sharePercentOfAllSell: 25,
+                    poolTotalUsdt: Number((totalAllSellUsdt * 0.25).toFixed(2)),
+                    poolOnChainUsdt: Number((onChainAllSellBal * 0.25).toFixed(2)),
+                    qualifiedMainIds: [] as number[],
+                    qualifiedCount: 0,
+                    sharePerQualifiedIdUsdt: 0,
+                  },
+                  {
+                    poolNumber: 2,
+                    titleTh: 'กองที่ 2 : r-20 (1,000 USDT)',
+                    targetRank: 20,
+                    targetRankPriceUsdt: 1000,
+                    requiredSelfRank: 20,
+                    requiredDirectCount: 2,
+                    allowedDirectRanksLabel: 'r-17 หรือ r-18 หรือ r-19 หรือ r-20',
+                    sharePercentOfAllSell: 25,
+                    poolTotalUsdt: Number((totalAllSellUsdt * 0.25).toFixed(2)),
+                    poolOnChainUsdt: Number((onChainAllSellBal * 0.25).toFixed(2)),
+                    qualifiedMainIds: [] as number[],
+                    qualifiedCount: 0,
+                    sharePerQualifiedIdUsdt: 0,
+                  },
+                  {
+                    poolNumber: 3,
+                    titleTh: 'กองที่ 3 : r-24 (5,000 USDT)',
+                    targetRank: 24,
+                    targetRankPriceUsdt: 5000,
+                    requiredSelfRank: 24,
+                    requiredDirectCount: 2,
+                    allowedDirectRanksLabel: 'r-22 หรือ r-23 หรือ r-24',
+                    sharePercentOfAllSell: 25,
+                    poolTotalUsdt: Number((totalAllSellUsdt * 0.25).toFixed(2)),
+                    poolOnChainUsdt: Number((onChainAllSellBal * 0.25).toFixed(2)),
+                    qualifiedMainIds: [] as number[],
+                    qualifiedCount: 0,
+                    sharePerQualifiedIdUsdt: 0,
+                  },
+                  {
+                    poolNumber: 4,
+                    titleTh: 'กองที่ 4 : r-27 (10,000 USDT)',
+                    targetRank: 27,
+                    targetRankPriceUsdt: 10000,
+                    requiredSelfRank: 27,
+                    requiredDirectCount: 5,
+                    allowedDirectRanksLabel: 'r-25 หรือ r-26 หรือ r-27',
+                    sharePercentOfAllSell: 25,
+                    poolTotalUsdt: Number((totalAllSellUsdt * 0.25).toFixed(2)),
+                    poolOnChainUsdt: Number((onChainAllSellBal * 0.25).toFixed(2)),
+                    qualifiedMainIds: [] as number[],
+                    qualifiedCount: 0,
+                    sharePerQualifiedIdUsdt: 0,
+                  },
+                ];
+                const fourPoolsList: any[] =
+                  Array.isArray(systemPoolsData?.allSellFourPools) && systemPoolsData.allSellFourPools.length === 4
+                    ? systemPoolsData.allSellFourPools
+                    : fallbackFourPools;
+
+                return (
+                  <div className="rounded-xl bg-[#091526] border border-cyan-500/40 p-3.5 space-y-2.5 font-mono">
+                    <div className="flex items-center justify-between flex-wrap gap-2 border-b border-cyan-500/20 pb-2">
+                      <div>
+                        <span className="font-extrabold text-cyan-300 text-xs sm:text-sm">
+                          🏆 เงื่อนไข AllSell 4% : แบ่งยอดออกเป็น 4 กอง (กองละ 25% ของยอด AllSell)
+                        </span>
+                        <p className="text-[10.5px] text-slate-400 mt-0.5">
+                          r- คือ Rank • ยอดรวม AllSell ทั้งหมด +{totalAllSellUsdt.toFixed(2)} USDT แบ่งเข้ากองที่ 1–4 กองละ +{(totalAllSellUsdt * 0.25).toFixed(2)} USDT
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="px-2.5 py-1 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-300 font-extrabold text-[10.5px]">
+                          🗓️ รอบจ่ายเงินผู้ผ่านเกณฑ์: ทุกต้นเดือน และ กลางเดือน
+                        </span>
+                        <span className="px-2.5 py-1 rounded-lg bg-cyan-500/15 border border-cyan-500/35 text-cyan-200 font-bold text-[10.5px]">
+                          4 กอง × 25% = 100% ของ AllSell (4%)
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="rounded-lg bg-amber-500/10 border border-amber-500/35 px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                      <div className="text-amber-200 font-bold">
+                        📌 เงื่อนไขรอบการจ่าย AllSell: ระบบจะตัดรอบและจ่ายเงินให้รหัสที่ผ่านเกณฑ์ <span className="text-amber-300 underline">ทุกกลางเดือน และ ต้นเดือน</span> (เดือนละ 2 รอบ: วันที่ 1 และ วันที่ 15 ของทุกเดือน)
+                      </div>
+                      <span className="px-2 py-0.5 rounded bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-[10px] font-bold">
+                        จ่าย 2 รอบ / เดือน (ต้นเดือน & กลางเดือน)
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 text-[11px]">
+                      {fourPoolsList.map((pool: any) => (
+                        <div
+                          key={`sys-allsell-four-${pool.poolNumber}`}
+                          className="rounded-xl bg-slate-950/90 border border-cyan-500/30 p-3 space-y-1.5 flex flex-col justify-between"
+                        >
+                          <div className="space-y-1.5">
+                            <div className="flex items-center justify-between gap-1 border-b border-slate-800 pb-1">
+                              <span className="font-extrabold text-amber-300 text-xs">{pool.titleTh}</span>
+                              <span className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 text-[9.5px] font-bold">
+                                25% Pool
+                              </span>
+                            </div>
+
+                            <div className="space-y-1 text-[10.5px] text-slate-300">
+                              <div>
+                                <span className="text-cyan-300 font-bold">1.</span> ต้องมี ID หลักนั้น ดำรงอยู่ใน{' '}
+                                <strong className="text-amber-300">
+                                  r-{pool.requiredSelfRank} ({Number(pool.targetRankPriceUsdt).toLocaleString()} USDT)
+                                </strong>
+                              </div>
+                              <div>
+                                <span className="text-cyan-300 font-bold">2.</span> ต้องมี ID ที่แนะนำตรง จำนวน{' '}
+                                <strong className="text-emerald-300">{pool.requiredDirectCount} ID</strong> ดำรงอยู่ใน{' '}
+                                <strong className="text-cyan-200">{pool.allowedDirectRanksLabel}</strong>
+                              </div>
+                              <div>
+                                <span className="text-amber-300 font-bold">3.</span> จ่ายเงินให้ผู้ผ่านเกณฑ์{' '}
+                                <strong className="text-amber-300">ทุกกลางเดือน และ ต้นเดือน</strong>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="pt-2 border-t border-slate-800 space-y-1 text-[10.5px]">
+                            <div className="flex items-center justify-between">
+                              <span className="text-slate-400">ยอดกองนี้ (25%):</span>
+                              <span className="font-extrabold text-emerald-400">
+                                +{Number(pool.poolTotalUsdt || 0).toFixed(2)} USDT
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-slate-400">ผู้ผ่านคุณสมบัติ:</span>
+                              <span className="font-bold text-amber-300">
+                                {Number(pool.qualifiedCount || 0)} รหัส
+                                {Array.isArray(pool.qualifiedMainIds) && pool.qualifiedMainIds.length > 0
+                                  ? ` (${pool.qualifiedMainIds.map((id: number) => `#${id}`).join(', ')})`
+                                  : ''}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-slate-400">เฉลี่ยต่อรหัสที่ผ่าน:</span>
+                              <span className="font-extrabold text-cyan-300">
+                                {Number(pool.qualifiedCount || 0) > 0
+                                  ? `+${Number(pool.sharePerQualifiedIdUsdt || 0).toFixed(2)} USDT`
+                                  : 'รอผู้ผ่านเงื่อนไข'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Filter Tabs */}
               <div className="flex flex-wrap items-center gap-1.5 bg-slate-950 p-1.5 rounded-xl border border-slate-800">

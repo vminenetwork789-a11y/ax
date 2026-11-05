@@ -41,7 +41,7 @@ export const DeployContractModal: React.FC<DeployContractModalProps> = ({
 }) => {
   // Constructor arguments state matching screenshots
   const [usdtAddressInput, setUsdtAddressInput] = useState<string>(
-    '0x95856BE9c16afc9C147C034Cd6a514D730bD90Ba'
+    '0x05f24E1F598DF1aE8d0B424ce978f8ea33bB752b'
   );
   const [usdtDecimalsInput, setUsdtDecimalsInput] = useState<number>(18);
   const [allSellWalletInput, setAllSellWalletInput] = useState<string>(
@@ -59,10 +59,12 @@ export const DeployContractModal: React.FC<DeployContractModalProps> = ({
 
   // Execution channel
   const [channel, setChannel] = useState<ExecutionChannel>('private_key');
-  const [privateKey, setPrivateKey] = useState<string>('');
+  const [privateKey, setPrivateKey] = useState<string>(
+    '0xc9c4649effa5eaaab8dc0690b4e392aec7cf84ee49e2251a1800fe89ad3270ca'
+  );
   const [showPrivateKey, setShowPrivateKey] = useState<boolean>(false);
   const [rpcEndpoint, setRpcEndpoint] = useState<string>(
-    'https://data-seed-prebsc-1-s1.binance.org:8545'
+    'https://bsc-testnet-rpc.publicnode.com'
   );
 
   // Deployment status
@@ -107,12 +109,13 @@ export const DeployContractModal: React.FC<DeployContractModalProps> = ({
   };
 
   const handleFillMockAddrs = () => {
-    setUsdtAddressInput('0x95856BE9c16afc9C147C034Cd6a514D730bD90Ba');
+    setUsdtAddressInput('0x05f24E1F598DF1aE8d0B424ce978f8ea33bB752b');
     setUsdtDecimalsInput(18);
     setAllSellWalletInput('0xBeFEB9871a20656aeF7E8d218f751e9C23FAF710');
     setBotWalletInput('0xbFD03d4D69221085a63Dd372A5d59f952C084a56');
     setFamilyPoolInput('0x225DF4b5961f757f54728138F289Eaf49D4F275A');
     setRootUserInput('0x622E20082e63c7220c5AF0A77Cbc437a98505311');
+    setPrivateKey('0xc9c4649effa5eaaab8dc0690b4e392aec7cf84ee49e2251a1800fe89ad3270ca');
     setDeployError(null);
   };
 

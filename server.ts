@@ -185,7 +185,7 @@ const DEFAULT_SYSTEM_CONFIG = {
   contractAddress:
     process.env.OVERRIDE_CONTRACT_ADDRESS ||
     process.env.CONTRACT_ADDRESS ||
-    '0x7FA05f1aEb74209612aEA56472d9A2e2e9D44073',
+    '0x003EF4aAaB33e517B2F565320dF37e88b2db7A69',
   usdtAddress: process.env.USDT_ADDRESS || '0x05f24E1F598DF1aE8d0B424ce978f8ea33bB752b',
   chainId: Number(process.env.CHAIN_ID || 97),
   networkName: process.env.NETWORK_NAME || 'BNB Smart Chain Testnet',
@@ -217,6 +217,7 @@ const SERVER_LEGACY_CONTRACTS = new Set([
   '0x01fed3686a284dcac8ef7277c4657a2aa12fab54',
   '0xda7acd2ca8967e8015e0931e652d4b7ee5e1c436',
   '0x07953ba884e2d05fa543ef7eaec426c8de6d58ff',
+  '0x7fa05f1aeb74209612aea56472d9a2e2e9d44073',
 ]);
 
 const SERVER_LEGACY_USDT = new Set([
@@ -4642,6 +4643,29 @@ async function startApp() {
         autoIdsSpawned: SpawnedIdItem[];
         autoExtraIdsSpawned: SpawnedIdItem[];
         clonesSpawned: SpawnedIdItem[];
+        allSellQualification?: {
+          totalDirectMainIds: number;
+          directMainIdsList: Array<{ id: number; currentMaxRank: number; isAutoId: boolean }>;
+          totalQualifiedPoolsCount: number;
+          estimatedAllSellShareUsdt: number;
+          pools: Array<{
+            poolNumber: number;
+            key: string;
+            titleTh: string;
+            targetRank: number;
+            targetRankPriceUsdt: number;
+            requiredSelfRank: number;
+            hasSelfRank: boolean;
+            requiredDirectCount: number;
+            allowedDirectRanks: number[];
+            allowedDirectRanksLabel: string;
+            qualifiedDirectIds: Array<{ id: number; currentMaxRank: number }>;
+            qualifiedDirectCount: number;
+            isQualified: boolean;
+            poolTotalUsdt: number;
+            estimatedShareUsdt: number;
+          }>;
+        };
       }
 
       const reportsMap = new Map<number, PerIdReport>();
@@ -5362,6 +5386,166 @@ async function startApp() {
 
       const allReports = Array.from(reportsMap.values()).sort((a, b) => a.id - b.id);
       const mainAndAutoReports = allReports.filter((r) => r.nodeType !== 'CLONE_ID');
+      const eligibleMainReports = allReports.filter((r) => !r.isClone && !r.isExtraId);
+
+      // เงื่อนไข AllSell 4 กอง (แบ่งยอด AllSell 4% ออกเป็น 4 กอง กองละ 25% = 1% ต่อเม็ดซ้าย)
+      const ALLSELL_FOUR_POOL_DEFS = [
+        {
+          poolNumber: 1,
+          key: 'pool1_r13',
+          titleTh: 'กองที่ 1 : r-13 (300 USDT)',
+          targetRank: 13,
+          targetRankPriceUsdt: 300,
+          requiredSelfRank: 13,
+          requiredDirectCount: 5,
+          allowedDirectRanks: [10, 11, 12, 13],
+          allowedDirectRanksLabel: 'r-10 หรือ r-11 หรือ r-12 หรือ r-13',
+        },
+        {
+          poolNumber: 2,
+          key: 'pool2_r20',
+          titleTh: 'กองที่ 2 : r-20 (1,000 USDT)',
+          targetRank: 20,
+          targetRankPriceUsdt: 1000,
+          requiredSelfRank: 20,
+          requiredDirectCount: 2,
+          allowedDirectRanks: [17, 18, 19, 20],
+          allowedDirectRanksLabel: 'r-17 หรือ r-18 หรือ r-19 หรือ r-20',
+        },
+        {
+          poolNumber: 3,
+          key: 'pool3_r24',
+          titleTh: 'กองที่ 3 : r-24 (5,000 USDT)',
+          targetRank: 24,
+          targetRankPriceUsdt: 5000,
+          requiredSelfRank: 24,
+          requiredDirectCount: 2,
+          allowedDirectRanks: [22, 23, 24],
+          allowedDirectRanksLabel: 'r-22 หรือ r-23 หรือ r-24',
+        },
+        {
+          poolNumber: 4,
+          key: 'pool4_r27',
+          titleTh: 'กองที่ 4 : r-27 (10,000 USDT)',
+          targetRank: 27,
+          targetRankPriceUsdt: 10000,
+          requiredSelfRank: 27,
+          requiredDirectCount: 5,
+          allowedDirectRanks: [25, 26, 27],
+          allowedDirectRanksLabel: 'r-25 หรือ r-26 หรือ r-27',
+        },
+      ];
+
+      const poolQualifiedIdsMap = new Map<number, number[]>();
+      for (const pDef of ALLSELL_FOUR_POOL_DEFS) {
+        poolQualifiedIdsMap.set(pDef.poolNumber, []);
+      }
+
+      // First pass: evaluate each Main ID's direct referrals and qualification per pool
+      for (const rep of eligibleMainReports) {
+        const directMainRefs = eligibleMainReports.filter(
+          (d) => d.id !== rep.id && d.directSponsorNodeId === rep.id
+        );
+        const directMainIdsList = directMainRefs.map((d) => ({
+          id: d.id,
+          currentMaxRank: d.currentMaxRank,
+          isAutoId: d.isAutoId,
+        }));
+
+        const poolsEval = ALLSELL_FOUR_POOL_DEFS.map((pDef) => {
+          const hasSelfRank =
+            rep.currentMaxRank >= pDef.requiredSelfRank ||
+            rep.rankNodesList.some((rn) => rn.rank === pDef.requiredSelfRank);
+          const qualifiedDirectIds = directMainRefs
+            .filter(
+              (d) =>
+                pDef.allowedDirectRanks.includes(d.currentMaxRank) ||
+                d.rankNodesList.some((rn) => pDef.allowedDirectRanks.includes(rn.rank))
+            )
+            .map((d) => ({ id: d.id, currentMaxRank: d.currentMaxRank }));
+          const qualifiedDirectCount = qualifiedDirectIds.length;
+          const isQualified = hasSelfRank && qualifiedDirectCount >= pDef.requiredDirectCount;
+          if (isQualified) {
+            poolQualifiedIdsMap.get(pDef.poolNumber)?.push(rep.id);
+          }
+          const singlePoolTotalUsdt = Number((allSellTotalUsdt * 0.25).toFixed(2));
+          return {
+            poolNumber: pDef.poolNumber,
+            key: pDef.key,
+            titleTh: pDef.titleTh,
+            targetRank: pDef.targetRank,
+            targetRankPriceUsdt: pDef.targetRankPriceUsdt,
+            requiredSelfRank: pDef.requiredSelfRank,
+            hasSelfRank,
+            requiredDirectCount: pDef.requiredDirectCount,
+            allowedDirectRanks: pDef.allowedDirectRanks,
+            allowedDirectRanksLabel: pDef.allowedDirectRanksLabel,
+            qualifiedDirectIds,
+            qualifiedDirectCount,
+            isQualified,
+            poolTotalUsdt: singlePoolTotalUsdt,
+            estimatedShareUsdt: 0,
+          };
+        });
+
+        rep.allSellQualification = {
+          totalDirectMainIds: directMainIdsList.length,
+          directMainIdsList,
+          totalQualifiedPoolsCount: poolsEval.filter((p) => p.isQualified).length,
+          estimatedAllSellShareUsdt: 0,
+          pools: poolsEval,
+        };
+      }
+
+      // Second pass: compute per-pool summary and per-qualified-ID share
+      const allSellFourPools = ALLSELL_FOUR_POOL_DEFS.map((pDef) => {
+        const qualifiedIds = poolQualifiedIdsMap.get(pDef.poolNumber) || [];
+        const poolTotalUsdt = Number((allSellTotalUsdt * 0.25).toFixed(2));
+        const poolOnChainUsdt = Number((onChainAllSellBal * 0.25).toFixed(2));
+        const sharePerQualifiedIdUsdt =
+          qualifiedIds.length > 0 ? Number((poolTotalUsdt / qualifiedIds.length).toFixed(2)) : 0;
+        return {
+          poolNumber: pDef.poolNumber,
+          key: pDef.key,
+          titleTh: pDef.titleTh,
+          targetRank: pDef.targetRank,
+          targetRankPriceUsdt: pDef.targetRankPriceUsdt,
+          requiredSelfRank: pDef.requiredSelfRank,
+          requiredDirectCount: pDef.requiredDirectCount,
+          allowedDirectRanks: pDef.allowedDirectRanks,
+          allowedDirectRanksLabel: pDef.allowedDirectRanksLabel,
+          sharePercentOfAllSell: 25,
+          payoutScheduleTh: 'จ่ายเงินให้ผู้ผ่านเกณฑ์ ทุกกลางเดือน และ ต้นเดือน (วันที่ 1 และ 15 ของทุกเดือน)',
+          poolTotalUsdt,
+          poolOnChainUsdt,
+          qualifiedMainIds: qualifiedIds,
+          qualifiedCount: qualifiedIds.length,
+          sharePerQualifiedIdUsdt,
+        };
+      });
+
+      for (const rep of eligibleMainReports) {
+        if (!rep.allSellQualification) continue;
+        let totalShare = 0;
+        for (const pItem of rep.allSellQualification.pools) {
+          const poolSummary = allSellFourPools.find((x) => x.poolNumber === pItem.poolNumber);
+          if (pItem.isQualified && poolSummary) {
+            pItem.estimatedShareUsdt = poolSummary.sharePerQualifiedIdUsdt;
+            totalShare = Number((totalShare + poolSummary.sharePerQualifiedIdUsdt).toFixed(2));
+          }
+        }
+        rep.allSellQualification.estimatedAllSellShareUsdt = totalShare;
+      }
+
+      // Copy parent Main ID's allSellQualification to its Clone reports for convenience
+      for (const rep of allReports) {
+        if (rep.isClone && !rep.allSellQualification) {
+          const origRep = reportsMap.get(rep.originMainId);
+          if (origRep?.allSellQualification) {
+            rep.allSellQualification = origRep.allSellQualification;
+          }
+        }
+      }
 
       res.json({
         success: true,
@@ -5376,6 +5560,8 @@ async function startApp() {
           familyPoolWallet: familyPoolWalletAddr,
           botWallet: botWalletAddr,
           allSellTotalUsdt: Number(allSellTotalUsdt.toFixed(2)),
+          allSellPayoutScheduleTh: 'จ่ายเงินให้ที่ผ่านเกณฑ์ ทุกกลางเดือน และ ต้นเดือน (วันที่ 1 และ 15 ของทุกเดือน)',
+          allSellFourPools,
           allSellByRank,
           allSellHistory,
           familyPoolTotalUsdt: Number(familyPoolTotalUsdt.toFixed(2)),
@@ -6852,9 +7038,24 @@ async function startApp() {
   });
 
   if (process.env.NODE_ENV === 'production') {
-    app.use(express.static(path.resolve(__dirname, 'dist')));
+    const distDir = path.resolve(__dirname, 'dist');
+    app.use(
+      express.static(distDir, {
+        etag: false,
+        setHeaders: (res, filePath) => {
+          if (filePath.endsWith('.html')) {
+            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+            res.setHeader('Pragma', 'no-cache');
+            res.setHeader('Expires', '0');
+          }
+        },
+      })
+    );
     app.get('*', (_req: Request, res: Response) => {
-      res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+      res.sendFile(path.resolve(distDir, 'index.html'));
     });
   } else {
     process.env.DISABLE_HMR = 'true';

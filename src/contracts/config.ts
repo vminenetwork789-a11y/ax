@@ -1,5 +1,5 @@
 export const DEFAULT_CONTRACT_ADDRESS =
-  import.meta.env?.VITE_CONTRACT_ADDRESS || '0x7FA05f1aEb74209612aEA56472d9A2e2e9D44073';
+  import.meta.env?.VITE_CONTRACT_ADDRESS || '0x003EF4aAaB33e517B2F565320dF37e88b2db7A69';
 export const DEFAULT_USDT_ADDRESS =
   import.meta.env?.VITE_USDT_ADDRESS || '0x05f24E1F598DF1aE8d0B424ce978f8ea33bB752b';
 
@@ -26,6 +26,7 @@ const LEGACY_CONTRACT_ADDRESSES = new Set([
   '0x01fed3686a284dcac8ef7277c4657a2aa12fab54',
   '0xda7acd2ca8967e8015e0931e652d4b7ee5e1c436',
   '0x07953ba884e2d05fa543ef7eaec426c8de6d58ff',
+  '0x7fa05f1aeb74209612aea56472d9a2e2e9d44073',
 ]);
 
 const LEGACY_USDT_ADDRESSES = new Set([
@@ -41,6 +42,12 @@ export const BSC_TESTNET_CHAIN_ID_HEX = '0x61';
 
 export function getDynamicContractAddress(): string {
   if (typeof window !== 'undefined') {
+    const prevBuildDefault = localStorage.getItem('F27_BUILD_DEFAULT_CONTRACT');
+    if (prevBuildDefault !== DEFAULT_CONTRACT_ADDRESS.toLowerCase()) {
+      localStorage.setItem('F27_BUILD_DEFAULT_CONTRACT', DEFAULT_CONTRACT_ADDRESS.toLowerCase());
+      localStorage.setItem('F27_ACTIVE_CONTRACT_ADDRESS', DEFAULT_CONTRACT_ADDRESS);
+      return DEFAULT_CONTRACT_ADDRESS;
+    }
     const custom = localStorage.getItem('F27_ACTIVE_CONTRACT_ADDRESS');
     if (custom && custom.startsWith('0x') && custom.length === 42) {
       if (LEGACY_CONTRACT_ADDRESSES.has(custom.toLowerCase())) {
