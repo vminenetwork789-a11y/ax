@@ -1528,290 +1528,364 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
       // ตรวจสอบว่าผู้แนะนำตรง (Direct Sponsor ID เช่น ID #5) มีโหนดอยู่ใน Rank นั้นหรือยัง
       // หากผู้แนะนำยังไม่ได้อัปเกรดขึ้นมาถึง Rank นั้น ให้หาตำแหน่งว่างชั้นตื้นลงมาจากซ้ายไปขวา (BFS จาก Root #1)
       const snapR1ForPlacement = multiRankSnapshots.get(1);
+      const snapR9ForPlacement = multiRankSnapshots.get(9);
+      const snapR4ForPlacement = multiRankSnapshots.get(4);
+
       for (const [rNum, sMap] of multiRankSnapshots.entries()) {
         if (rNum <= 1 || sMap.size <= 1) continue;
         const sIds = Array.from(sMap.keys()).sort((a, b) => a - b);
 
+        // 1. Resolve directSponsorNodeId for Extra IDs and Main IDs in Rank 2..27 from Rank 1 before checking tree placement
+        if (snapR1ForPlacement && snapR1ForPlacement.size > 0) {
+          const r1List = Array.from(snapR1ForPlacement.values()).sort((a, b) => a.id - b.id);
+          for (const nid of sIds) {
+            const node = sMap.get(nid)!;
+            if (node.isExtraId && !node.isClone) {
+              const ok = (node.owner || '').toLowerCase();
+              const ownerMainsR1 = r1List.filter(
+                (m) => !m.isClone && !m.isExtraId && (m.owner || '').toLowerCase() === ok
+              );
+              if (ownerMainsR1.length === 1) {
+                node.directSponsorNodeId = ownerMainsR1[0].id;
+                node.directSponsor = ownerMainsR1[0].owner;
+              } else if (ownerMainsR1.length > 1) {
+                const eligibleMain =
+                  ownerMainsR1.find(
+                    (m) =>
+                      m.id === 1 ||
+                      (snapR9ForPlacement &&
+                        Array.from(snapR9ForPlacement.values()).some(
+                          (x) => !x.isClone && !x.isExtraId && x.originMainId === m.id
+                        ))
+                  ) ||
+                  ownerMainsR1.find(
+                    (m) =>
+                      m.id === 1 ||
+                      (snapR4ForPlacement &&
+                        Array.from(snapR4ForPlacement.values()).some(
+                          (x) => !x.isClone && !x.isExtraId && x.originMainId === m.id
+                        ))
+                  ) ||
+                  ownerMainsR1[0];
+                node.directSponsorNodeId = eligibleMain.id;
+                node.directSponsor = eligibleMain.owner;
+              }
+              if (rNum === activeRank && node.directSponsorNodeId > 0) {
+                onChainSponsorNodeMap.set(node.id, node.directSponsorNodeId);
+              }
+            } else if (!node.isClone && !node.isExtraId && node.id > 1) {
+              const origR1 =
+                node.originMainId > 1
+                  ? snapR1ForPlacement.get(node.originMainId)
+                  : r1List.find(
+                      (x) =>
+                        x.id > 1 &&
+                        !x.isClone &&
+                        !x.isExtraId &&
+                        (x.owner || '').toLowerCase() === (node.owner || '').toLowerCase()
+                    );
+              if (origR1 && !origR1.isClone && !origR1.isExtraId) {
+                node.originMainId = origR1.id;
+                node.directSponsorNodeId = origR1.directSponsorNodeId || 1;
+                node.directSponsor = origR1.directSponsor || node.directSponsor;
+                if (rNum === activeRank) {
+                  onChainOriginMap.set(node.id, node.originMainId);
+                  onChainSponsorNodeMap.set(node.id, node.directSponsorNodeId);
+                }
+              }
+            }
+          }
+        }
+
+        // 2. Check if any node in Rank 2..27 is misplaced (e.g. Extra ID not under its Direct Sponsor/Clone) or orphaned
+        let needsReplay = false;
         for (const nid of sIds) {
           if (nid <= 1) continue;
           const node = sMap.get(nid)!;
-          if (node.isClone || node.isExtraId) continue;
-
-          let spMainId = node.directSponsorNodeId || 0;
-          if (spMainId <= 0 && node.originMainId > 1 && snapR1ForPlacement) {
-            const origR1 = snapR1ForPlacement.get(node.originMainId);
-            if (origR1 && origR1.directSponsorNodeId > 0) {
-              spMainId = origR1.directSponsorNodeId;
+          const p = sMap.get(node.parentId);
+          if (!p || (p.leftChild !== node.id && p.rightChild !== node.id)) {
+            needsReplay = true;
+            break;
+          }
+          if (node.isExtraId && !node.isClone) {
+            const spMainId = node.directSponsorNodeId > 0 ? node.directSponsorNodeId : 1;
+            let spNodeInRank: RankNodeSnapshot | undefined;
+            for (const prevId of sIds) {
+              if (prevId >= nid) break;
+              const prev = sMap.get(prevId);
+              if (!prev || prev.isClone || prev.isExtraId) continue;
+              if (spMainId === 1 ? prev.id === 1 : prev.originMainId === spMainId) {
+                spNodeInRank = prev;
+                break;
+              }
+            }
+            if (spNodeInRank) {
+              const spOrigTag = spNodeInRank.originMainId || spNodeInRank.id;
+              const isUnderSp =
+                p.id === spNodeInRank.id ||
+                (p.isClone &&
+                  ((p.originMainId || p.id) === spNodeInRank.id ||
+                    (p.originMainId || p.id) === spOrigTag));
+              if (!isUnderSp) {
+                needsReplay = true;
+                break;
+              }
+            }
+          } else if (!node.isClone && !node.isExtraId) {
+            const spMainId = node.directSponsorNodeId > 0 ? node.directSponsorNodeId : 1;
+            if (spMainId > 1) {
+              const sponsorBefore = sIds.some((prevId) => {
+                if (prevId >= nid) return false;
+                const prev = sMap.get(prevId);
+                return Boolean(
+                  prev && !prev.isClone && !prev.isExtraId && prev.originMainId === spMainId
+                );
+              });
+              if (!sponsorBefore && p.isClone) {
+                needsReplay = true;
+                break;
+              }
             }
           }
-          if (spMainId <= 1) continue;
+        }
 
-          const sponsorExistsBefore = sIds.some((prevId) => {
-            if (prevId >= nid) return false;
-            const prev = sMap.get(prevId);
-            if (!prev || prev.isClone || prev.isExtraId) return false;
-            return spMainId === 1 ? prev.id === 1 : prev.originMainId === spMainId;
-          });
+        if (!needsReplay) {
+          const rightTriggerCountByOrig = new Map<number, number>();
+          const actualCloneCountByOrig = new Map<number, number>();
+          for (const node of sMap.values()) {
+            const origKey = node.isClone
+              ? node.originMainId || node.id
+              : node.isExtraId
+              ? node.id
+              : node.originMainId || node.id;
+            if (node.isClone) {
+              actualCloneCountByOrig.set(origKey, (actualCloneCountByOrig.get(origKey) || 0) + 1);
+            }
+            if (node.rightChild > 0 && sMap.has(node.rightChild)) {
+              rightTriggerCountByOrig.set(origKey, (rightTriggerCountByOrig.get(origKey) || 0) + 1);
+            }
+          }
+          for (const [origKey, trigCnt] of rightTriggerCountByOrig.entries()) {
+            if ((actualCloneCountByOrig.get(origKey) || 0) !== trigCnt) {
+              needsReplay = true;
+              break;
+            }
+          }
+          for (const [origKey, cloneCnt] of actualCloneCountByOrig.entries()) {
+            if ((rightTriggerCountByOrig.get(origKey) || 0) !== cloneCnt) {
+              needsReplay = true;
+              break;
+            }
+          }
+        }
 
-          if (!sponsorExistsBefore) {
-            const curParent = sMap.get(node.parentId);
-            if (curParent && !curParent.isClone) continue;
-            const q: number[] = [1];
+        // 3. Chronological replay of Rank 2..27 placements and right-child Rebirth Clone triggers
+        if (needsReplay) {
+          const allSnaps = Array.from(sMap.values()).sort((a, b) => a.id - b.id);
+          const rootSnap = sMap.get(1) || allSnaps[0];
+          const nonCloneSnaps = allSnaps.filter((sn) => sn.id !== rootSnap.id && !sn.isClone);
+          const cloneSnapIds = allSnaps
+            .filter((sn) => sn.id !== rootSnap.id && sn.isClone)
+            .map((sn) => sn.id);
+          const cloneSnapTemplates = new Map<number, RankNodeSnapshot>();
+          for (const sn of allSnaps) {
+            if (sn.isClone) cloneSnapTemplates.set(sn.id, sn);
+          }
+
+          rootSnap.parentId = 0;
+          rootSnap.leftChild = 0;
+          rootSnap.rightChild = 0;
+
+          const placedMap = new Map<number, RankNodeSnapshot>();
+          placedMap.set(rootSnap.id, rootSnap);
+          let cloneCursor = 0;
+
+          const findBfsSlot = (startId: number = 1): { parentId: number; isLeft: boolean } => {
+            const q = [placedMap.has(startId) ? startId : rootSnap.id];
             const vis = new Set<number>();
-            let shallowParentId = 1;
-            let shallowIsLeft = true;
-
             while (q.length > 0) {
               const curId = q.shift()!;
               if (vis.has(curId)) continue;
               vis.add(curId);
-              const cur = sMap.get(curId);
-              if (!cur || cur.id >= nid) continue;
-
-              const hasLeftBefore =
-                cur.leftChild > 0 &&
-                cur.leftChild < nid &&
-                sMap.has(cur.leftChild) &&
-                sMap.get(cur.leftChild)!.parentId === cur.id;
-              if (!hasLeftBefore) {
-                shallowParentId = cur.id;
-                shallowIsLeft = true;
-                break;
+              const cur = placedMap.get(curId);
+              if (!cur) continue;
+              if (!cur.leftChild || !placedMap.has(cur.leftChild)) {
+                return { parentId: cur.id, isLeft: true };
               }
-
-              const hasRightBefore =
-                cur.rightChild > 0 &&
-                cur.rightChild < nid &&
-                sMap.has(cur.rightChild) &&
-                sMap.get(cur.rightChild)!.parentId === cur.id;
-              if (!hasRightBefore) {
-                shallowParentId = cur.id;
-                shallowIsLeft = false;
-                break;
+              if (!cur.rightChild || !placedMap.has(cur.rightChild)) {
+                return { parentId: cur.id, isLeft: false };
               }
-
               q.push(cur.leftChild, cur.rightChild);
             }
+            return { parentId: rootSnap.id, isLeft: true };
+          };
 
-            const shallowParent = sMap.get(shallowParentId);
-            if (shallowParent && node.parentId !== shallowParentId) {
-              const oldParent = sMap.get(node.parentId);
-              if (oldParent) {
-                if (oldParent.leftChild === nid) oldParent.leftChild = 0;
-                if (oldParent.rightChild === nid) oldParent.rightChild = 0;
+          const findSponsorSlot = (spInRankId: number): { parentId: number; isLeft: boolean } => {
+            if (!spInRankId || !placedMap.has(spInRankId)) {
+              return findBfsSlot(1);
+            }
+            const spMain = placedMap.get(spInRankId)!;
+            if (!spMain.leftChild || !placedMap.has(spMain.leftChild)) {
+              return { parentId: spMain.id, isLeft: true };
+            }
+            if (!spMain.rightChild || !placedMap.has(spMain.rightChild)) {
+              return { parentId: spMain.id, isLeft: false };
+            }
+            const spOrigTag = spMain.originMainId || spMain.id;
+            const placedSorted = Array.from(placedMap.values()).sort((a, b) => a.id - b.id);
+            for (const cand of placedSorted) {
+              if (!cand.isClone) continue;
+              const cOrig = cand.originMainId || cand.id;
+              if (cOrig !== spMain.id && cOrig !== spOrigTag) continue;
+              if (!cand.leftChild || !placedMap.has(cand.leftChild)) {
+                return { parentId: cand.id, isLeft: true };
               }
-              node.parentId = shallowParentId;
-              if (shallowIsLeft) {
-                shallowParent.leftChild = nid;
+              if (!cand.rightChild || !placedMap.has(cand.rightChild)) {
+                return { parentId: cand.id, isLeft: false };
+              }
+            }
+            for (const cand of placedSorted) {
+              if (!cand.isClone) continue;
+              const cOrig = cand.originMainId || cand.id;
+              if (cOrig !== spMain.id && cOrig !== spOrigTag) continue;
+              return findBfsSlot(cand.id);
+            }
+            return findBfsSlot(spMain.id);
+          };
+
+          const spawnTriggeredSnapClones = (initialParent: RankNodeSnapshot) => {
+            const rightQueue: RankNodeSnapshot[] = [initialParent];
+            let guard = 0;
+            while (rightQueue.length > 0 && guard < 100) {
+              guard++;
+              const trigParent = rightQueue.shift()!;
+              const placedArr = Array.from(placedMap.values());
+              const trigOriginNode = !trigParent.isClone
+                ? trigParent
+                : placedArr.find(
+                    (p) =>
+                      !p.isClone &&
+                      (p.id === trigParent.originMainId ||
+                        p.originMainId === trigParent.originMainId)
+                  ) || trigParent;
+
+              const cloneOrigMainId = trigOriginNode.isExtraId
+                ? trigOriginNode.id
+                : trigOriginNode.originMainId || trigOriginNode.id;
+
+              const existingClonesForOrig = placedArr.filter(
+                (p) => p.isClone && (p.originMainId || p.id) === cloneOrigMainId
+              ).length;
+              const roundIdx = existingClonesForOrig % 2;
+
+              let savedSponsorId = trigOriginNode.directSponsorNodeId || 1;
+              let sponsorNodeInRankId = 0;
+              if (cloneOrigMainId === 1 || trigOriginNode.id === 1) {
+                savedSponsorId = 1;
+                sponsorNodeInRankId = 1;
               } else {
-                shallowParent.rightChild = nid;
-              }
-
-              if (rNum === activeRank) {
-                const rawChild = rawNodes.get(nid);
-                const rawOldParent = oldParent ? rawNodes.get(oldParent.id) : undefined;
-                const rawNewParent = rawNodes.get(shallowParentId);
-                if (rawOldParent) {
-                  if (rawOldParent.leftChild === nid) rawOldParent.leftChild = 0;
-                  if (rawOldParent.rightChild === nid) rawOldParent.rightChild = 0;
-                }
-                if (rawChild && rawNewParent) {
-                  rawChild.parentId = shallowParentId;
-                  if (shallowIsLeft) rawNewParent.leftChild = nid;
-                  else rawNewParent.rightChild = nid;
-                }
-              }
-            }
-          }
-        }
-
-        // สำหรับการวางตำแหน่ง Auto Extra ID ใน Rank 2-27:
-        // จะต้องไปต่อติดผู้แนะนำ Direct Sponsor เท่านั้น ถ้าไอดีผู้แนะนำ Direct Sponsor เต็ม ก็ไปหาไอดีโคลนนิ่งของผู้แนะนำ Direct Sponsor เท่านั้น
-        const removedFalseCloneIds = new Set<number>();
-        for (const nid of sIds) {
-          if (nid <= 1 || removedFalseCloneIds.has(nid)) continue;
-          const node = sMap.get(nid);
-          if (!node || !node.isExtraId) continue;
-
-          const spMainId = node.directSponsorNodeId > 0 ? node.directSponsorNodeId : 1;
-          let spNodeInRank: RankNodeSnapshot | undefined;
-          for (const prevId of sIds) {
-            if (prevId >= nid || removedFalseCloneIds.has(prevId)) continue;
-            const prev = sMap.get(prevId);
-            if (!prev || prev.isClone || prev.isExtraId) continue;
-            if (spMainId === 1 ? prev.id === 1 : prev.originMainId === spMainId) {
-              spNodeInRank = prev;
-              break;
-            }
-          }
-          if (!spNodeInRank) continue;
-
-          const spOrigTag = spNodeInRank.originMainId || spNodeInRank.id;
-          const curParent = sMap.get(node.parentId);
-          const isAlreadyUnderSpOrSpClone =
-            curParent &&
-            (curParent.id === spNodeInRank.id ||
-              (curParent.isClone &&
-                ((curParent.originMainId || curParent.id) === spNodeInRank.id ||
-                  (curParent.originMainId || curParent.id) === spOrigTag)));
-
-          if (!isAlreadyUnderSpOrSpClone) {
-            let targetParentId = 0;
-            let targetIsLeft = true;
-
-            const spHasLeftBefore =
-              spNodeInRank.leftChild > 0 &&
-              spNodeInRank.leftChild < nid &&
-              sMap.has(spNodeInRank.leftChild);
-            const spHasRightBefore =
-              spNodeInRank.rightChild > 0 &&
-              spNodeInRank.rightChild < nid &&
-              sMap.has(spNodeInRank.rightChild);
-
-            if (!spHasLeftBefore) {
-              targetParentId = spNodeInRank.id;
-              targetIsLeft = true;
-            } else if (!spHasRightBefore) {
-              targetParentId = spNodeInRank.id;
-              targetIsLeft = false;
-            } else {
-              for (const candId of sIds) {
-                if (candId >= nid || removedFalseCloneIds.has(candId)) continue;
-                const cand = sMap.get(candId);
-                if (!cand || !cand.isClone) continue;
-                const cOrig = cand.originMainId || cand.id;
-                if (cOrig !== spNodeInRank.id && cOrig !== spOrigTag) continue;
-
-                const cHasLeftBefore =
-                  cand.leftChild > 0 && cand.leftChild < nid && sMap.has(cand.leftChild);
-                if (!cHasLeftBefore) {
-                  targetParentId = cand.id;
-                  targetIsLeft = true;
-                  break;
-                }
-                const cHasRightBefore =
-                  cand.rightChild > 0 && cand.rightChild < nid && sMap.has(cand.rightChild);
-                if (!cHasRightBefore) {
-                  targetParentId = cand.id;
-                  targetIsLeft = false;
-                  break;
-                }
-              }
-            }
-
-            const targetParent = targetParentId > 0 ? sMap.get(targetParentId) : undefined;
-            if (targetParent && node.parentId !== targetParent.id) {
-              const oldParent = sMap.get(node.parentId);
-              if (oldParent) {
-                if (oldParent.leftChild === nid) oldParent.leftChild = 0;
-                if (oldParent.rightChild === nid) oldParent.rightChild = 0;
-              }
-
-              const displacedId = targetIsLeft ? targetParent.leftChild : targetParent.rightChild;
-              if (displacedId > 0 && displacedId !== nid && sMap.has(displacedId)) {
-                const displacedNode = sMap.get(displacedId)!;
-                const oldOrig = oldParent ? oldParent.originMainId || oldParent.id : 0;
-                const dispOrig = displacedNode.originMainId || displacedNode.id;
-                const hasChildren = Array.from(sMap.values()).some(
-                  (c) =>
-                    c.id !== displacedNode.id &&
-                    !removedFalseCloneIds.has(c.id) &&
-                    c.parentId === displacedNode.id
+                const spNodeInR = placedArr.find(
+                  (p) =>
+                    !p.isClone &&
+                    !p.isExtraId &&
+                    (savedSponsorId === 1 ? p.id === 1 : p.originMainId === savedSponsorId)
                 );
-
-                if (
-                  displacedNode.isClone &&
-                  oldOrig > 0 &&
-                  dispOrig === oldOrig &&
-                  (!oldParent?.rightChild || oldParent.rightChild === 0) &&
-                  !hasChildren
-                ) {
-                  removedFalseCloneIds.add(displacedNode.id);
-                  sMap.delete(displacedNode.id);
-                  if (rNum === activeRank) {
-                    rawNodes.delete(displacedNode.id);
-                  }
-                } else if (!targetParent.rightChild || !sMap.has(targetParent.rightChild)) {
-                  targetParent.rightChild = displacedNode.id;
-                  displacedNode.parentId = targetParent.id;
-                  if (rNum === activeRank) {
-                    const rawDisp = rawNodes.get(displacedNode.id);
-                    const rawTarg = rawNodes.get(targetParent.id);
-                    if (rawDisp && rawTarg) {
-                      rawDisp.parentId = targetParent.id;
-                      rawTarg.rightChild = displacedNode.id;
-                    }
-                  }
-                }
+                sponsorNodeInRankId = spNodeInR ? spNodeInR.id : 0;
               }
 
-              node.parentId = targetParent.id;
-              if (targetIsLeft) {
-                targetParent.leftChild = nid;
-              } else {
-                targetParent.rightChild = nid;
-              }
+              const cSlot =
+                roundIdx === 0 && sponsorNodeInRankId > 0
+                  ? findSponsorSlot(sponsorNodeInRankId)
+                  : findBfsSlot(1);
 
-              if (rNum === activeRank) {
-                const rawChild = rawNodes.get(nid);
-                const rawOldParent = oldParent ? rawNodes.get(oldParent.id) : undefined;
-                const rawNewParent = rawNodes.get(targetParent.id);
-                if (rawOldParent) {
-                  if (rawOldParent.leftChild === nid) rawOldParent.leftChild = 0;
-                  if (rawOldParent.rightChild === nid) rawOldParent.rightChild = 0;
-                }
-                if (rawChild && rawNewParent) {
-                  rawChild.parentId = targetParent.id;
-                  if (targetIsLeft) rawNewParent.leftChild = nid;
-                  else rawNewParent.rightChild = nid;
+              const assignedCloneId =
+                cloneCursor < cloneSnapIds.length
+                  ? cloneSnapIds[cloneCursor++]
+                  : Math.max(
+                      ...Array.from(placedMap.keys()),
+                      ...nonCloneSnaps.map((x) => x.id),
+                      0
+                    ) + 1;
+
+              const template = cloneSnapTemplates.get(assignedCloneId);
+              const cloneSnap: RankNodeSnapshot = {
+                ...(template || {}),
+                id: assignedCloneId,
+                owner: trigOriginNode.owner,
+                directSponsor: trigOriginNode.directSponsor || rootSnap.owner,
+                parentId: cSlot.parentId,
+                leftChild: 0,
+                rightChild: 0,
+                isClone: true,
+                isExtraId: false,
+                originMainId: cloneOrigMainId,
+                directSponsorNodeId: savedSponsorId,
+                nodeVault: 0,
+                originType: 'CLONE',
+              };
+
+              const cParent = placedMap.get(cSlot.parentId);
+              placedMap.set(cloneSnap.id, cloneSnap);
+              if (cParent) {
+                if (cSlot.isLeft) {
+                  cParent.leftChild = cloneSnap.id;
+                } else {
+                  cParent.rightChild = cloneSnap.id;
+                  rightQueue.push(cParent);
                 }
               }
+            }
+          };
+
+          for (const sn of nonCloneSnaps) {
+            sn.leftChild = 0;
+            sn.rightChild = 0;
+            const spMainId = sn.directSponsorNodeId > 0 ? sn.directSponsorNodeId : 1;
+            const spNodeInRank = Array.from(placedMap.values()).find(
+              (p) =>
+                !p.isClone &&
+                !p.isExtraId &&
+                (spMainId === 1 ? p.id === 1 : p.originMainId === spMainId)
+            );
+            const slot = spNodeInRank ? findSponsorSlot(spNodeInRank.id) : findBfsSlot(1);
+            const targetParent = placedMap.get(slot.parentId) || rootSnap;
+            sn.parentId = targetParent.id;
+            placedMap.set(sn.id, sn);
+            if (slot.isLeft) {
+              targetParent.leftChild = sn.id;
+            } else {
+              targetParent.rightChild = sn.id;
+              spawnTriggeredSnapClones(targetParent);
             }
           }
-        }
 
-        for (const cid of sIds) {
-          if (removedFalseCloneIds.has(cid)) continue;
-          const c = sMap.get(cid);
-          if (!c || !c.isClone) continue;
-          const origId = c.originMainId || c.id;
-          const hasAnyRightTrigger = Array.from(sMap.values()).some(
-            (m) =>
-              !removedFalseCloneIds.has(m.id) &&
-              (m.id === origId || (m.originMainId || m.id) === origId) &&
-              m.rightChild > 0 &&
-              sMap.has(m.rightChild)
-          );
-          const hasChildren = Array.from(sMap.values()).some(
-            (ch) =>
-              ch.id !== c.id &&
-              !removedFalseCloneIds.has(ch.id) &&
-              ch.parentId === c.id
-          );
-          if (!hasAnyRightTrigger && !hasChildren) {
-            removedFalseCloneIds.add(c.id);
-            sMap.delete(c.id);
-            if (rNum === activeRank) {
-              rawNodes.delete(c.id);
-            }
-            const p = sMap.get(c.parentId);
-            if (p) {
-              if (p.leftChild === c.id) {
-                if (p.rightChild > 0 && sMap.has(p.rightChild)) {
-                  p.leftChild = p.rightChild;
-                  p.rightChild = 0;
-                } else {
-                  p.leftChild = 0;
-                }
-              } else if (p.rightChild === c.id) {
-                p.rightChild = 0;
-              }
-              if (rNum === activeRank) {
-                const rawP = rawNodes.get(p.id);
-                if (rawP) {
-                  rawP.leftChild = p.leftChild;
-                  rawP.rightChild = p.rightChild;
-                }
+          sMap.clear();
+          const finalSnaps = Array.from(placedMap.values()).sort((a, b) => a.id - b.id);
+          for (const fs of finalSnaps) {
+            sMap.set(fs.id, fs);
+          }
+
+          if (rNum === activeRank) {
+            rawNodes.clear();
+            const cloneRoundTracker = new Map<number, number>();
+            for (const fs of finalSnaps) {
+              rawNodes.set(fs.id, {
+                id: fs.id,
+                owner: fs.owner,
+                directSponsor: fs.directSponsor,
+                parentId: fs.parentId,
+                leftChild: fs.leftChild,
+                rightChild: fs.rightChild,
+                isClone: fs.isClone,
+                isExtraId: fs.isExtraId,
+              });
+              onChainOriginMap.set(fs.id, fs.originMainId || fs.id);
+              onChainSponsorNodeMap.set(fs.id, fs.directSponsorNodeId || 1);
+              if (fs.isClone) {
+                const origKey = fs.originMainId || fs.id;
+                const nextCnt = (cloneRoundTracker.get(origKey) || 0) + 1;
+                cloneRoundTracker.set(origKey, nextCnt);
+                onChainCloneRoundMap.set(fs.id, ((nextCnt - 1) % 2) + 1);
               }
             }
           }

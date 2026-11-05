@@ -185,7 +185,7 @@ const DEFAULT_SYSTEM_CONFIG = {
   contractAddress:
     process.env.OVERRIDE_CONTRACT_ADDRESS ||
     process.env.CONTRACT_ADDRESS ||
-    '0xc5cF23d0CEAd13A08b3B3d968A052b956A64fBC6',
+    '0x47Ff540a2E04Aa36CDc4A4Ec6E4feADAC1A71B66',
   usdtAddress: process.env.USDT_ADDRESS || '0x05f24E1F598DF1aE8d0B424ce978f8ea33bB752b',
   chainId: Number(process.env.CHAIN_ID || 97),
   networkName: process.env.NETWORK_NAME || 'BNB Smart Chain Testnet',
@@ -195,6 +195,7 @@ const DEFAULT_SYSTEM_CONFIG = {
 };
 
 const SERVER_LEGACY_CONTRACTS = new Set([
+  '0xc5cf23d0cead13a08b3b3d968a052b956a64fbc6',
   '0xe231fe72e1c2ab2617d8972c4ea15bc9122e514f',
   '0x45405293ecce73f1a8c39ca8c0cc2248d6b9ab77',
   '0xf955de5c1a403c9d286538a872c17837aebdd8ca',
@@ -1407,251 +1408,277 @@ function reconcileRankTreeLinks(nodes: IndexedTreeNode[]): IndexedTreeNode[] {
   const rankNum = nodes[0]?.rank || 1;
   if (rankNum > 1 && nodes.length > 1) {
     const r1Nodes = matrixDB?.nodesByRank?.[1] || [];
-    for (const n of nodes) {
-      if (n.id <= 1 || n.isClone || n.isExtraId) continue;
+    const r9Nodes = matrixDB?.nodesByRank?.[9] || [];
+    const r4Nodes = matrixDB?.nodesByRank?.[4] || [];
 
-      let spMainId = n.directSponsorNodeId || 0;
-      if (spMainId <= 0 && n.originMainId > 1 && r1Nodes.length > 0) {
-        const origR1 = r1Nodes.find((x) => x.id === n.originMainId && !x.isClone && !x.isExtraId);
-        if (origR1 && origR1.directSponsorNodeId > 0) {
-          spMainId = origR1.directSponsorNodeId;
-        }
-      }
-      if (spMainId <= 1) continue;
-
-      const sponsorNodeInRankBefore = nodes.find(
-        (prev) =>
-          prev.id < n.id &&
-          !prev.isClone &&
-          !prev.isExtraId &&
-          (spMainId === 1 ? prev.id === 1 : prev.originMainId === spMainId)
-      );
-
-      if (!sponsorNodeInRankBefore) {
-        const curParent = byId.get(n.parentId);
-        if (curParent && !curParent.isClone) continue;
-        // ผู้แนะนำตรงยังไม่มีโหนดใน Rank นี้ ณ เวลาที่โหนดนี้ถูกสร้าง -> หาตำแหน่งว่างชั้นตื้นลงมาจากซ้ายไปขวา
-        const queue: number[] = [1];
-        const visited = new Set<number>();
-        let shallowParentId = 1;
-        let shallowIsLeft = true;
-
-        while (queue.length > 0) {
-          const curId = queue.shift()!;
-          if (visited.has(curId)) continue;
-          visited.add(curId);
-          const cur = byId.get(curId);
-          if (!cur || cur.id >= n.id) continue;
-
-          const hasLeftBefore =
-            cur.leftChild > 0 &&
-            cur.leftChild < n.id &&
-            byId.has(cur.leftChild) &&
-            byId.get(cur.leftChild)!.parentId === cur.id;
-          if (!hasLeftBefore) {
-            shallowParentId = cur.id;
-            shallowIsLeft = true;
-            break;
-          }
-
-          const hasRightBefore =
-            cur.rightChild > 0 &&
-            cur.rightChild < n.id &&
-            byId.has(cur.rightChild) &&
-            byId.get(cur.rightChild)!.parentId === cur.id;
-          if (!hasRightBefore) {
-            shallowParentId = cur.id;
-            shallowIsLeft = false;
-            break;
-          }
-
-          queue.push(cur.leftChild, cur.rightChild);
-        }
-
-        const shallowParent = byId.get(shallowParentId);
-        if (shallowParent && n.parentId !== shallowParentId) {
-          const oldParent = byId.get(n.parentId);
-          if (oldParent) {
-            if (oldParent.leftChild === n.id) oldParent.leftChild = 0;
-            if (oldParent.rightChild === n.id) oldParent.rightChild = 0;
-          }
-          n.parentId = shallowParentId;
-          if (shallowIsLeft) {
-            shallowParent.leftChild = n.id;
-          } else {
-            shallowParent.rightChild = n.id;
-          }
-        }
-      }
-    }
-
-    // สำหรับการวางตำแหน่ง Auto Extra ID ใน Rank 2-27:
-    // จะต้องไปต่อติดผู้แนะนำ Direct Sponsor เท่านั้น ถ้าไอดีผู้แนะนำ Direct Sponsor เต็ม ก็ไปหาไอดีโคลนนิ่งของผู้แนะนำ Direct Sponsor เท่านั้น
-    const removedFalseCloneIds = new Set<number>();
-    for (const n of nodes) {
-      if (n.id <= 1 || !n.isExtraId || n.isSyntheticExtra || removedFalseCloneIds.has(n.id)) continue;
-
-      const spMainId = n.directSponsorNodeId > 0 ? n.directSponsorNodeId : 1;
-      const spNodeInRank = nodes.find(
-        (prev) =>
-          prev.id < n.id &&
-          !prev.isClone &&
-          !prev.isExtraId &&
-          !removedFalseCloneIds.has(prev.id) &&
-          (spMainId === 1 ? prev.id === 1 : prev.originMainId === spMainId)
-      );
-      if (!spNodeInRank) continue;
-
-      const spOrigTag = spNodeInRank.originMainId || spNodeInRank.id;
-      const curParent = byId.get(n.parentId);
-      const isAlreadyUnderSpOrSpClone =
-        curParent &&
-        (curParent.id === spNodeInRank.id ||
-          (curParent.isClone &&
-            ((curParent.originMainId || curParent.id) === spNodeInRank.id ||
-              (curParent.originMainId || curParent.id) === spOrigTag)));
-
-      if (!isAlreadyUnderSpOrSpClone) {
-        let targetParentId = 0;
-        let targetIsLeft = true;
-
-        const spHasLeftBefore =
-          spNodeInRank.leftChild > 0 &&
-          spNodeInRank.leftChild < n.id &&
-          byId.has(spNodeInRank.leftChild);
-        const spHasRightBefore =
-          spNodeInRank.rightChild > 0 &&
-          spNodeInRank.rightChild < n.id &&
-          byId.has(spNodeInRank.rightChild);
-
-        if (!spHasLeftBefore) {
-          targetParentId = spNodeInRank.id;
-          targetIsLeft = true;
-        } else if (!spHasRightBefore) {
-          targetParentId = spNodeInRank.id;
-          targetIsLeft = false;
-        } else {
-          for (const cand of nodes) {
-            if (cand.id >= n.id || !cand.isClone || removedFalseCloneIds.has(cand.id)) continue;
-            const cOrig = cand.originMainId || cand.id;
-            if (cOrig !== spNodeInRank.id && cOrig !== spOrigTag) continue;
-
-            const cHasLeftBefore =
-              cand.leftChild > 0 && cand.leftChild < n.id && byId.has(cand.leftChild);
-            if (!cHasLeftBefore) {
-              targetParentId = cand.id;
-              targetIsLeft = true;
-              break;
-            }
-            const cHasRightBefore =
-              cand.rightChild > 0 && cand.rightChild < n.id && byId.has(cand.rightChild);
-            if (!cHasRightBefore) {
-              targetParentId = cand.id;
-              targetIsLeft = false;
-              break;
-            }
-          }
-        }
-
-        const targetParent = targetParentId > 0 ? byId.get(targetParentId) : undefined;
-        if (targetParent && n.parentId !== targetParent.id) {
-          const oldParent = byId.get(n.parentId);
-          if (oldParent) {
-            if (oldParent.leftChild === n.id) oldParent.leftChild = 0;
-            if (oldParent.rightChild === n.id) oldParent.rightChild = 0;
-          }
-
-          const displacedId = targetIsLeft ? targetParent.leftChild : targetParent.rightChild;
-          if (displacedId > 0 && displacedId !== n.id && byId.has(displacedId)) {
-            const displacedNode = byId.get(displacedId)!;
-            const oldOrig = oldParent ? oldParent.originMainId || oldParent.id : 0;
-            const dispOrig = displacedNode.originMainId || displacedNode.id;
-            const hasChildren = nodes.some(
-              (c) =>
-                c.id !== displacedNode.id &&
-                !c.isSyntheticExtra &&
-                !removedFalseCloneIds.has(c.id) &&
-                c.parentId === displacedNode.id
-            );
-
-            if (
-              displacedNode.isClone &&
-              oldOrig > 0 &&
-              dispOrig === oldOrig &&
-              (!oldParent?.rightChild || oldParent.rightChild === 0) &&
-              !hasChildren
-            ) {
-              removedFalseCloneIds.add(displacedNode.id);
-              byId.delete(displacedNode.id);
-              if (targetIsLeft) targetParent.leftChild = 0;
-              else targetParent.rightChild = 0;
-            } else if (!targetParent.rightChild || !byId.has(targetParent.rightChild)) {
-              targetParent.rightChild = displacedNode.id;
-              displacedNode.parentId = targetParent.id;
-            }
-          }
-
-          n.parentId = targetParent.id;
-          if (targetIsLeft) {
-            targetParent.leftChild = n.id;
-          } else {
-            targetParent.rightChild = n.id;
-          }
-        }
-      }
-    }
-
-    // Remove any remaining false clone whose originMainId has 0 filled rightChild slots in this rank
-    for (const c of nodes) {
-      if (!c.isClone || removedFalseCloneIds.has(c.id)) continue;
-      const origId = c.originMainId || c.id;
-      const hasAnyRightTrigger = nodes.some(
-        (m) =>
-          !removedFalseCloneIds.has(m.id) &&
-          (m.id === origId || (m.originMainId || m.id) === origId) &&
-          m.rightChild > 0 &&
-          byId.has(m.rightChild)
-      );
-      const hasChildren = nodes.some(
-        (ch) =>
-          ch.id !== c.id &&
-          !ch.isSyntheticExtra &&
-          !removedFalseCloneIds.has(ch.id) &&
-          ch.parentId === c.id
-      );
-      if (!hasAnyRightTrigger && !hasChildren) {
-        removedFalseCloneIds.add(c.id);
-        byId.delete(c.id);
-        const p = byId.get(c.parentId);
-        if (p) {
-          if (p.leftChild === c.id) {
-            if (p.rightChild > 0 && byId.has(p.rightChild)) {
-              p.leftChild = p.rightChild;
-              p.rightChild = 0;
-            } else {
-              p.leftChild = 0;
-            }
-          } else if (p.rightChild === c.id) {
-            p.rightChild = 0;
-          }
-        }
-      }
-    }
-
-    if (removedFalseCloneIds.size > 0) {
-      for (let i = nodes.length - 1; i >= 0; i--) {
-        if (removedFalseCloneIds.has(nodes[i].id)) {
-          nodes.splice(i, 1);
-        }
-      }
-      const recountByOrigin = new Map<number, number>();
+    // 1. Resolve directSponsorNodeId for Extra IDs and Main IDs in Rank 2..27 from Rank 1 before checking tree placement
+    if (r1Nodes.length > 0) {
       for (const n of nodes) {
-        if (n.isClone) {
-          const origId = n.originMainId > 0 ? n.originMainId : n.id;
-          const cnt = (recountByOrigin.get(origId) || 0) + 1;
-          recountByOrigin.set(origId, cnt);
-          n.cloneRound = ((cnt - 1) % 2) + 1;
+        if (n.isExtraId && !n.isClone) {
+          const ok = (n.owner || '').toLowerCase();
+          const ownerMainsR1 = r1Nodes.filter(
+            (m) => !m.isClone && !m.isExtraId && (m.owner || '').toLowerCase() === ok
+          );
+          if (ownerMainsR1.length === 1) {
+            n.directSponsorNodeId = ownerMainsR1[0].id;
+            n.directSponsor = ownerMainsR1[0].owner;
+          } else if (ownerMainsR1.length > 1) {
+            const eligibleMain =
+              ownerMainsR1.find(
+                (m) =>
+                  m.id === 1 ||
+                  r9Nodes.some((x) => !x.isClone && !x.isExtraId && x.originMainId === m.id)
+              ) ||
+              ownerMainsR1.find(
+                (m) =>
+                  m.id === 1 ||
+                  r4Nodes.some((x) => !x.isClone && !x.isExtraId && x.originMainId === m.id)
+              ) ||
+              ownerMainsR1[0];
+            n.directSponsorNodeId = eligibleMain.id;
+            n.directSponsor = eligibleMain.owner;
+          }
+        } else if (!n.isClone && !n.isExtraId && n.id > 1) {
+          const origR1 =
+            n.originMainId > 1
+              ? r1Nodes.find((x) => x.id === n.originMainId && !x.isClone && !x.isExtraId)
+              : r1Nodes.find(
+                  (x) =>
+                    x.id > 1 &&
+                    !x.isClone &&
+                    !x.isExtraId &&
+                    (x.owner || '').toLowerCase() === (n.owner || '').toLowerCase()
+                );
+          if (origR1) {
+            n.originMainId = origR1.id;
+            n.directSponsorNodeId = origR1.directSponsorNodeId || 1;
+            n.directSponsor = origR1.directSponsor || n.directSponsor;
+          }
         }
+      }
+    }
+
+    // 2. Check if any node in Rank 2..27 is misplaced (e.g. Extra ID not under its Direct Sponsor/Clone) or orphaned
+    let needsReplay = false;
+    for (const n of nodes) {
+      if (n.id <= 1) continue;
+      const p = byId.get(n.parentId);
+      if (!p || (p.leftChild !== n.id && p.rightChild !== n.id)) {
+        needsReplay = true;
+        break;
+      }
+      if (n.isExtraId && !n.isClone) {
+        const spMainId = n.directSponsorNodeId > 0 ? n.directSponsorNodeId : 1;
+        const spNodeInRank = nodes.find(
+          (prev) =>
+            prev.id < n.id &&
+            !prev.isClone &&
+            !prev.isExtraId &&
+            (spMainId === 1 ? prev.id === 1 : prev.originMainId === spMainId)
+        );
+        if (spNodeInRank) {
+          const spOrigTag = spNodeInRank.originMainId || spNodeInRank.id;
+          const isUnderSp =
+            p.id === spNodeInRank.id ||
+            (p.isClone &&
+              ((p.originMainId || p.id) === spNodeInRank.id ||
+                (p.originMainId || p.id) === spOrigTag));
+          if (!isUnderSp) {
+            needsReplay = true;
+            break;
+          }
+        }
+      } else if (!n.isClone && !n.isExtraId) {
+        const spMainId = n.directSponsorNodeId > 0 ? n.directSponsorNodeId : 1;
+        if (spMainId > 1) {
+          const sponsorBefore = nodes.some(
+            (prev) =>
+              prev.id < n.id &&
+              !prev.isClone &&
+              !prev.isExtraId &&
+              prev.originMainId === spMainId
+          );
+          if (!sponsorBefore && p.isClone) {
+            needsReplay = true;
+            break;
+          }
+        }
+      }
+    }
+
+    if (!needsReplay) {
+      // Also verify that every origin's filled rightChild count matches its placed clone count
+      const rightTriggerCountByOrig = new Map<number, number>();
+      const actualCloneCountByOrig = new Map<number, number>();
+      for (const n of nodes) {
+        const origKey = n.isClone
+          ? n.originMainId || n.id
+          : n.isExtraId
+          ? n.id
+          : n.originMainId || n.id;
+        if (n.isClone) {
+          actualCloneCountByOrig.set(origKey, (actualCloneCountByOrig.get(origKey) || 0) + 1);
+        }
+        if (n.rightChild > 0 && byId.has(n.rightChild)) {
+          rightTriggerCountByOrig.set(origKey, (rightTriggerCountByOrig.get(origKey) || 0) + 1);
+        }
+      }
+      for (const [origKey, trigCnt] of rightTriggerCountByOrig.entries()) {
+        if ((actualCloneCountByOrig.get(origKey) || 0) !== trigCnt) {
+          needsReplay = true;
+          break;
+        }
+      }
+      for (const [origKey, cloneCnt] of actualCloneCountByOrig.entries()) {
+        if ((rightTriggerCountByOrig.get(origKey) || 0) !== cloneCnt) {
+          needsReplay = true;
+          break;
+        }
+      }
+    }
+
+    // 3. Chronological replay of Rank 2..27 placements and right-child Rebirth Clone triggers
+    if (needsReplay) {
+      const rootNode = nodes.find((n) => n.id === 1) || nodes[0];
+      const nonCloneList = nodes
+        .filter((n) => n.id !== rootNode.id && !n.isClone)
+        .sort((a, b) => a.id - b.id);
+      const cloneIds = nodes
+        .filter((n) => n.id !== rootNode.id && n.isClone)
+        .map((n) => n.id)
+        .sort((a, b) => a - b);
+      const cloneTemplates = new Map<number, IndexedTreeNode>();
+      for (const n of nodes) {
+        if (n.isClone) cloneTemplates.set(n.id, n);
+      }
+
+      rootNode.parentId = 0;
+      rootNode.leftChild = 0;
+      rootNode.rightChild = 0;
+
+      const placedNodes: IndexedTreeNode[] = [rootNode];
+      let cloneCursor = 0;
+
+      const spawnTriggeredClones = (initialParent: IndexedTreeNode) => {
+        const rightQueue: IndexedTreeNode[] = [initialParent];
+        let guard = 0;
+        while (rightQueue.length > 0 && guard < 100) {
+          guard++;
+          const trigParent = rightQueue.shift()!;
+          const trigOriginNode = !trigParent.isClone
+            ? trigParent
+            : placedNodes.find(
+                (p) =>
+                  !p.isClone &&
+                  (p.id === trigParent.originMainId ||
+                    p.originMainId === trigParent.originMainId)
+              ) || trigParent;
+
+          const cloneOrigMainId = trigOriginNode.isExtraId
+            ? trigOriginNode.id
+            : trigOriginNode.originMainId || trigOriginNode.id;
+
+          const existingClonesForOrig = placedNodes.filter(
+            (p) => p.isClone && (p.originMainId || p.id) === cloneOrigMainId
+          ).length;
+          const roundIdx = existingClonesForOrig % 2;
+          const cRound = roundIdx + 1;
+
+          let savedSponsorId = trigOriginNode.directSponsorNodeId || 1;
+          let sponsorNodeInRankId = 0;
+          if (cloneOrigMainId === 1 || trigOriginNode.id === 1) {
+            savedSponsorId = 1;
+            sponsorNodeInRankId = 1;
+          } else {
+            const spNodeInR = placedNodes.find(
+              (p) =>
+                !p.isClone &&
+                !p.isExtraId &&
+                (savedSponsorId === 1 ? p.id === 1 : p.originMainId === savedSponsorId)
+            );
+            sponsorNodeInRankId = spNodeInR ? spNodeInR.id : 0;
+          }
+
+          const cSlot =
+            roundIdx === 0 && sponsorNodeInRankId > 0
+              ? findExtraIdPlacementInRankNodes(placedNodes, sponsorNodeInRankId)
+              : findShallowestLeftToRightSlotInRankNodes(placedNodes, 1);
+
+          const assignedCloneId =
+            cloneCursor < cloneIds.length
+              ? cloneIds[cloneCursor++]
+              : Math.max(
+                  ...placedNodes.map((x) => x.id),
+                  ...nonCloneList.map((x) => x.id),
+                  0
+                ) + 1;
+
+          const template = cloneTemplates.get(assignedCloneId);
+          const cloneNode: IndexedTreeNode = {
+            ...(template || {}),
+            id: assignedCloneId,
+            rank: rankNum,
+            owner: trigOriginNode.owner,
+            directSponsor: trigOriginNode.directSponsor || rootNode.owner,
+            parentId: cSlot.parentId,
+            leftChild: 0,
+            rightChild: 0,
+            isClone: true,
+            isExtraId: false,
+            originMainId: cloneOrigMainId,
+            cloneSequence: existingClonesForOrig + 1,
+            cloneRound: cRound,
+            directSponsorNodeId: savedSponsorId,
+            nodeVault: 0,
+            rawNodeVault: 0,
+            reconciledBaseVault: 0,
+            originType: 'CLONE',
+          };
+
+          const cParent = placedNodes.find((p) => p.id === cSlot.parentId);
+          placedNodes.push(cloneNode);
+          if (cParent) {
+            if (cSlot.isLeft) {
+              cParent.leftChild = cloneNode.id;
+            } else {
+              cParent.rightChild = cloneNode.id;
+              rightQueue.push(cParent);
+            }
+          }
+        }
+      };
+
+      for (const n of nonCloneList) {
+        n.leftChild = 0;
+        n.rightChild = 0;
+        const spMainId = n.directSponsorNodeId > 0 ? n.directSponsorNodeId : 1;
+        const spNodeInRank = placedNodes.find(
+          (p) =>
+            !p.isClone &&
+            !p.isExtraId &&
+            (spMainId === 1 ? p.id === 1 : p.originMainId === spMainId)
+        );
+        const slot = spNodeInRank
+          ? findExtraIdPlacementInRankNodes(placedNodes, spNodeInRank.id)
+          : findShallowestLeftToRightSlotInRankNodes(placedNodes, 1);
+
+        const targetParent = placedNodes.find((p) => p.id === slot.parentId) || rootNode;
+        n.parentId = targetParent.id;
+        placedNodes.push(n);
+        if (slot.isLeft) {
+          targetParent.leftChild = n.id;
+        } else {
+          targetParent.rightChild = n.id;
+          spawnTriggeredClones(targetParent);
+        }
+      }
+
+      placedNodes.sort((a, b) => a.id - b.id);
+      nodes.length = 0;
+      byId.clear();
+      for (const pn of placedNodes) {
+        nodes.push(pn);
+        byId.set(pn.id, pn);
       }
     }
 
@@ -7938,7 +7965,12 @@ async function startApp() {
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
       res.setHeader('Pragma', 'no-cache');
       res.setHeader('Expires', '0');
-      res.sendFile(path.resolve(distDir, 'index.html'));
+      const indexFile = path.resolve(distDir, 'index.html');
+      if (fs.existsSync(indexFile)) {
+        res.sendFile(indexFile);
+      } else {
+        res.status(503).send('กำลังอัปเดตระบบ กรุณารอสักครู่แล้วรีเฟรชหน้าเว็บ...');
+      }
     });
   } else {
     process.env.DISABLE_HMR = 'true';
