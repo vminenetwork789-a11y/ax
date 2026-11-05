@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { emitTransactionToast } from '../components/TransactionToast';
 
 export interface MatrixWebSocketState {
   isConnected: boolean;
@@ -114,36 +113,11 @@ export function useMatrixWebSocket(activeRank: number = 1) {
   }, []);
 
   const notifyConnectionChange = useCallback(
-    (status: 'connected' | 'reconnecting' | 'disconnected', attempt = 0, delaySec = 0) => {
+    (status: 'connected' | 'reconnecting' | 'disconnected', _attempt = 0, _delaySec = 0) => {
       if (status === 'connected') {
-        if (!prevConnectedRef.current) {
-          prevConnectedRef.current = true;
-          emitTransactionToast({
-            id: 'stream-status-toast',
-            status: 'confirmed',
-            step: '🟢 [Live Stream] เชื่อมต่อสายสตรีมสดสำเร็จแล้ว',
-            message: 'ซิงค์ผังต้นไม้ไบนารี่และประวัติธุรกรรมเรียลไทม์เรียบร้อยแล้ว',
-            durationMs: 4000,
-          });
-        }
-      } else if (status === 'reconnecting') {
+        prevConnectedRef.current = true;
+      } else {
         prevConnectedRef.current = false;
-        emitTransactionToast({
-          id: 'stream-status-toast',
-          status: 'pending',
-          step: `🟡 [Live Stream] กำลังเชื่อมต่อใหม่ (รอบที่ #${attempt})`,
-          message: `สัญญาณขาดหาย กำลังลองเชื่อมต่อใหม่ในอีก ${delaySec} วินาที (Exponential Backoff)...`,
-          durationMs: (delaySec + 1) * 1000,
-        });
-      } else if (status === 'disconnected') {
-        prevConnectedRef.current = false;
-        emitTransactionToast({
-          id: 'stream-status-toast',
-          status: 'error',
-          step: '🔴 [Live Stream] การเชื่อมต่อขัดข้อง',
-          message: 'ไม่สามารถเชื่อมต่อสายสตรีมได้ ระบบกำลังเปลี่ยนผ่านไปใช้ HTTP Auto-Sync',
-          durationMs: 6000,
-        });
       }
     },
     []
