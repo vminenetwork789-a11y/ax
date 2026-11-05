@@ -125,6 +125,12 @@ interface PerIdReport {
   vault35RemainingTotalUsdt: number;
   vault35DeductedTotalUsdt: number;
   vault35History: CommissionItem[];
+  vault35Ledger?: any[];
+  vaultDeductedBreakdown?: {
+    extraIdsTotalUsdt: number;
+    autoIdsTotalUsdt: number;
+    upgradesTotalUsdt: number;
+  };
   pools: {
     upgradeRankPool: number;
     newAutoIdPool: number;
@@ -1715,18 +1721,83 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
                           )}
                         </div>
 
-                        {/* 3. Upgrade Vault 35% History */}
+                        {/* 3. Upgrade Vault 35% History & Ledger */}
                         <div className="bg-slate-900/80 border border-indigo-500/30 rounded-lg p-2.5 space-y-1.5">
-                          <div className="font-bold text-indigo-300 flex items-center justify-between">
-                            <span>🏦 ประวัติ 35% อัพเกรด ({rep.vault35History.length})</span>
-                            <span className="font-mono">สะสม +{rep.vault35GrossTotalUsdt.toFixed(2)} U</span>
+                          <div className="font-bold text-indigo-300 flex items-center justify-between flex-wrap gap-1">
+                            <span>
+                              🏦 บัญชี 35% Vault ({rep.vault35Ledger?.length || rep.vault35History.length})
+                            </span>
+                            <div className="flex items-center gap-1.5 font-mono text-[10px]">
+                              <span className="text-emerald-400">
+                                รับ +{rep.vault35GrossTotalUsdt.toFixed(2)} U
+                              </span>
+                              <span className="text-slate-500">•</span>
+                              <span className="text-rose-400">
+                                ใช้ -{rep.vault35DeductedTotalUsdt.toFixed(2)} U
+                              </span>
+                              <span className="text-slate-500">•</span>
+                              <span className="text-amber-300 font-bold">
+                                คงเหลือ {rep.vault35RemainingTotalUsdt.toFixed(2)} U
+                              </span>
+                            </div>
                           </div>
                           <div className="text-[10px] font-mono text-cyan-300/90 flex items-center gap-1">
                             <Clock className="w-2.5 h-2.5" />
                             <span>เรียงอ้างอิงเวลาล่าสุด (ใหม่สุด → เก่าสุด)</span>
                           </div>
-                          {rep.vault35History.length === 0 ? (
-                            <div className="text-slate-500 text-[11px]">ยังไม่มีรายการเม็ดซ้ายเข้ากระปุก 35%</div>
+                          {(rep.vault35Ledger?.length || 0) === 0 && rep.vault35History.length === 0 ? (
+                            <div className="text-slate-500 text-[11px]">ยังไม่มีรายการในกระปุก 35%</div>
+                          ) : (rep.vault35Ledger?.length || 0) > 0 ? (
+                            <div className="space-y-1 max-h-56 overflow-y-auto pr-1 font-mono text-[11px]">
+                              {rep.vault35Ledger!.map((item: any, idx: number) => {
+                                const isIn = item.direction === 'IN';
+                                return (
+                                  <div
+                                    key={`vlog-${idx}`}
+                                    className={`p-1.5 rounded border flex items-start justify-between gap-2 ${
+                                      isIn
+                                        ? 'bg-emerald-950/20 border-emerald-500/30'
+                                        : 'bg-rose-950/20 border-rose-500/30'
+                                    }`}
+                                  >
+                                    <div className="space-y-0.5">
+                                      <div className="flex items-center gap-1 flex-wrap">
+                                        <span
+                                          className={`px-1 py-0.2 rounded text-[9px] font-bold ${
+                                            isIn
+                                              ? 'bg-emerald-500/20 text-emerald-300'
+                                              : 'bg-rose-500/20 text-rose-300'
+                                          }`}
+                                        >
+                                          {isIn ? '+รับเข้า' : '-นำไปใช้'}
+                                        </span>
+                                        <span className="text-amber-300 font-bold">[R{item.rank}]</span>
+                                        <span className="text-slate-300 font-semibold">{item.actionLabelTh}</span>
+                                      </div>
+                                      <div className="text-[10px] text-slate-300">
+                                        {item.descriptionTh || item.note}
+                                      </div>
+                                      <div className="text-[9.5px] text-cyan-400/90 flex items-center gap-1">
+                                        <Clock className="w-2.5 h-2.5" />
+                                        <span>เวลา: {formatRowTime(item.timestamp)}</span>
+                                      </div>
+                                    </div>
+                                    <div className="text-right shrink-0">
+                                      <div
+                                        className={`font-bold text-xs ${
+                                          isIn ? 'text-emerald-400' : 'text-rose-400'
+                                        }`}
+                                      >
+                                        {isIn ? '+' : '-'}{Number(item.amountUsdt).toFixed(2)} U
+                                      </div>
+                                      <div className="text-[9.5px] text-amber-300 font-bold">
+                                        คงเหลือ {Number(item.balanceAfterUsdt ?? 0).toFixed(2)} U
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
                           ) : (
                             <div className="space-y-1 max-h-48 overflow-y-auto pr-1 font-mono text-[11px]">
                               {rep.vault35History.map((item, idx) => (

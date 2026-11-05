@@ -9,10 +9,122 @@ import { exec } from "child_process";
 import { Queue, Worker, QueueEvents } from "bullmq";
 import Redis from "ioredis";
 import { EventEmitter } from "events";
+import http from "http";
+import { WebSocketServer } from "ws";
 import fs from "fs";
 import pg from "pg";
 var queueEventsEmitter = new EventEmitter();
 queueEventsEmitter.setMaxListeners(200);
+var wssServer = null;
+function setWssServer(wss) {
+  wssServer = wss;
+}
+function getAggregatedTransactions(addressFilter) {
+  const transactions = [];
+  const lowerAddr = addressFilter ? addressFilter.toLowerCase() : null;
+  try {
+    const r1Nodes = matrixDB.nodesByRank[1] || [];
+    r1Nodes.forEach((node) => {
+      const ownerLower = (node.owner || "").toLowerCase();
+      if (lowerAddr && ownerLower !== lowerAddr) return;
+      const nodeAny = node;
+      const isLeft = node.parentId === 0 ? true : nodeAny.isLeft ?? true;
+      transactions.push({
+        id: `reg-r1-${node.id}`,
+        category: "REGISTER",
+        titleTh: node.isClone ? `\u0E2A\u0E23\u0E49\u0E32\u0E07\u0E23\u0E2B\u0E31\u0E2A\u0E42\u0E04\u0E25\u0E19 Clone #${node.id} (Rank 1)` : node.isExtraId ? `\u0E2A\u0E23\u0E49\u0E32\u0E07\u0E23\u0E2B\u0E31\u0E2A\u0E1E\u0E34\u0E40\u0E28\u0E29 Extra ID #${node.id} (Rank 1)` : `\u0E2A\u0E21\u0E31\u0E04\u0E23\u0E2A\u0E21\u0E32\u0E0A\u0E34\u0E01 / \u0E2A\u0E23\u0E49\u0E32\u0E07\u0E23\u0E2B\u0E31\u0E2A\u0E2B\u0E25\u0E31\u0E01 Main ID #${node.id} (Rank 1)`,
+        titleEn: node.isClone ? `Clone Created #${node.id} (Rank 1)` : node.isExtraId ? `Extra ID Created #${node.id} (Rank 1)` : `Member Registration Main ID #${node.id} (Rank 1)`,
+        userAddress: node.owner,
+        mainNodeId: node.originMainId || node.id,
+        rank: 1,
+        amountUsdt: 5,
+        timestamp: nodeAny.createdAt || matrixDB.lastSyncedAt || (/* @__PURE__ */ new Date()).toISOString(),
+        blockNumber: nodeAny.blockNumber,
+        detailsTh: `\u0E15\u0E48\u0E2D\u0E2A\u0E32\u0E22\u0E43\u0E15\u0E49 \u0E2D\u0E31\u0E1E\u0E44\u0E25\u0E19\u0E4C #${node.parentId} (${isLeft ? "\u2199 \u0E1D\u0E31\u0E48\u0E07\u0E0B\u0E49\u0E32\u0E22" : "\u2198 \u0E1D\u0E31\u0E48\u0E07\u0E02\u0E27\u0E32"}) \u2022 \u0E1C\u0E39\u0E49\u0E41\u0E19\u0E30\u0E19\u0E33: ${node.directSponsor ? `${node.directSponsor.slice(0, 6)}...${node.directSponsor.slice(-4)}` : "Root"}`,
+        detailsEn: `Placed under Parent #${node.parentId} (${isLeft ? "Left" : "Right"}) \u2022 Sponsor: ${node.directSponsor ? `${node.directSponsor.slice(0, 6)}...${node.directSponsor.slice(-4)}` : "Root"}`
+      });
+    });
+    const upgrades = matrixDB.upgradeLogs || [];
+    upgrades.forEach((u) => {
+      const ownerLower = (u.owner || "").toLowerCase();
+      if (lowerAddr && ownerLower !== lowerAddr) return;
+      const uCost = parseFloat(u.rankPriceUsdt) || u.costUsdt || RANK_PRICES_USDT[Number(u.toRank) - 1] || 10;
+      transactions.push({
+        id: `upg-${u.id || `${u.mainNodeId}-${u.toRank}`}`,
+        category: "UPGRADE",
+        titleTh: `\u0E2D\u0E31\u0E1E\u0E40\u0E01\u0E23\u0E14\u0E1C\u0E31\u0E07\u0E41\u0E23\u0E07\u0E04\u0E4C Main ID #${u.mainNodeId} \u2192 Rank ${u.toRank}`,
+        titleEn: `Rank Upgrade Main ID #${u.mainNodeId} \u2192 Rank ${u.toRank}`,
+        userAddress: u.owner,
+        mainNodeId: Number(u.mainNodeId),
+        rank: Number(u.toRank),
+        amountUsdt: uCost,
+        timestamp: u.createdAt || matrixDB.lastSyncedAt || (/* @__PURE__ */ new Date()).toISOString(),
+        txHash: u.txHash,
+        detailsTh: `\u0E40\u0E25\u0E37\u0E48\u0E2D\u0E19\u0E41\u0E23\u0E07\u0E04\u0E4C\u0E08\u0E32\u0E01 R${u.fromRank} \u0E44\u0E1B\u0E22\u0E31\u0E07 R${u.toRank} (${uCost.toFixed(2)} USDT)`,
+        detailsEn: `Upgraded from R${u.fromRank} to R${u.toRank} (${uCost.toFixed(2)} USDT)`
+      });
+    });
+    const rewards = matrixDB.rewardLogs || [];
+    rewards.forEach((r, idx) => {
+      const recipientLower = (r.recipient || "").toLowerCase();
+      if (lowerAddr && recipientLower !== lowerAddr) return;
+      const amt = parseFloat(r.amount) || 0;
+      const rTime = r.createdAt || r.timestamp || matrixDB.lastSyncedAt || (/* @__PURE__ */ new Date()).toISOString();
+      transactions.push({
+        id: `rew-${r.id || idx}`,
+        category: "PAYOUT",
+        titleTh: `\u0E23\u0E31\u0E1A\u0E42\u0E1A\u0E19\u0E31\u0E2A / \u0E04\u0E48\u0E32\u0E04\u0E2D\u0E21\u0E21\u0E34\u0E0A\u0E0A\u0E31\u0E48\u0E19 (${r.rewardType})`,
+        titleEn: `Payout / Reward (${r.rewardType})`,
+        userAddress: r.recipient,
+        mainNodeId: Number(r.toNodeId || 1),
+        rank: Number(r.rank || 1),
+        amountUsdt: amt,
+        timestamp: rTime,
+        blockNumber: r.blockNumber,
+        detailsTh: `\u0E44\u0E14\u0E49\u0E23\u0E31\u0E1A\u0E08\u0E32\u0E01 Node #${r.fromNodeId} \u2192 Node #${r.toNodeId} (Rank ${r.rank})`,
+        detailsEn: `Received from Node #${r.fromNodeId} \u2192 Node #${r.toNodeId} (Rank ${r.rank})`
+      });
+    });
+    transactions.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  } catch (e) {
+    console.warn("[getAggregatedTransactions error]:", e);
+  }
+  return transactions;
+}
+var sseClients = /* @__PURE__ */ new Set();
+function broadcastAllMatrixUpdates() {
+  try {
+    const transactions = getAggregatedTransactions();
+    const payload = JSON.stringify({
+      type: "ALL_MATRIX_UPDATED",
+      lastSyncedAt: matrixDB.lastSyncedAt,
+      rankCounts: matrixDB.rankCounts,
+      nodesByRank: matrixDB.nodesByRank,
+      contractAddress: CONTRACT_ADDRESS,
+      transactions,
+      rewardLogs: matrixDB.rewardLogs || [],
+      upgradeLogs: matrixDB.upgradeLogs || []
+    });
+    if (wssServer) {
+      wssServer.clients.forEach((client) => {
+        if (client.readyState === 1) {
+          client.send(payload);
+        }
+      });
+    }
+    sseClients.forEach((res) => {
+      try {
+        res.write(`data: ${payload}
+
+`);
+      } catch {
+        sseClients.delete(res);
+      }
+    });
+  } catch (err) {
+    console.warn("[WS/SSE Broadcast Error]:", err);
+  }
+}
 dotenv.config();
 process.on("unhandledRejection", (reason) => {
   console.warn("[Process Guard] Unhandled Rejection:", reason);
@@ -26,7 +138,7 @@ var __dirname = path.dirname(__filename);
 var PORT = Number(process.env.PORT) || 3e3;
 var CONFIG_FILE_PATH = path.resolve(__dirname, "prisma/contract-config.json");
 var DEFAULT_SYSTEM_CONFIG = {
-  contractAddress: process.env.OVERRIDE_CONTRACT_ADDRESS || process.env.CONTRACT_ADDRESS || "0x45405293ecce73F1a8C39CA8c0Cc2248D6b9Ab77",
+  contractAddress: process.env.OVERRIDE_CONTRACT_ADDRESS || process.env.CONTRACT_ADDRESS || "0x47Ff540a2E04Aa36CDc4A4Ec6E4feADAC1A71B66",
   usdtAddress: process.env.USDT_ADDRESS || "0x05f24E1F598DF1aE8d0B424ce978f8ea33bB752b",
   chainId: Number(process.env.CHAIN_ID || 97),
   networkName: process.env.NETWORK_NAME || "BNB Smart Chain Testnet",
@@ -35,6 +147,9 @@ var DEFAULT_SYSTEM_CONFIG = {
   updatedAt: (/* @__PURE__ */ new Date()).toISOString()
 };
 var SERVER_LEGACY_CONTRACTS = /* @__PURE__ */ new Set([
+  "0xc5cf23d0cead13a08b3b3d968a052b956a64fbc6",
+  "0xe231fe72e1c2ab2617d8972c4ea15bc9122e514f",
+  "0x45405293ecce73f1a8c39ca8c0cc2248d6b9ab77",
   "0xf955de5c1a403c9d286538a872c17837aebdd8ca",
   "0xc71a9a677d9ef61a9133d6e6545306a11bd3ee5a",
   "0x87e9f1b9a63eb65c91fca718c5af1cee4eec6209",
@@ -54,7 +169,10 @@ var SERVER_LEGACY_CONTRACTS = /* @__PURE__ */ new Set([
   "0xa285257430fbff1bb63c0a74958874a5bf159ccd",
   "0x2df74a86df9d32c735755e1f448a98f4cda456c5",
   "0x01fed3686a284dcac8ef7277c4657a2aa12fab54",
-  "0xda7acd2ca8967e8015e0931e652d4b7ee5e1c436"
+  "0xda7acd2ca8967e8015e0931e652d4b7ee5e1c436",
+  "0x07953ba884e2d05fa543ef7eaec426c8de6d58ff",
+  "0x7fa05f1aeb74209612aea56472d9a2e2e9d44073",
+  "0x003ef4aaab33e517b2f565320df37e88b2db7a69"
 ]);
 var SERVER_LEGACY_USDT = /* @__PURE__ */ new Set([
   "0x95856be9c16afc9c147c034cd6a514d730bd90ba"
@@ -367,6 +485,7 @@ function loadMatrixDBFromDisk() {
 var matrixDB = loadMatrixDBFromDisk();
 var dbWriteTimer = null;
 function saveMatrixDBToDisk(immediate = false) {
+  broadcastAllMatrixUpdates();
   const writeNow = () => {
     try {
       const dir = path.dirname(MATRIX_DB_FILE_PATH);
@@ -394,7 +513,36 @@ var inMemoryDB = {
   rewardLogs: matrixDB.rewardLogs,
   upgradeLogs: matrixDB.upgradeLogs
 };
+function ensurePersistentNodeTimestamps() {
+  let missingAny = false;
+  const seenTimes = /* @__PURE__ */ new Set();
+  for (let r = 1; r <= 27; r++) {
+    for (const n of matrixDB.nodesByRank[r] || []) {
+      if (!n.createdAt || seenTimes.has(n.createdAt)) {
+        missingAny = true;
+        break;
+      }
+      seenTimes.add(n.createdAt);
+    }
+    if (missingAny) break;
+  }
+  if (!missingAny) return;
+  const orderedNodes = [];
+  for (let r = 1; r <= 27; r++) {
+    const rList = (matrixDB.nodesByRank[r] || []).slice().sort((a, b) => a.id - b.id);
+    for (const n of rList) {
+      orderedNodes.push(n);
+    }
+  }
+  const totalCount = orderedNodes.length;
+  const fixedAnchorMs = 17938536e5;
+  orderedNodes.forEach((n, idx) => {
+    const stepsFromEnd = Math.max(0, totalCount - 1 - idx);
+    n.createdAt = new Date(fixedAnchorMs - stepsFromEnd * 37e3).toISOString();
+  });
+}
 function rebuildDatabaseRewardLogsFromNodes() {
+  ensurePersistentNodeTimestamps();
   const r1Nodes = matrixDB.nodesByRank[1] || [];
   if (r1Nodes.length <= 1) return;
   const rootOwnerAddr = r1Nodes[0]?.owner || matrixDB.systemWallets.rootOwner;
@@ -473,10 +621,9 @@ function rebuildDatabaseRewardLogsFromNodes() {
       const parent = nodesMap.get(child.parentId);
       if (!parent || parent.leftChild !== id) continue;
       const syntheticTx = `0x${rankNum.toString(16).padStart(2, "0")}${id.toString(16).padStart(4, "0")}db48acb86c42a389efda47cc1b16938eea73f1f892000000000000${id.toString(16).padStart(4, "0")}`;
-      const anchorMs = matrixDB.lastSyncedAt ? new Date(matrixDB.lastSyncedAt).getTime() : Date.now();
-      const safeAnchorMs = Number.isFinite(anchorMs) ? anchorMs : Date.now();
-      const offsetMinutes = Math.max(0, rNodes.length - id) + Math.max(0, 27 - rankNum) * 0.25;
-      const eventTime = new Date(safeAnchorMs - Math.round(offsetMinutes * 6e4)).toISOString();
+      const eventTime = child.createdAt || new Date(
+        17938536e5 - (Math.max(0, rNodes.length - id) * 45e3 + Math.max(0, 27 - rankNum) * 19e3)
+      ).toISOString();
       const parentOrigin = nodesMap.get(parent.originMainId || parent.id) || parent;
       const isParentExtraLineage = Boolean(parent.isExtraId || parentOrigin.isExtraId);
       if (isParentExtraLineage) {
@@ -784,8 +931,8 @@ function rebuildDatabaseUpgradeLogsFromNodes() {
         isExtraId: node.isExtraId,
         txHash: liveMeta?.txHash || syntheticTx,
         blockNumber: liveMeta?.blockNumber || baseBlock - Math.max(0, rNodes.length - node.id),
-        createdAt: liveMeta?.createdAt || new Date(
-          (matrixDB.lastSyncedAt ? new Date(matrixDB.lastSyncedAt).getTime() : Date.now()) - Math.max(0, rNodes.length - node.id) * 6e4 - Math.max(0, 27 - rankNum) * 15e3
+        createdAt: liveMeta?.createdAt || node.createdAt || new Date(
+          17938536e5 - Math.max(0, rNodes.length - node.id) * 45e3 - Math.max(0, 27 - rankNum) * 19e3
         ).toISOString()
       });
     }
@@ -892,178 +1039,200 @@ function reconcileRankTreeLinks(nodes) {
   const rankNum = nodes[0]?.rank || 1;
   if (rankNum > 1 && nodes.length > 1) {
     const r1Nodes = matrixDB?.nodesByRank?.[1] || [];
-    for (const n of nodes) {
-      if (n.id <= 1 || n.isClone || n.isExtraId) continue;
-      let spMainId = n.directSponsorNodeId || 0;
-      if (spMainId <= 0 && n.originMainId > 1 && r1Nodes.length > 0) {
-        const origR1 = r1Nodes.find((x) => x.id === n.originMainId && !x.isClone && !x.isExtraId);
-        if (origR1 && origR1.directSponsorNodeId > 0) {
-          spMainId = origR1.directSponsorNodeId;
-        }
-      }
-      if (spMainId <= 1) continue;
-      const sponsorNodeInRankBefore = nodes.find(
-        (prev) => prev.id < n.id && !prev.isClone && !prev.isExtraId && (spMainId === 1 ? prev.id === 1 : prev.originMainId === spMainId)
-      );
-      if (!sponsorNodeInRankBefore) {
-        const curParent = byId.get(n.parentId);
-        if (curParent && !curParent.isClone) continue;
-        const queue = [1];
-        const visited = /* @__PURE__ */ new Set();
-        let shallowParentId = 1;
-        let shallowIsLeft = true;
-        while (queue.length > 0) {
-          const curId = queue.shift();
-          if (visited.has(curId)) continue;
-          visited.add(curId);
-          const cur = byId.get(curId);
-          if (!cur || cur.id >= n.id) continue;
-          const hasLeftBefore = cur.leftChild > 0 && cur.leftChild < n.id && byId.has(cur.leftChild) && byId.get(cur.leftChild).parentId === cur.id;
-          if (!hasLeftBefore) {
-            shallowParentId = cur.id;
-            shallowIsLeft = true;
-            break;
-          }
-          const hasRightBefore = cur.rightChild > 0 && cur.rightChild < n.id && byId.has(cur.rightChild) && byId.get(cur.rightChild).parentId === cur.id;
-          if (!hasRightBefore) {
-            shallowParentId = cur.id;
-            shallowIsLeft = false;
-            break;
-          }
-          queue.push(cur.leftChild, cur.rightChild);
-        }
-        const shallowParent = byId.get(shallowParentId);
-        if (shallowParent && n.parentId !== shallowParentId) {
-          const oldParent = byId.get(n.parentId);
-          if (oldParent) {
-            if (oldParent.leftChild === n.id) oldParent.leftChild = 0;
-            if (oldParent.rightChild === n.id) oldParent.rightChild = 0;
-          }
-          n.parentId = shallowParentId;
-          if (shallowIsLeft) {
-            shallowParent.leftChild = n.id;
-          } else {
-            shallowParent.rightChild = n.id;
-          }
-        }
-      }
-    }
-    const removedFalseCloneIds = /* @__PURE__ */ new Set();
-    for (const n of nodes) {
-      if (n.id <= 1 || !n.isExtraId || n.isSyntheticExtra || removedFalseCloneIds.has(n.id)) continue;
-      const spMainId = n.directSponsorNodeId > 0 ? n.directSponsorNodeId : 1;
-      const spNodeInRank = nodes.find(
-        (prev) => prev.id < n.id && !prev.isClone && !prev.isExtraId && !removedFalseCloneIds.has(prev.id) && (spMainId === 1 ? prev.id === 1 : prev.originMainId === spMainId)
-      );
-      if (!spNodeInRank) continue;
-      const spOrigTag = spNodeInRank.originMainId || spNodeInRank.id;
-      const curParent = byId.get(n.parentId);
-      const isAlreadyUnderSpOrSpClone = curParent && (curParent.id === spNodeInRank.id || curParent.isClone && ((curParent.originMainId || curParent.id) === spNodeInRank.id || (curParent.originMainId || curParent.id) === spOrigTag));
-      if (!isAlreadyUnderSpOrSpClone) {
-        let targetParentId = 0;
-        let targetIsLeft = true;
-        const spHasLeftBefore = spNodeInRank.leftChild > 0 && spNodeInRank.leftChild < n.id && byId.has(spNodeInRank.leftChild);
-        const spHasRightBefore = spNodeInRank.rightChild > 0 && spNodeInRank.rightChild < n.id && byId.has(spNodeInRank.rightChild);
-        if (!spHasLeftBefore) {
-          targetParentId = spNodeInRank.id;
-          targetIsLeft = true;
-        } else if (!spHasRightBefore) {
-          targetParentId = spNodeInRank.id;
-          targetIsLeft = false;
-        } else {
-          for (const cand of nodes) {
-            if (cand.id >= n.id || !cand.isClone || removedFalseCloneIds.has(cand.id)) continue;
-            const cOrig = cand.originMainId || cand.id;
-            if (cOrig !== spNodeInRank.id && cOrig !== spOrigTag) continue;
-            const cHasLeftBefore = cand.leftChild > 0 && cand.leftChild < n.id && byId.has(cand.leftChild);
-            if (!cHasLeftBefore) {
-              targetParentId = cand.id;
-              targetIsLeft = true;
-              break;
-            }
-            const cHasRightBefore = cand.rightChild > 0 && cand.rightChild < n.id && byId.has(cand.rightChild);
-            if (!cHasRightBefore) {
-              targetParentId = cand.id;
-              targetIsLeft = false;
-              break;
-            }
-          }
-        }
-        const targetParent = targetParentId > 0 ? byId.get(targetParentId) : void 0;
-        if (targetParent && n.parentId !== targetParent.id) {
-          const oldParent = byId.get(n.parentId);
-          if (oldParent) {
-            if (oldParent.leftChild === n.id) oldParent.leftChild = 0;
-            if (oldParent.rightChild === n.id) oldParent.rightChild = 0;
-          }
-          const displacedId = targetIsLeft ? targetParent.leftChild : targetParent.rightChild;
-          if (displacedId > 0 && displacedId !== n.id && byId.has(displacedId)) {
-            const displacedNode = byId.get(displacedId);
-            const oldOrig = oldParent ? oldParent.originMainId || oldParent.id : 0;
-            const dispOrig = displacedNode.originMainId || displacedNode.id;
-            const hasChildren = nodes.some(
-              (c) => c.id !== displacedNode.id && !c.isSyntheticExtra && !removedFalseCloneIds.has(c.id) && c.parentId === displacedNode.id
-            );
-            if (displacedNode.isClone && oldOrig > 0 && dispOrig === oldOrig && (!oldParent?.rightChild || oldParent.rightChild === 0) && !hasChildren) {
-              removedFalseCloneIds.add(displacedNode.id);
-              byId.delete(displacedNode.id);
-              if (targetIsLeft) targetParent.leftChild = 0;
-              else targetParent.rightChild = 0;
-            } else if (!targetParent.rightChild || !byId.has(targetParent.rightChild)) {
-              targetParent.rightChild = displacedNode.id;
-              displacedNode.parentId = targetParent.id;
-            }
-          }
-          n.parentId = targetParent.id;
-          if (targetIsLeft) {
-            targetParent.leftChild = n.id;
-          } else {
-            targetParent.rightChild = n.id;
-          }
-        }
-      }
-    }
-    for (const c of nodes) {
-      if (!c.isClone || removedFalseCloneIds.has(c.id)) continue;
-      const origId = c.originMainId || c.id;
-      const hasAnyRightTrigger = nodes.some(
-        (m) => !removedFalseCloneIds.has(m.id) && (m.id === origId || (m.originMainId || m.id) === origId) && m.rightChild > 0 && byId.has(m.rightChild)
-      );
-      const hasChildren = nodes.some(
-        (ch) => ch.id !== c.id && !ch.isSyntheticExtra && !removedFalseCloneIds.has(ch.id) && ch.parentId === c.id
-      );
-      if (!hasAnyRightTrigger && !hasChildren) {
-        removedFalseCloneIds.add(c.id);
-        byId.delete(c.id);
-        const p = byId.get(c.parentId);
-        if (p) {
-          if (p.leftChild === c.id) {
-            if (p.rightChild > 0 && byId.has(p.rightChild)) {
-              p.leftChild = p.rightChild;
-              p.rightChild = 0;
-            } else {
-              p.leftChild = 0;
-            }
-          } else if (p.rightChild === c.id) {
-            p.rightChild = 0;
-          }
-        }
-      }
-    }
-    if (removedFalseCloneIds.size > 0) {
-      for (let i = nodes.length - 1; i >= 0; i--) {
-        if (removedFalseCloneIds.has(nodes[i].id)) {
-          nodes.splice(i, 1);
-        }
-      }
-      const recountByOrigin = /* @__PURE__ */ new Map();
+    const r9Nodes = matrixDB?.nodesByRank?.[9] || [];
+    const r4Nodes = matrixDB?.nodesByRank?.[4] || [];
+    if (r1Nodes.length > 0) {
       for (const n of nodes) {
-        if (n.isClone) {
-          const origId = n.originMainId > 0 ? n.originMainId : n.id;
-          const cnt = (recountByOrigin.get(origId) || 0) + 1;
-          recountByOrigin.set(origId, cnt);
-          n.cloneRound = (cnt - 1) % 2 + 1;
+        if (n.isExtraId && !n.isClone) {
+          const ok = (n.owner || "").toLowerCase();
+          const ownerMainsR1 = r1Nodes.filter(
+            (m) => !m.isClone && !m.isExtraId && (m.owner || "").toLowerCase() === ok
+          );
+          if (ownerMainsR1.length === 1) {
+            n.directSponsorNodeId = ownerMainsR1[0].id;
+            n.directSponsor = ownerMainsR1[0].owner;
+          } else if (ownerMainsR1.length > 1) {
+            const eligibleMain = ownerMainsR1.find(
+              (m) => m.id === 1 || r9Nodes.some((x) => !x.isClone && !x.isExtraId && x.originMainId === m.id)
+            ) || ownerMainsR1.find(
+              (m) => m.id === 1 || r4Nodes.some((x) => !x.isClone && !x.isExtraId && x.originMainId === m.id)
+            ) || ownerMainsR1[0];
+            n.directSponsorNodeId = eligibleMain.id;
+            n.directSponsor = eligibleMain.owner;
+          }
+        } else if (!n.isClone && !n.isExtraId && n.id > 1) {
+          const origR1 = n.originMainId > 1 ? r1Nodes.find((x) => x.id === n.originMainId && !x.isClone && !x.isExtraId) : r1Nodes.find(
+            (x) => x.id > 1 && !x.isClone && !x.isExtraId && (x.owner || "").toLowerCase() === (n.owner || "").toLowerCase()
+          );
+          if (origR1) {
+            n.originMainId = origR1.id;
+            n.directSponsorNodeId = origR1.directSponsorNodeId || 1;
+            n.directSponsor = origR1.directSponsor || n.directSponsor;
+          }
         }
+      }
+    }
+    let needsReplay = false;
+    for (const n of nodes) {
+      if (n.id <= 1) continue;
+      const p = byId.get(n.parentId);
+      if (!p || p.leftChild !== n.id && p.rightChild !== n.id) {
+        needsReplay = true;
+        break;
+      }
+      if (n.isExtraId && !n.isClone) {
+        const spMainId = n.directSponsorNodeId > 0 ? n.directSponsorNodeId : 1;
+        const spNodeInRank = nodes.find(
+          (prev) => prev.id < n.id && !prev.isClone && !prev.isExtraId && (spMainId === 1 ? prev.id === 1 : prev.originMainId === spMainId)
+        );
+        if (spNodeInRank) {
+          const spOrigTag = spNodeInRank.originMainId || spNodeInRank.id;
+          const isUnderSp = p.id === spNodeInRank.id || p.isClone && ((p.originMainId || p.id) === spNodeInRank.id || (p.originMainId || p.id) === spOrigTag);
+          if (!isUnderSp) {
+            needsReplay = true;
+            break;
+          }
+        }
+      } else if (!n.isClone && !n.isExtraId) {
+        const spMainId = n.directSponsorNodeId > 0 ? n.directSponsorNodeId : 1;
+        if (spMainId > 1) {
+          const sponsorBefore = nodes.some(
+            (prev) => prev.id < n.id && !prev.isClone && !prev.isExtraId && prev.originMainId === spMainId
+          );
+          if (!sponsorBefore && p.isClone) {
+            needsReplay = true;
+            break;
+          }
+        }
+      }
+    }
+    if (!needsReplay) {
+      const rightTriggerCountByOrig = /* @__PURE__ */ new Map();
+      const actualCloneCountByOrig = /* @__PURE__ */ new Map();
+      for (const n of nodes) {
+        const origKey = n.isClone ? n.originMainId || n.id : n.isExtraId ? n.id : n.originMainId || n.id;
+        if (n.isClone) {
+          actualCloneCountByOrig.set(origKey, (actualCloneCountByOrig.get(origKey) || 0) + 1);
+        }
+        if (n.rightChild > 0 && byId.has(n.rightChild)) {
+          rightTriggerCountByOrig.set(origKey, (rightTriggerCountByOrig.get(origKey) || 0) + 1);
+        }
+      }
+      for (const [origKey, trigCnt] of rightTriggerCountByOrig.entries()) {
+        if ((actualCloneCountByOrig.get(origKey) || 0) !== trigCnt) {
+          needsReplay = true;
+          break;
+        }
+      }
+      for (const [origKey, cloneCnt] of actualCloneCountByOrig.entries()) {
+        if ((rightTriggerCountByOrig.get(origKey) || 0) !== cloneCnt) {
+          needsReplay = true;
+          break;
+        }
+      }
+    }
+    if (needsReplay) {
+      const rootNode = nodes.find((n) => n.id === 1) || nodes[0];
+      const nonCloneList = nodes.filter((n) => n.id !== rootNode.id && !n.isClone).sort((a, b) => a.id - b.id);
+      const cloneIds = nodes.filter((n) => n.id !== rootNode.id && n.isClone).map((n) => n.id).sort((a, b) => a - b);
+      const cloneTemplates = /* @__PURE__ */ new Map();
+      for (const n of nodes) {
+        if (n.isClone) cloneTemplates.set(n.id, n);
+      }
+      rootNode.parentId = 0;
+      rootNode.leftChild = 0;
+      rootNode.rightChild = 0;
+      const placedNodes = [rootNode];
+      let cloneCursor = 0;
+      const spawnTriggeredClones = (initialParent) => {
+        const rightQueue = [initialParent];
+        let guard = 0;
+        while (rightQueue.length > 0 && guard < 100) {
+          guard++;
+          const trigParent = rightQueue.shift();
+          const trigOriginNode = !trigParent.isClone ? trigParent : placedNodes.find(
+            (p) => !p.isClone && (p.id === trigParent.originMainId || p.originMainId === trigParent.originMainId)
+          ) || trigParent;
+          const cloneOrigMainId = trigOriginNode.isExtraId ? trigOriginNode.id : trigOriginNode.originMainId || trigOriginNode.id;
+          const existingClonesForOrig = placedNodes.filter(
+            (p) => p.isClone && (p.originMainId || p.id) === cloneOrigMainId
+          ).length;
+          const roundIdx = existingClonesForOrig % 2;
+          const cRound = roundIdx + 1;
+          let savedSponsorId = trigOriginNode.directSponsorNodeId || 1;
+          let sponsorNodeInRankId = 0;
+          if (cloneOrigMainId === 1 || trigOriginNode.id === 1) {
+            savedSponsorId = 1;
+            sponsorNodeInRankId = 1;
+          } else {
+            const spNodeInR = placedNodes.find(
+              (p) => !p.isClone && !p.isExtraId && (savedSponsorId === 1 ? p.id === 1 : p.originMainId === savedSponsorId)
+            );
+            sponsorNodeInRankId = spNodeInR ? spNodeInR.id : 0;
+          }
+          const cSlot = roundIdx === 0 && sponsorNodeInRankId > 0 ? findExtraIdPlacementInRankNodes(placedNodes, sponsorNodeInRankId) : findShallowestLeftToRightSlotInRankNodes(placedNodes, 1);
+          const assignedCloneId = cloneCursor < cloneIds.length ? cloneIds[cloneCursor++] : Math.max(
+            ...placedNodes.map((x) => x.id),
+            ...nonCloneList.map((x) => x.id),
+            0
+          ) + 1;
+          const template = cloneTemplates.get(assignedCloneId);
+          const cloneNode = {
+            ...template || {},
+            id: assignedCloneId,
+            rank: rankNum,
+            owner: trigOriginNode.owner,
+            directSponsor: trigOriginNode.directSponsor || rootNode.owner,
+            parentId: cSlot.parentId,
+            leftChild: 0,
+            rightChild: 0,
+            isClone: true,
+            isExtraId: false,
+            originMainId: cloneOrigMainId,
+            cloneSequence: existingClonesForOrig + 1,
+            cloneRound: cRound,
+            directSponsorNodeId: savedSponsorId,
+            nodeVault: 0,
+            rawNodeVault: 0,
+            reconciledBaseVault: 0,
+            originType: "CLONE"
+          };
+          const cParent = placedNodes.find((p) => p.id === cSlot.parentId);
+          placedNodes.push(cloneNode);
+          if (cParent) {
+            if (cSlot.isLeft) {
+              cParent.leftChild = cloneNode.id;
+            } else {
+              cParent.rightChild = cloneNode.id;
+              rightQueue.push(cParent);
+            }
+          }
+        }
+      };
+      for (const n of nonCloneList) {
+        n.leftChild = 0;
+        n.rightChild = 0;
+        const spMainId = n.directSponsorNodeId > 0 ? n.directSponsorNodeId : 1;
+        const spNodeInRank = placedNodes.find(
+          (p) => !p.isClone && !p.isExtraId && (spMainId === 1 ? p.id === 1 : p.originMainId === spMainId)
+        );
+        const slot = spNodeInRank ? findExtraIdPlacementInRankNodes(placedNodes, spNodeInRank.id) : findShallowestLeftToRightSlotInRankNodes(placedNodes, 1);
+        const targetParent = placedNodes.find((p) => p.id === slot.parentId) || rootNode;
+        n.parentId = targetParent.id;
+        placedNodes.push(n);
+        if (slot.isLeft) {
+          targetParent.leftChild = n.id;
+        } else {
+          targetParent.rightChild = n.id;
+          spawnTriggeredClones(targetParent);
+        }
+      }
+      placedNodes.sort((a, b) => a.id - b.id);
+      nodes.length = 0;
+      byId.clear();
+      for (const pn of placedNodes) {
+        nodes.push(pn);
+        byId.set(pn.id, pn);
       }
     }
     const rUnitVault = Number(((RANK_PRICES_USDT[rankNum - 1] || 10) * 0.35).toFixed(4));
@@ -1245,6 +1414,26 @@ function reconcileRank1AutoMainIds() {
       } else {
         rn.cloneSequence = 0;
         rn.cloneRound = 0;
+        if (rn.isExtraId) {
+          const ok = (rn.owner || "").toLowerCase();
+          const ownerMainsR1 = r1Nodes.filter(
+            (m) => !m.isClone && !m.isExtraId && (m.owner || "").toLowerCase() === ok
+          );
+          if (ownerMainsR1.length === 1) {
+            rn.directSponsorNodeId = ownerMainsR1[0].id;
+            rn.directSponsor = ownerMainsR1[0].owner;
+          } else if (ownerMainsR1.length > 1) {
+            const r9Nodes = matrixDB.nodesByRank[9] || [];
+            const r4Nodes = matrixDB.nodesByRank[4] || [];
+            const eligibleMain = ownerMainsR1.find(
+              (m) => m.id === 1 || r9Nodes.some((x) => !x.isClone && !x.isExtraId && x.originMainId === m.id)
+            ) || ownerMainsR1.find(
+              (m) => m.id === 1 || r4Nodes.some((x) => !x.isClone && !x.isExtraId && x.originMainId === m.id)
+            ) || ownerMainsR1[0];
+            rn.directSponsorNodeId = eligibleMain.id;
+            rn.directSponsor = eligibleMain.owner;
+          }
+        }
       }
     }
   }
@@ -1274,6 +1463,23 @@ function reconcileRank1AutoMainIds() {
   };
   const getMainWindow5Start = (r1MainId) => {
     return Math.max(1, getMainCurrentRank(r1MainId) - 4);
+  };
+  const isPlacedUnderMainOrClonesR1 = (mId, targetId) => {
+    if (targetId <= mId) return false;
+    if (mId === 1) return true;
+    let curr = byIdR1.get(targetId)?.parentId || 0;
+    const visited = /* @__PURE__ */ new Set();
+    while (curr > 0 && !visited.has(curr)) {
+      visited.add(curr);
+      if (curr === mId) return true;
+      const pNode = byIdR1.get(curr);
+      if (!pNode) break;
+      if (pNode.isClone && (pNode.originMainId || pNode.id) === mId) {
+        return true;
+      }
+      curr = pNode.parentId;
+    }
+    return false;
   };
   const expectedAutoSpawnsByMain = /* @__PURE__ */ new Map();
   const extraR2To3VaultByMain = /* @__PURE__ */ new Map();
@@ -1312,15 +1518,33 @@ function reconcileRank1AutoMainIds() {
       }
     }
     const deducted = Math.max(0, Number((totalGross1To3 - totalRem1To3).toFixed(4)));
-    const expectedSpawns = Math.floor((deducted + 1e-4) / 5);
+    const maxPossibleSpawns = Math.floor((deducted + 1e-4) / 5);
+    let expectedSpawns = 0;
+    if (mNode.id === 1) {
+      expectedSpawns = maxPossibleSpawns;
+    } else if (maxPossibleSpawns > 0) {
+      for (let c = maxPossibleSpawns; c >= 1; c--) {
+        const pool2GrossNeeded = Number((totalRem1To3 + c * 5).toFixed(4));
+        const units175 = pool2GrossNeeded / 1.75;
+        if (pool2GrossNeeded <= totalGross1To3 + 0.01 && Math.abs(units175 - Math.round(units175)) < 0.01) {
+          expectedSpawns = c;
+          break;
+        }
+      }
+    }
     expectedAutoSpawnsByMain.set(mNode.id, expectedSpawns);
-    extraR2To3VaultByMain.set(mNode.id, extraR2To3);
+    extraR2To3VaultByMain.set(mNode.id, expectedSpawns > 0 ? extraR2To3 : 0);
   }
   const ownerPrimaryMap = /* @__PURE__ */ new Map();
   const ownerAllMainsMap = /* @__PURE__ */ new Map();
   const simAutoVaultByMain = /* @__PURE__ */ new Map();
   const spawnedCountByMain = /* @__PURE__ */ new Map();
   const r1EntryPrice = RANK_PRICES_USDT[0] || 5;
+  for (const n of sortedR1) {
+    if (!n.isClone && !n.isExtraId) {
+      n.originType = "MANUAL_REGISTER";
+    }
+  }
   for (const n of sortedR1) {
     const oKey = (n.owner || "").toLowerCase();
     if (!n.isClone && !n.isExtraId) {
@@ -1336,9 +1560,10 @@ function reconcileRank1AutoMainIds() {
           const maxSpawns = expectedAutoSpawnsByMain.get(mId) || 0;
           const curSpawns = spawnedCountByMain.get(mId) || 0;
           if (curSpawns >= maxSpawns) return false;
-          const mSpId = byIdR1.get(mId)?.directSponsorNodeId || 0;
-          const isSelfSp = Boolean(n.directSponsor && n.directSponsor.toLowerCase() === oKey);
-          return isSelfSp && (explicitSpId === 0 || mId === explicitSpId) || explicitSpId > 0 && (explicitSpId === mId || explicitSpId === mSpId);
+          if (!isPlacedUnderMainOrClonesR1(mId, n.id)) return false;
+          const mNode = byIdR1.get(mId);
+          const mSpId = mNode?.directSponsorNodeId || 1;
+          return explicitSpId === 0 || explicitSpId === mId || explicitSpId === mSpId;
         });
         let sourceMain = priorMains.find(
           (mId) => (simAutoVaultByMain.get(mId) || 0) + 1e-6 >= r1EntryPrice
@@ -1864,20 +2089,7 @@ function findRankPlacement(rank, sponsorAddress, sponsorNodeId) {
     const spNode = rList.find((n) => n.owner.toLowerCase() === spKey && !n.isClone && !n.isExtraId);
     if (spNode) startId = spNode.id;
   }
-  const queue = [startId];
-  const visited = /* @__PURE__ */ new Set();
-  while (queue.length > 0) {
-    const currId = queue.shift();
-    if (visited.has(currId)) continue;
-    visited.add(currId);
-    const n = nodesMap.get(currId);
-    if (!n) return { parentId: currId, isLeft: true };
-    if (!n.leftChild || n.leftChild === 0) return { parentId: n.id, isLeft: true };
-    if (!n.rightChild || n.rightChild === 0) return { parentId: n.id, isLeft: false };
-    if (n.leftChild > 0) queue.push(n.leftChild);
-    if (n.rightChild > 0) queue.push(n.rightChild);
-  }
-  return { parentId: startId, isLeft: true };
+  return findExtraIdPlacementInRankNodes(rList, startId);
 }
 async function simulateFindPlacement(rank, sponsorAddress, _round) {
   const p = findRankPlacement(rank, sponsorAddress);
@@ -2757,6 +2969,8 @@ async function startApp() {
           );
           for (const item of chunkResults) {
             if (item) {
+              const prevCreatedAt = mergedMap.get(item.id)?.createdAt;
+              item.createdAt = prevCreatedAt || (/* @__PURE__ */ new Date()).toISOString();
               mergedMap.set(item.id, item);
               newlyFetchedNodes.push(item);
             }
@@ -2778,6 +2992,8 @@ async function startApp() {
             );
             for (const pItem of refreshedNodes) {
               if (pItem) {
+                const prevCreatedAt = mergedMap.get(pItem.id)?.createdAt;
+                if (prevCreatedAt) pItem.createdAt = prevCreatedAt;
                 mergedMap.set(pItem.id, pItem);
               }
             }
@@ -2997,6 +3213,7 @@ async function startApp() {
     let upgradeRankPool = 0;
     let newAutoIdPool = 0;
     let r4To27OutsideWindow = 0;
+    let grossR4To27OutsideWindow = 0;
     for (let r = 1; r <= 27; r++) {
       const v = vaultsByRank[r] || 0;
       const inWindow5 = r >= window5Start && r <= window5End;
@@ -3009,38 +3226,80 @@ async function startApp() {
       if (r >= 4 && r <= 27) {
         if (currentRank === 27 || !inWindow5) {
           r4To27OutsideWindow += v;
+          const rNodes = matrixDB.nodesByRank[r] || [];
+          const correspNode = r === 1 ? targetNode : rNodes.find((n) => !n.isClone && !n.isExtraId && n.originMainId === mainIdNum);
+          if (correspNode) {
+            const rUnitVault = Number(((RANK_PRICES_USDT[r - 1] || 30) * 0.35).toFixed(4));
+            let leftCountInR = 0;
+            for (const rn of rNodes) {
+              const isSameMain = rn.id === correspNode.id || rn.isClone && (rn.originMainId === correspNode.id || rn.originMainId === mainIdNum);
+              if (isSameMain && rn.leftChild > 0) {
+                leftCountInR++;
+              }
+            }
+            grossR4To27OutsideWindow = Number(
+              (grossR4To27OutsideWindow + leftCountInR * rUnitVault).toFixed(4)
+            );
+          }
         }
       }
     }
+    const resolveExtraSpawnerMainId = (extraNode) => {
+      const extraOwner = (extraNode.owner || "").toLowerCase();
+      const ownerMains = r1Nodes.filter(
+        (m) => !m.isClone && !m.isExtraId && (m.owner || "").toLowerCase() === extraOwner
+      );
+      if (ownerMains.length === 1) return ownerMains[0].id;
+      if (ownerMains.length > 1) {
+        const r4Nodes = matrixDB.nodesByRank[4] || [];
+        const eligibleMain = ownerMains.find(
+          (m) => m.id === 1 || r4Nodes.some((x) => !x.isClone && !x.isExtraId && x.originMainId === m.id)
+        );
+        if (eligibleMain) return eligibleMain.id;
+        return ownerMains[0].id;
+      }
+      return extraNode.directSponsorNodeId > 0 ? extraNode.directSponsorNodeId : 1;
+    };
     let totalExtraIdCount = 0;
     let extraIdDeductedTotalUsdt = 0;
-    let extraLeftVaultBonus = 0;
+    let extraLeftVaultBonusGross = 0;
     for (let r = 1; r <= 27; r++) {
       const rNodes = matrixDB.nodesByRank[r] || [];
       const correspondingNode = r === 1 ? targetNode : rNodes.find((n) => !n.isClone && !n.isExtraId && n.originMainId === mainIdNum);
       const correspIdInR = correspondingNode?.id || 0;
-      if (correspIdInR > 0) {
-        const rPrice = RANK_PRICES_USDT[r - 1] || 10;
-        const rUnitVault = Number((rPrice * 0.35).toFixed(4));
-        for (const n of rNodes) {
-          const spId = n.directSponsorNodeId > 0 ? n.directSponsorNodeId : n.originMainId && n.originMainId !== n.id ? n.originMainId : 1;
-          if (n.isExtraId && !n.isClone && spId === correspIdInR) {
-            totalExtraIdCount++;
-            extraIdDeductedTotalUsdt = Number((extraIdDeductedTotalUsdt + rPrice).toFixed(4));
-          }
+      const rPrice = RANK_PRICES_USDT[r - 1] || 10;
+      const rUnitVault = Number((rPrice * 0.35).toFixed(4));
+      for (const n of rNodes) {
+        if (n.isExtraId && !n.isClone && resolveExtraSpawnerMainId(n) === mainIdNum) {
+          totalExtraIdCount++;
+          extraIdDeductedTotalUsdt = Number((extraIdDeductedTotalUsdt + rPrice).toFixed(4));
+        }
+        if (correspIdInR > 0) {
           const nOrig = !n.isClone ? n : rNodes.find(
             (x) => !x.isClone && (x.owner || "").toLowerCase() === (n.owner || "").toLowerCase() && (x.originMainId === n.originMainId || x.id === n.originMainId)
           ) || n;
           const isExtraLineage = !n.isClone ? Boolean(n.isExtraId) : Boolean(n.isExtraId || nOrig.isExtraId);
           if (isExtraLineage && n.leftChild > 0) {
-            const origSpId = nOrig.directSponsorNodeId > 0 ? nOrig.directSponsorNodeId : n.directSponsorNodeId > 0 ? n.directSponsorNodeId : 1;
-            if (origSpId === correspIdInR) {
-              extraLeftVaultBonus = Number((extraLeftVaultBonus + rUnitVault).toFixed(4));
+            const spawnerMainId = resolveExtraSpawnerMainId(nOrig);
+            if (spawnerMainId === mainIdNum) {
+              extraLeftVaultBonusGross = Number((extraLeftVaultBonusGross + rUnitVault).toFixed(4));
             }
           }
         }
       }
     }
+    const deductedFromR4To27 = Math.max(
+      0,
+      Number((grossR4To27OutsideWindow - r4To27OutsideWindow).toFixed(4))
+    );
+    const deductedFromExtraLeftBonus = Math.min(
+      extraLeftVaultBonusGross,
+      Math.max(0, Number((extraIdDeductedTotalUsdt - deductedFromR4To27).toFixed(4)))
+    );
+    const extraLeftVaultBonus = Math.max(
+      0,
+      Number((extraLeftVaultBonusGross - deductedFromExtraLeftBonus).toFixed(4))
+    );
     const r1To3LeftoverOldVault = 0;
     const oldCarryoverVault = Number(
       (r4To27OutsideWindow + extraLeftVaultBonus).toFixed(4)
@@ -3049,7 +3308,10 @@ async function startApp() {
       (r4To27OutsideWindow + extraLeftVaultBonus).toFixed(4)
     );
     const newExtraIdPoolGross = Number(
-      (newExtraIdPool + extraIdDeductedTotalUsdt).toFixed(4)
+      Math.max(
+        grossR4To27OutsideWindow + extraLeftVaultBonusGross,
+        newExtraIdPool + extraIdDeductedTotalUsdt
+      ).toFixed(4)
     );
     const autoMainSourceMap = reconcileRank1AutoMainIds();
     const spawnedAutoIdsList = [];
@@ -3075,6 +3337,7 @@ async function startApp() {
       r1To3LeftoverOldVault: Number(r1To3LeftoverOldVault.toFixed(2)),
       r4To27OutsideWindowVault: Number(r4To27OutsideWindow.toFixed(2)),
       extraLeftVaultBonus: Number(extraLeftVaultBonus.toFixed(2)),
+      extraLeftVaultBonusGross: Number(extraLeftVaultBonusGross.toFixed(2)),
       extraIdDeductedTotalUsdt: Number(extraIdDeductedTotalUsdt.toFixed(2)),
       newExtraIdPoolGross: Number(newExtraIdPoolGross.toFixed(2)),
       totalAutoIdCount: spawnedAutoIdsList.length,
@@ -3199,13 +3462,16 @@ async function startApp() {
         }
         return node.originMainId || 1;
       };
-      const syncBaseMs = matrixDB.lastSyncedAt ? new Date(matrixDB.lastSyncedAt).getTime() : Date.now();
-      const safeSyncBaseMs = Number.isFinite(syncBaseMs) ? syncBaseMs : Date.now();
+      ensurePersistentNodeTimestamps();
       const computeNodeTimestamp = (rankNum, nodeId) => {
         const rList = matrixDB.nodesByRank[rankNum] || [];
+        const found = rList.find((x) => x.id === nodeId);
+        if (found?.createdAt) return found.createdAt;
         const totalInRank = Math.max(rList.length, nodeId, 1);
         const stepsBack = Math.max(0, totalInRank - nodeId);
-        return new Date(safeSyncBaseMs - stepsBack * 45e3).toISOString();
+        return new Date(
+          17938536e5 - stepsBack * 45e3 - Math.max(0, 27 - rankNum) * 19e3
+        ).toISOString();
       };
       const reportsMap = /* @__PURE__ */ new Map();
       const r1NodesMap = /* @__PURE__ */ new Map();
@@ -3345,6 +3611,12 @@ async function startApp() {
           vault35RemainingTotalUsdt: 0,
           vault35DeductedTotalUsdt: 0,
           vault35History: [],
+          vault35Ledger: [],
+          vaultDeductedBreakdown: {
+            extraIdsTotalUsdt: 0,
+            autoIdsTotalUsdt: 0,
+            upgradesTotalUsdt: 0
+          },
           upgradeRankPool: stats.upgradeRankPool,
           newAutoIdPool: stats.newAutoIdPool,
           newExtraIdPool: stats.newExtraIdPool,
@@ -3401,9 +3673,24 @@ async function startApp() {
           const pNode = nodesMap.get(n.parentId);
           const side = n.parentId === 0 ? "ROOT" : pNode && pNode.leftChild === n.id ? "LEFT" : "RIGHT";
           if (n.isExtraId && !n.isClone) {
-            const localSpId = n.directSponsorNodeId || 1;
-            const localSpNode = nodesMap.get(localSpId);
-            const r1MainSpId = rankNum === 1 ? localSpId : localSpNode ? resolveCanonicalMainId(rankNum, localSpNode) : localSpId;
+            const extraOwner = (n.owner || "").toLowerCase();
+            const ownerMains = r1Nodes.filter(
+              (m) => !m.isClone && !m.isExtraId && (m.owner || "").toLowerCase() === extraOwner
+            );
+            let r1MainSpId = 1;
+            if (ownerMains.length === 1) {
+              r1MainSpId = ownerMains[0].id;
+            } else if (ownerMains.length > 1) {
+              const r4Nodes = matrixDB.nodesByRank[4] || [];
+              const eligibleMain = ownerMains.find(
+                (m) => m.id === 1 || r4Nodes.some((x) => !x.isClone && !x.isExtraId && x.originMainId === m.id)
+              );
+              r1MainSpId = eligibleMain ? eligibleMain.id : ownerMains[0].id;
+            } else {
+              const localSpId = n.directSponsorNodeId || 1;
+              const localSpNode = nodesMap.get(localSpId);
+              r1MainSpId = rankNum === 1 ? localSpId : localSpNode ? resolveCanonicalMainId(rankNum, localSpNode) : localSpId;
+            }
             const spReport = reportsMap.get(r1MainSpId) || reportsMap.get(1);
             if (spReport) {
               spReport.autoExtraIdsSpawned.push({
@@ -3496,9 +3783,31 @@ async function startApp() {
           ) || parent;
           const isParentExtraLineage = !parent.isClone ? Boolean(parent.isExtraId) : Boolean(parent.isExtraId || parentOrigin.isExtraId);
           if (isParentExtraLineage) {
-            const extraSpLocalId = parentOrigin.directSponsorNodeId > 0 ? parentOrigin.directSponsorNodeId : parent.directSponsorNodeId > 0 ? parent.directSponsorNodeId : 1;
-            const extraSpNode = nodesMap.get(extraSpLocalId);
-            const targetMainId = rankNum === 1 ? extraSpLocalId : extraSpNode ? resolveCanonicalMainId(rankNum, extraSpNode) : extraSpLocalId;
+            const extraOwner = (parentOrigin.owner || parent.owner || "").toLowerCase();
+            const ownerMains = r1Nodes.filter(
+              (m) => !m.isClone && !m.isExtraId && (m.owner || "").toLowerCase() === extraOwner
+            );
+            let targetMainId = 1;
+            if (ownerMains.length === 1) {
+              targetMainId = ownerMains[0].id;
+            } else if (ownerMains.length > 1) {
+              const r9Nodes = matrixDB.nodesByRank[9] || [];
+              const r4Nodes = matrixDB.nodesByRank[4] || [];
+              const eligibleMain = ownerMains.find(
+                (m) => m.id === 1 || r9Nodes.some((x) => !x.isClone && !x.isExtraId && x.originMainId === m.id)
+              ) || ownerMains.find(
+                (m) => m.id === 1 || r4Nodes.some((x) => !x.isClone && !x.isExtraId && x.originMainId === m.id)
+              ) || ownerMains[0];
+              targetMainId = eligibleMain.id;
+            } else {
+              const extraSpLocalId2 = parentOrigin.directSponsorNodeId > 0 ? parentOrigin.directSponsorNodeId : parent.directSponsorNodeId > 0 ? parent.directSponsorNodeId : 1;
+              const extraSpNode = nodesMap.get(extraSpLocalId2);
+              targetMainId = rankNum === 1 ? extraSpLocalId2 : extraSpNode ? resolveCanonicalMainId(rankNum, extraSpNode) : extraSpLocalId2;
+            }
+            const extraSpLocalNode = rNodes.find(
+              (x) => !x.isClone && !x.isExtraId && (rankNum === 1 ? x.id === targetMainId : x.originMainId === targetMainId)
+            );
+            const extraSpLocalId = extraSpLocalNode ? extraSpLocalNode.id : targetMainId;
             const rep = reportsMap.get(targetMainId);
             if (rep) {
               rep.direct30TotalUsdt = Number((rep.direct30TotalUsdt + directAmt).toFixed(2));
@@ -3743,9 +4052,325 @@ async function startApp() {
           rep.levelSummary.clonesLevelTotalUsdt = 0;
           rep.levelSummary.combinedLevelTotalUsdt = Number(rep.levelSummary.thisNodeLevelTotalUsdt.toFixed(2));
         }
+        const ledgerEvents = [];
+        const sortedInflows = rep.vault35History.slice().reverse();
+        const sortedAutoSpawned = rep.autoIdsSpawned.slice().reverse();
+        const sortedExtraSpawned = rep.autoExtraIdsSpawned.slice().reverse();
+        const idUpgrades = (matrixDB.upgradeLogs || []).filter(
+          (u) => Number(u.mainNodeId) === rep.id && Number(u.vaultDeductedUsdt) > 0
+        );
+        let autoPoolBal = 0;
+        let extraPoolBal = 0;
+        let autoIdx = 0;
+        let extraIdx = 0;
+        for (const inf of sortedInflows) {
+          const tMs = new Date(inf.timestamp).getTime() || Date.now();
+          const pType = inf.rank <= 3 ? "AUTO_ID_POOL" : "EXTRA_ID_POOL";
+          const pLabel = pType === "AUTO_ID_POOL" ? "Auto ID Pool" : "Extra ID Pool";
+          if (pType === "AUTO_ID_POOL") {
+            autoPoolBal = Number((autoPoolBal + inf.amountUsdt).toFixed(2));
+          } else {
+            extraPoolBal = Number((extraPoolBal + inf.amountUsdt).toFixed(2));
+          }
+          ledgerEvents.push({
+            id: `v-in-${rep.id}-${ledgerEvents.length + 1}`,
+            timestamp: inf.timestamp,
+            direction: "IN",
+            actionType: "RECEIVE_VAULT",
+            actionLabelTh: `\u0E23\u0E31\u0E1A 35% Vault (Rank ${inf.rank})`,
+            rank: inf.rank,
+            amountUsdt: inf.amountUsdt,
+            poolType: pType,
+            poolLabelTh: pLabel,
+            descriptionTh: `\u0E23\u0E31\u0E1A 35% Vault (+${inf.amountUsdt.toFixed(2)} USDT) \u0E08\u0E32\u0E01\u0E40\u0E21\u0E47\u0E14\u0E0B\u0E49\u0E32\u0E22\u0E43\u0E19 Rank ${inf.rank} \u0E2A\u0E30\u0E2A\u0E21\u0E40\u0E02\u0E49\u0E32 ${pLabel}`,
+            note: inf.note,
+            poolBalanceAfterUsdt: pType === "AUTO_ID_POOL" ? autoPoolBal : extraPoolBal,
+            balanceAfterUsdt: 0
+          });
+          while (autoIdx < sortedAutoSpawned.length && autoPoolBal >= 5) {
+            const sp = sortedAutoSpawned[autoIdx];
+            autoPoolBal = Number((autoPoolBal - 5).toFixed(2));
+            autoIdx++;
+            const spTime = new Date(tMs + autoIdx * 1e3).toISOString();
+            ledgerEvents.push({
+              id: `v-out-auto-${rep.id}-${sp.id}`,
+              timestamp: spTime,
+              direction: "OUT",
+              actionType: "SPAWN_AUTO_ID",
+              actionLabelTh: "\u0E2B\u0E31\u0E01\u0E2A\u0E23\u0E49\u0E32\u0E07 Auto ID",
+              rank: 1,
+              amountUsdt: 5,
+              poolType: "AUTO_ID_POOL",
+              poolLabelTh: "Auto ID Pool",
+              descriptionTh: `\u0E2B\u0E31\u0E01 5.00 USDT \u0E08\u0E32\u0E01 Auto ID Pool \u0E2A\u0E23\u0E49\u0E32\u0E07 ${sp.label} \u0E27\u0E32\u0E07\u0E1C\u0E31\u0E07 Rank 1 \u0E43\u0E15\u0E49 R1-#${sp.parentId} (${sp.side})`,
+              note: `\u0E2A\u0E23\u0E49\u0E32\u0E07 Auto ID \u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08 (ID #${sp.id})`,
+              poolBalanceAfterUsdt: autoPoolBal,
+              balanceAfterUsdt: 0
+            });
+          }
+          while (extraIdx < sortedExtraSpawned.length) {
+            const sp = sortedExtraSpawned[extraIdx];
+            const cost = RANK_PRICES_USDT[sp.rank - 1] || 10;
+            if (extraPoolBal < cost) break;
+            extraPoolBal = Number((extraPoolBal - cost).toFixed(2));
+            extraIdx++;
+            const spTime = new Date(tMs + extraIdx * 1e3).toISOString();
+            ledgerEvents.push({
+              id: `v-out-extra-${rep.id}-${sp.rank}-${sp.id}`,
+              timestamp: spTime,
+              direction: "OUT",
+              actionType: "SPAWN_EXTRA_ID",
+              actionLabelTh: `\u0E2B\u0E31\u0E01\u0E2A\u0E23\u0E49\u0E32\u0E07 Extra ID (${sp.label})`,
+              rank: sp.rank,
+              amountUsdt: cost,
+              poolType: "EXTRA_ID_POOL",
+              poolLabelTh: "Extra ID Pool",
+              descriptionTh: `\u0E2B\u0E31\u0E01 ${cost.toFixed(2)} USDT \u0E08\u0E32\u0E01 Extra ID Pool \u0E2A\u0E23\u0E49\u0E32\u0E07 ${sp.label} \u0E43\u0E19\u0E1C\u0E31\u0E07 Rank ${sp.rank} \u0E43\u0E15\u0E49 R${sp.rank}-#${sp.parentId} (${sp.side})`,
+              note: `\u0E2A\u0E23\u0E49\u0E32\u0E07 Extra ID \u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08 (ID #${sp.id})`,
+              poolBalanceAfterUsdt: extraPoolBal,
+              balanceAfterUsdt: 0
+            });
+          }
+        }
+        while (autoIdx < sortedAutoSpawned.length) {
+          const sp = sortedAutoSpawned[autoIdx];
+          autoIdx++;
+          const lastTime = ledgerEvents.length > 0 ? new Date(ledgerEvents[ledgerEvents.length - 1].timestamp).getTime() + 1e3 : Date.now();
+          autoPoolBal = Number(Math.max(0, autoPoolBal - 5).toFixed(2));
+          ledgerEvents.push({
+            id: `v-out-auto-${rep.id}-${sp.id}`,
+            timestamp: new Date(lastTime).toISOString(),
+            direction: "OUT",
+            actionType: "SPAWN_AUTO_ID",
+            actionLabelTh: "\u0E2B\u0E31\u0E01\u0E2A\u0E23\u0E49\u0E32\u0E07 Auto ID",
+            rank: 1,
+            amountUsdt: 5,
+            poolType: "AUTO_ID_POOL",
+            poolLabelTh: "Auto ID Pool",
+            descriptionTh: `\u0E2B\u0E31\u0E01 5.00 USDT \u0E08\u0E32\u0E01 Auto ID Pool \u0E2A\u0E23\u0E49\u0E32\u0E07 ${sp.label} \u0E27\u0E32\u0E07\u0E1C\u0E31\u0E07 Rank 1`,
+            note: `\u0E2A\u0E23\u0E49\u0E32\u0E07 Auto ID \u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08 (ID #${sp.id})`,
+            poolBalanceAfterUsdt: autoPoolBal,
+            balanceAfterUsdt: 0
+          });
+        }
+        while (extraIdx < sortedExtraSpawned.length) {
+          const sp = sortedExtraSpawned[extraIdx];
+          const cost = RANK_PRICES_USDT[sp.rank - 1] || 10;
+          extraIdx++;
+          const lastTime = ledgerEvents.length > 0 ? new Date(ledgerEvents[ledgerEvents.length - 1].timestamp).getTime() + 1e3 : Date.now();
+          extraPoolBal = Number(Math.max(0, extraPoolBal - cost).toFixed(2));
+          ledgerEvents.push({
+            id: `v-out-extra-${rep.id}-${sp.rank}-${sp.id}`,
+            timestamp: new Date(lastTime).toISOString(),
+            direction: "OUT",
+            actionType: "SPAWN_EXTRA_ID",
+            actionLabelTh: `\u0E2B\u0E31\u0E01\u0E2A\u0E23\u0E49\u0E32\u0E07 Extra ID (${sp.label})`,
+            rank: sp.rank,
+            amountUsdt: cost,
+            poolType: "EXTRA_ID_POOL",
+            poolLabelTh: "Extra ID Pool",
+            descriptionTh: `\u0E2B\u0E31\u0E01 ${cost.toFixed(2)} USDT \u0E08\u0E32\u0E01 Extra ID Pool \u0E2A\u0E23\u0E49\u0E32\u0E07 ${sp.label} \u0E43\u0E19\u0E1C\u0E31\u0E07 Rank ${sp.rank}`,
+            note: `\u0E2A\u0E23\u0E49\u0E32\u0E07 Extra ID \u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08 (ID #${sp.id})`,
+            poolBalanceAfterUsdt: extraPoolBal,
+            balanceAfterUsdt: 0
+          });
+        }
+        for (const u of idUpgrades) {
+          const uCost = Number(u.vaultDeductedUsdt) || 0;
+          if (uCost <= 0) continue;
+          ledgerEvents.push({
+            id: `v-out-up-${rep.id}-${u.toRank}`,
+            timestamp: u.createdAt || (/* @__PURE__ */ new Date()).toISOString(),
+            direction: "OUT",
+            actionType: "AUTO_UPGRADE",
+            actionLabelTh: `\u0E2B\u0E31\u0E01\u0E2D\u0E2D\u0E42\u0E15\u0E49\u0E2D\u0E31\u0E1B\u0E40\u0E01\u0E23\u0E14 (\u0E2A\u0E39\u0E48 Rank ${u.toRank})`,
+            rank: u.toRank,
+            amountUsdt: uCost,
+            poolType: "UPGRADE_POOL",
+            poolLabelTh: "Upgrade Pool",
+            descriptionTh: `\u0E2B\u0E31\u0E01 ${uCost.toFixed(2)} USDT \u0E08\u0E32\u0E01 Upgrade Pool \u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E2D\u0E31\u0E1B\u0E40\u0E01\u0E23\u0E14 Main #${rep.id} \u0E08\u0E32\u0E01 Rank ${u.fromRank} \u0E2A\u0E39\u0E48 Rank ${u.toRank}`,
+            note: `\u0E2D\u0E31\u0E1B\u0E40\u0E01\u0E23\u0E14\u0E2A\u0E39\u0E48 Rank ${u.toRank} \u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08`,
+            poolBalanceAfterUsdt: 0,
+            balanceAfterUsdt: 0
+          });
+        }
+        ledgerEvents.sort(
+          (a, b) => (new Date(a.timestamp).getTime() || 0) - (new Date(b.timestamp).getTime() || 0)
+        );
+        let netRunningTotal = 0;
+        for (const ev of ledgerEvents) {
+          if (ev.direction === "IN") {
+            netRunningTotal = Number((netRunningTotal + ev.amountUsdt).toFixed(2));
+          } else {
+            netRunningTotal = Number(Math.max(0, netRunningTotal - ev.amountUsdt).toFixed(2));
+          }
+          ev.balanceAfterUsdt = netRunningTotal;
+        }
+        const extraDeduct = rep.autoExtraIdsSpawned.reduce(
+          (s, x) => s + (RANK_PRICES_USDT[x.rank - 1] || 10),
+          0
+        );
+        const autoDeduct = rep.autoIdsSpawned.length * 5;
+        const upDeduct = idUpgrades.reduce((s, u) => s + (Number(u.vaultDeductedUsdt) || 0), 0);
+        rep.vaultDeductedBreakdown = {
+          extraIdsTotalUsdt: Number(extraDeduct.toFixed(2)),
+          autoIdsTotalUsdt: Number(autoDeduct.toFixed(2)),
+          upgradesTotalUsdt: Number(upDeduct.toFixed(2))
+        };
+        ledgerEvents.sort(
+          (a, b) => (new Date(b.timestamp).getTime() || 0) - (new Date(a.timestamp).getTime() || 0)
+        );
+        rep.vault35Ledger = ledgerEvents;
       }
       const allReports = Array.from(reportsMap.values()).sort((a, b) => a.id - b.id);
       const mainAndAutoReports = allReports.filter((r) => r.nodeType !== "CLONE_ID");
+      const eligibleMainReports = allReports.filter((r) => !r.isClone && !r.isExtraId);
+      const ALLSELL_FOUR_POOL_DEFS = [
+        {
+          poolNumber: 1,
+          key: "pool1_r13",
+          titleTh: "\u0E01\u0E2D\u0E07\u0E17\u0E35\u0E48 1 : r-13 (300 USDT)",
+          targetRank: 13,
+          targetRankPriceUsdt: 300,
+          requiredSelfRank: 13,
+          requiredDirectCount: 5,
+          allowedDirectRanks: [10, 11, 12, 13],
+          allowedDirectRanksLabel: "r-10 \u0E2B\u0E23\u0E37\u0E2D r-11 \u0E2B\u0E23\u0E37\u0E2D r-12 \u0E2B\u0E23\u0E37\u0E2D r-13"
+        },
+        {
+          poolNumber: 2,
+          key: "pool2_r20",
+          titleTh: "\u0E01\u0E2D\u0E07\u0E17\u0E35\u0E48 2 : r-20 (1,000 USDT)",
+          targetRank: 20,
+          targetRankPriceUsdt: 1e3,
+          requiredSelfRank: 20,
+          requiredDirectCount: 2,
+          allowedDirectRanks: [17, 18, 19, 20],
+          allowedDirectRanksLabel: "r-17 \u0E2B\u0E23\u0E37\u0E2D r-18 \u0E2B\u0E23\u0E37\u0E2D r-19 \u0E2B\u0E23\u0E37\u0E2D r-20"
+        },
+        {
+          poolNumber: 3,
+          key: "pool3_r24",
+          titleTh: "\u0E01\u0E2D\u0E07\u0E17\u0E35\u0E48 3 : r-24 (5,000 USDT)",
+          targetRank: 24,
+          targetRankPriceUsdt: 5e3,
+          requiredSelfRank: 24,
+          requiredDirectCount: 2,
+          allowedDirectRanks: [22, 23, 24],
+          allowedDirectRanksLabel: "r-22 \u0E2B\u0E23\u0E37\u0E2D r-23 \u0E2B\u0E23\u0E37\u0E2D r-24"
+        },
+        {
+          poolNumber: 4,
+          key: "pool4_r27",
+          titleTh: "\u0E01\u0E2D\u0E07\u0E17\u0E35\u0E48 4 : r-27 (10,000 USDT)",
+          targetRank: 27,
+          targetRankPriceUsdt: 1e4,
+          requiredSelfRank: 27,
+          requiredDirectCount: 5,
+          allowedDirectRanks: [25, 26, 27],
+          allowedDirectRanksLabel: "r-25 \u0E2B\u0E23\u0E37\u0E2D r-26 \u0E2B\u0E23\u0E37\u0E2D r-27"
+        }
+      ];
+      const poolQualifiedIdsMap = /* @__PURE__ */ new Map();
+      for (const pDef of ALLSELL_FOUR_POOL_DEFS) {
+        poolQualifiedIdsMap.set(pDef.poolNumber, []);
+      }
+      for (const rep of eligibleMainReports) {
+        const directMainRefs = eligibleMainReports.filter(
+          (d) => d.id !== rep.id && d.directSponsorNodeId === rep.id
+        );
+        const directMainIdsList = directMainRefs.map((d) => ({
+          id: d.id,
+          currentMaxRank: d.currentMaxRank,
+          isAutoId: d.isAutoId
+        }));
+        const poolsEval = ALLSELL_FOUR_POOL_DEFS.map((pDef) => {
+          const hasSelfRank = rep.currentMaxRank >= pDef.requiredSelfRank || rep.rankNodesList.some((rn) => rn.rank === pDef.requiredSelfRank);
+          const qualifiedDirectIds = directMainRefs.filter(
+            (d) => pDef.allowedDirectRanks.includes(d.currentMaxRank) || d.rankNodesList.some((rn) => pDef.allowedDirectRanks.includes(rn.rank))
+          ).map((d) => ({ id: d.id, currentMaxRank: d.currentMaxRank }));
+          const qualifiedDirectCount = qualifiedDirectIds.length;
+          const isQualified = hasSelfRank && qualifiedDirectCount >= pDef.requiredDirectCount;
+          if (isQualified) {
+            poolQualifiedIdsMap.get(pDef.poolNumber)?.push(rep.id);
+          }
+          const singlePoolTotalUsdt = Number((allSellTotalUsdt * 0.25).toFixed(2));
+          return {
+            poolNumber: pDef.poolNumber,
+            key: pDef.key,
+            titleTh: pDef.titleTh,
+            targetRank: pDef.targetRank,
+            targetRankPriceUsdt: pDef.targetRankPriceUsdt,
+            requiredSelfRank: pDef.requiredSelfRank,
+            hasSelfRank,
+            requiredDirectCount: pDef.requiredDirectCount,
+            allowedDirectRanks: pDef.allowedDirectRanks,
+            allowedDirectRanksLabel: pDef.allowedDirectRanksLabel,
+            qualifiedDirectIds,
+            qualifiedDirectCount,
+            isQualified,
+            poolTotalUsdt: singlePoolTotalUsdt,
+            estimatedShareUsdt: 0
+          };
+        });
+        rep.allSellQualification = {
+          totalDirectMainIds: directMainIdsList.length,
+          directMainIdsList,
+          totalQualifiedPoolsCount: poolsEval.filter((p) => p.isQualified).length,
+          estimatedAllSellShareUsdt: 0,
+          pools: poolsEval
+        };
+      }
+      const allSellFourPools = ALLSELL_FOUR_POOL_DEFS.map((pDef) => {
+        const qualifiedIds = poolQualifiedIdsMap.get(pDef.poolNumber) || [];
+        const poolTotalUsdt = Number((allSellTotalUsdt * 0.25).toFixed(2));
+        const poolOnChainUsdt = Number((onChainAllSellBal * 0.25).toFixed(2));
+        const sharePerQualifiedIdUsdt = qualifiedIds.length > 0 ? Number((poolTotalUsdt / qualifiedIds.length).toFixed(2)) : 0;
+        return {
+          poolNumber: pDef.poolNumber,
+          key: pDef.key,
+          titleTh: pDef.titleTh,
+          targetRank: pDef.targetRank,
+          targetRankPriceUsdt: pDef.targetRankPriceUsdt,
+          requiredSelfRank: pDef.requiredSelfRank,
+          requiredDirectCount: pDef.requiredDirectCount,
+          allowedDirectRanks: pDef.allowedDirectRanks,
+          allowedDirectRanksLabel: pDef.allowedDirectRanksLabel,
+          sharePercentOfAllSell: 25,
+          payoutScheduleTh: "\u0E08\u0E48\u0E32\u0E22\u0E40\u0E07\u0E34\u0E19\u0E43\u0E2B\u0E49\u0E1C\u0E39\u0E49\u0E1C\u0E48\u0E32\u0E19\u0E40\u0E01\u0E13\u0E11\u0E4C \u0E17\u0E38\u0E01\u0E01\u0E25\u0E32\u0E07\u0E40\u0E14\u0E37\u0E2D\u0E19 \u0E41\u0E25\u0E30 \u0E15\u0E49\u0E19\u0E40\u0E14\u0E37\u0E2D\u0E19 (\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48 1 \u0E41\u0E25\u0E30 15 \u0E02\u0E2D\u0E07\u0E17\u0E38\u0E01\u0E40\u0E14\u0E37\u0E2D\u0E19)",
+          poolTotalUsdt,
+          poolOnChainUsdt,
+          qualifiedMainIds: qualifiedIds,
+          qualifiedCount: qualifiedIds.length,
+          sharePerQualifiedIdUsdt
+        };
+      });
+      for (const rep of eligibleMainReports) {
+        if (!rep.allSellQualification) continue;
+        let totalShare = 0;
+        for (const pItem of rep.allSellQualification.pools) {
+          const poolSummary = allSellFourPools.find((x) => x.poolNumber === pItem.poolNumber);
+          if (pItem.isQualified && poolSummary) {
+            pItem.estimatedShareUsdt = poolSummary.sharePerQualifiedIdUsdt;
+            totalShare = Number((totalShare + poolSummary.sharePerQualifiedIdUsdt).toFixed(2));
+          }
+        }
+        rep.allSellQualification.estimatedAllSellShareUsdt = totalShare;
+      }
+      for (const rep of allReports) {
+        if (rep.isClone && !rep.allSellQualification) {
+          const origRep = reportsMap.get(rep.originMainId);
+          if (origRep?.allSellQualification) {
+            rep.allSellQualification = origRep.allSellQualification;
+          }
+        }
+      }
+      const allSellAutoStatus = buildAllSellAutoStatus(
+        matrixDB.contractAddress,
+        Number(allSellTotalUsdt.toFixed(2)),
+        onChainAllSellBal,
+        allSellFourPools
+      );
       res.json({
         success: true,
         source: "DATABASE",
@@ -3759,6 +4384,9 @@ async function startApp() {
           familyPoolWallet: familyPoolWalletAddr,
           botWallet: botWalletAddr,
           allSellTotalUsdt: Number(allSellTotalUsdt.toFixed(2)),
+          allSellPayoutScheduleTh: "\u0E08\u0E48\u0E32\u0E22\u0E40\u0E07\u0E34\u0E19\u0E43\u0E2B\u0E49\u0E17\u0E35\u0E48\u0E1C\u0E48\u0E32\u0E19\u0E40\u0E01\u0E13\u0E11\u0E4C \u0E17\u0E38\u0E01\u0E01\u0E25\u0E32\u0E07\u0E40\u0E14\u0E37\u0E2D\u0E19 \u0E41\u0E25\u0E30 \u0E15\u0E49\u0E19\u0E40\u0E14\u0E37\u0E2D\u0E19 (\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48 1 \u0E41\u0E25\u0E30 15 \u0E02\u0E2D\u0E07\u0E17\u0E38\u0E01\u0E40\u0E14\u0E37\u0E2D\u0E19)",
+          allSellAutoPayout: allSellAutoStatus,
+          allSellFourPools,
           allSellByRank,
           allSellHistory,
           familyPoolTotalUsdt: Number(familyPoolTotalUsdt.toFixed(2)),
@@ -3774,6 +4402,335 @@ async function startApp() {
           }
         },
         reports: allReports
+      });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+  const ALLSELL_PAYOUT_FILE_PATH = path.resolve(__dirname, "prisma/allsell-payouts.json");
+  const loadAllSellAutoStore = () => {
+    try {
+      if (fs.existsSync(ALLSELL_PAYOUT_FILE_PATH)) {
+        const raw = fs.readFileSync(ALLSELL_PAYOUT_FILE_PATH, "utf8");
+        const parsed = JSON.parse(raw);
+        return {
+          autoEnabled: parsed.autoEnabled !== false,
+          lastExecutedCycleKey: parsed.lastExecutedCycleKey || null,
+          lastExecutedAt: parsed.lastExecutedAt || null,
+          history: Array.isArray(parsed.history) ? parsed.history : []
+        };
+      }
+    } catch {
+    }
+    return {
+      autoEnabled: true,
+      lastExecutedCycleKey: null,
+      lastExecutedAt: null,
+      history: []
+    };
+  };
+  let allSellAutoStore = loadAllSellAutoStore();
+  const saveAllSellAutoStore = () => {
+    try {
+      const dir = path.dirname(ALLSELL_PAYOUT_FILE_PATH);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(ALLSELL_PAYOUT_FILE_PATH, JSON.stringify(allSellAutoStore, null, 2), "utf8");
+    } catch {
+    }
+  };
+  const computeNextAllSellCycleInfo = () => {
+    const nowMs = Date.now();
+    const thOffsetMs = 7 * 60 * 60 * 1e3;
+    const thDate = new Date(nowMs + thOffsetMs);
+    const year = thDate.getUTCFullYear();
+    const month = thDate.getUTCMonth();
+    const day = thDate.getUTCDate();
+    const thaiMonths = [
+      "\u0E21.\u0E04.",
+      "\u0E01.\u0E1E.",
+      "\u0E21\u0E35.\u0E04.",
+      "\u0E40\u0E21.\u0E22.",
+      "\u0E1E.\u0E04.",
+      "\u0E21\u0E34.\u0E22.",
+      "\u0E01.\u0E04.",
+      "\u0E2A.\u0E04.",
+      "\u0E01.\u0E22.",
+      "\u0E15.\u0E04.",
+      "\u0E1E.\u0E22.",
+      "\u0E18.\u0E04."
+    ];
+    let nextTargetUtcMs = 0;
+    let nextCycleKey = "";
+    let nextCycleLabelTh = "";
+    if (day < 15) {
+      nextTargetUtcMs = Date.UTC(year, month, 15, 0, 0, 0) - thOffsetMs;
+      const mm = String(month + 1).padStart(2, "0");
+      nextCycleKey = `${year}-${mm}-15`;
+      nextCycleLabelTh = `15 ${thaiMonths[month]} ${year} \u0E40\u0E27\u0E25\u0E32 00:00 \u0E19. (\u0E23\u0E2D\u0E1A\u0E01\u0E25\u0E32\u0E07\u0E40\u0E14\u0E37\u0E2D\u0E19)`;
+    } else {
+      const nextMonthDate = new Date(Date.UTC(year, month + 1, 1, 0, 0, 0));
+      const ny = nextMonthDate.getUTCFullYear();
+      const nm = nextMonthDate.getUTCMonth();
+      nextTargetUtcMs = Date.UTC(ny, nm, 1, 0, 0, 0) - thOffsetMs;
+      const mm = String(nm + 1).padStart(2, "0");
+      nextCycleKey = `${ny}-${mm}-01`;
+      nextCycleLabelTh = `1 ${thaiMonths[nm]} ${ny} \u0E40\u0E27\u0E25\u0E32 00:00 \u0E19. (\u0E23\u0E2D\u0E1A\u0E15\u0E49\u0E19\u0E40\u0E14\u0E37\u0E2D\u0E19)`;
+    }
+    const isTodayCycleDay = day === 1 || day === 15;
+    const currentMm = String(month + 1).padStart(2, "0");
+    const currentDd = String(day).padStart(2, "0");
+    const todayCycleKey = isTodayCycleDay ? `${year}-${currentMm}-${currentDd}` : null;
+    const todayCycleLabelTh = day === 1 ? `1 ${thaiMonths[month]} ${year} (\u0E23\u0E2D\u0E1A\u0E15\u0E49\u0E19\u0E40\u0E14\u0E37\u0E2D\u0E19)` : day === 15 ? `15 ${thaiMonths[month]} ${year} (\u0E23\u0E2D\u0E1A\u0E01\u0E25\u0E32\u0E07\u0E40\u0E14\u0E37\u0E2D\u0E19)` : `\u0E15\u0E31\u0E14\u0E23\u0E2D\u0E1A\u0E1E\u0E34\u0E40\u0E28\u0E29 ${day} ${thaiMonths[month]} ${year}`;
+    const secondsUntilNextPayout = Math.max(0, Math.floor((nextTargetUtcMs - nowMs) / 1e3));
+    const daysLeft = Math.floor(secondsUntilNextPayout / 86400);
+    const hoursLeft = Math.floor(secondsUntilNextPayout % 86400 / 3600);
+    const minutesLeft = Math.floor(secondsUntilNextPayout % 3600 / 60);
+    return {
+      nextCycleKey,
+      nextCycleLabelTh,
+      nextPayoutIso: new Date(nextTargetUtcMs).toISOString(),
+      secondsUntilNextPayout,
+      countdownTextTh: `${daysLeft} \u0E27\u0E31\u0E19 ${hoursLeft} \u0E0A\u0E21. ${minutesLeft} \u0E19\u0E32\u0E17\u0E35`,
+      isTodayCycleDay,
+      todayCycleKey,
+      todayCycleLabelTh
+    };
+  };
+  function buildAllSellAutoStatus(contractAddr, allSellTotalUsdt, onChainAllSellBal, fourPools) {
+    const cycleInfo = computeNextAllSellCycleInfo();
+    const contractHistory = allSellAutoStore.history.filter(
+      (h) => (h.contractAddress || "").toLowerCase() === (contractAddr || "").toLowerCase()
+    );
+    const totalAlreadyPaidUsdt = Number(
+      contractHistory.reduce((acc, h) => acc + Number(h.totalDistributedUsdt || 0), 0).toFixed(2)
+    );
+    const totalQualifiedAcrossPools = fourPools.reduce(
+      (acc, p) => acc + Number(p.qualifiedCount || 0),
+      0
+    );
+    return {
+      autoEnabled: allSellAutoStore.autoEnabled,
+      scheduleRuleTh: "\u0E15\u0E31\u0E14\u0E23\u0E2D\u0E1A\u0E41\u0E25\u0E30\u0E42\u0E2D\u0E19\u0E08\u0E48\u0E32\u0E22\u0E2D\u0E31\u0E15\u0E42\u0E19\u0E21\u0E31\u0E15\u0E34 \u0E17\u0E38\u0E01\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48 1 (\u0E15\u0E49\u0E19\u0E40\u0E14\u0E37\u0E2D\u0E19) \u0E41\u0E25\u0E30 \u0E27\u0E31\u0E19\u0E17\u0E35\u0E48 15 (\u0E01\u0E25\u0E32\u0E07\u0E40\u0E14\u0E37\u0E2D\u0E19) \u0E40\u0E27\u0E25\u0E32 00:00 \u0E19.",
+      nextCycleKey: cycleInfo.nextCycleKey,
+      nextCycleLabelTh: cycleInfo.nextCycleLabelTh,
+      nextPayoutIso: cycleInfo.nextPayoutIso,
+      secondsUntilNextPayout: cycleInfo.secondsUntilNextPayout,
+      countdownTextTh: cycleInfo.countdownTextTh,
+      lastExecutedCycleKey: allSellAutoStore.lastExecutedCycleKey,
+      lastExecutedAt: allSellAutoStore.lastExecutedAt,
+      totalAlreadyPaidUsdt,
+      pendingPoolUsdt: Number(Math.max(0, allSellTotalUsdt - totalAlreadyPaidUsdt).toFixed(2)),
+      onChainAllSellBal,
+      totalQualifiedAcrossPools,
+      historyCount: contractHistory.length,
+      history: contractHistory.slice(0, 30)
+    };
+  }
+  const executeAllSellAutoPayoutCycle = async (triggerType, customPrivateKey) => {
+    const cycleInfo = computeNextAllSellCycleInfo();
+    const cycleKey = triggerType === "AUTO_SCHEDULE" && cycleInfo.todayCycleKey ? cycleInfo.todayCycleKey : `${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}-${triggerType === "AUTO_SCHEDULE" ? "AUTO" : "MANUAL"}`;
+    const cycleLabelTh = triggerType === "AUTO_SCHEDULE" ? cycleInfo.todayCycleLabelTh : `${cycleInfo.todayCycleLabelTh} (\u0E2A\u0E31\u0E48\u0E07\u0E15\u0E31\u0E14\u0E23\u0E2D\u0E1A\u0E2D\u0E31\u0E15\u0E42\u0E19\u0E21\u0E31\u0E15\u0E34\u0E17\u0E31\u0E19\u0E17\u0E35)`;
+    const r1Nodes = matrixDB.nodesByRank[1] || [];
+    const eligibleMains = r1Nodes.filter((n) => !n.isClone && !n.isExtraId);
+    let allSellTotalUsdt = 0;
+    for (let rankNum = 1; rankNum <= 27; rankNum++) {
+      const rNodes = matrixDB.nodesByRank[rankNum] || [];
+      if (rNodes.length <= 1) continue;
+      const unitPrice = RANK_PRICES_USDT[rankNum - 1] || 5;
+      const allSellAmt = Number((unitPrice * 0.04).toFixed(2));
+      const nodesMap = /* @__PURE__ */ new Map();
+      for (const n of rNodes) nodesMap.set(n.id, n);
+      for (const n of rNodes) {
+        if (n.id <= 1) continue;
+        const p = nodesMap.get(n.parentId);
+        if (p && p.leftChild === n.id) {
+          allSellTotalUsdt = Number((allSellTotalUsdt + allSellAmt).toFixed(4));
+        }
+      }
+    }
+    const contractHistory = allSellAutoStore.history.filter(
+      (h) => (h.contractAddress || "").toLowerCase() === (matrixDB.contractAddress || "").toLowerCase()
+    );
+    const alreadyPaidUsdt = contractHistory.reduce(
+      (acc, h) => acc + Number(h.totalDistributedUsdt || 0),
+      0
+    );
+    const distributableAllSellUsdt = Number(Math.max(0, allSellTotalUsdt - alreadyPaidUsdt).toFixed(2));
+    const singlePoolUsdt = Number((distributableAllSellUsdt * 0.25).toFixed(2));
+    const poolDefs = [
+      {
+        poolNumber: 1,
+        titleTh: "\u0E01\u0E2D\u0E07\u0E17\u0E35\u0E48 1 : r-13 (300 USDT)",
+        requiredSelfRank: 13,
+        requiredDirectCount: 5,
+        allowedDirectRanks: [10, 11, 12, 13]
+      },
+      {
+        poolNumber: 2,
+        titleTh: "\u0E01\u0E2D\u0E07\u0E17\u0E35\u0E48 2 : r-20 (1,000 USDT)",
+        requiredSelfRank: 20,
+        requiredDirectCount: 2,
+        allowedDirectRanks: [17, 18, 19, 20]
+      },
+      {
+        poolNumber: 3,
+        titleTh: "\u0E01\u0E2D\u0E07\u0E17\u0E35\u0E48 3 : r-24 (5,000 USDT)",
+        requiredSelfRank: 24,
+        requiredDirectCount: 2,
+        allowedDirectRanks: [22, 23, 24]
+      },
+      {
+        poolNumber: 4,
+        titleTh: "\u0E01\u0E2D\u0E07\u0E17\u0E35\u0E48 4 : r-27 (10,000 USDT)",
+        requiredSelfRank: 27,
+        requiredDirectCount: 5,
+        allowedDirectRanks: [25, 26, 27]
+      }
+    ];
+    const mainMaxRankMap = /* @__PURE__ */ new Map();
+    const mainRanksSetMap = /* @__PURE__ */ new Map();
+    for (const m of eligibleMains) {
+      const stats = computeMainIdDatabaseStats(m.id);
+      mainMaxRankMap.set(m.id, stats.currentRank);
+      const rSet = /* @__PURE__ */ new Set([1]);
+      for (let r = 2; r <= 27; r++) {
+        const rList = matrixDB.nodesByRank[r] || [];
+        if (rList.some((x) => !x.isClone && !x.isExtraId && x.originMainId === m.id)) {
+          rSet.add(r);
+        }
+      }
+      mainRanksSetMap.set(m.id, rSet);
+    }
+    const transfers = [];
+    let totalDistributedUsdt = 0;
+    let carriedOverUsdt = 0;
+    const rawPk = (customPrivateKey || process.env.ALLSELL_WALLET_PRIVATE_KEY || process.env.ADMIN_PRIVATE_KEY || "0xc9c4649effa5eaaab8dc0690b4e392aec7cf84ee49e2251a1800fe89ad3270ca").trim();
+    let signerWallet = null;
+    let usdtWriteContract = null;
+    let signerUsdtBal = 0;
+    if (rawPk && (rawPk.length === 64 || rawPk.length === 66)) {
+      try {
+        const provider = getProvider();
+        const pkHex = rawPk.startsWith("0x") ? rawPk : `0x${rawPk}`;
+        signerWallet = new ethers.Wallet(pkHex, provider);
+        usdtWriteContract = new ethers.Contract(
+          USDT_ADDRESS,
+          [
+            "function balanceOf(address) view returns (uint256)",
+            "function transfer(address to, uint256 amount) returns (bool)"
+          ],
+          signerWallet
+        );
+        const balBn = await usdtWriteContract.balanceOf(signerWallet.address);
+        signerUsdtBal = Number(ethers.formatUnits(balBn, activeUsdtDecimals || 18));
+      } catch {
+        signerWallet = null;
+        usdtWriteContract = null;
+      }
+    }
+    for (const pDef of poolDefs) {
+      const qualifiedMains = eligibleMains.filter((m) => {
+        const maxR = mainMaxRankMap.get(m.id) || 1;
+        const rSet = mainRanksSetMap.get(m.id) || /* @__PURE__ */ new Set([1]);
+        const hasSelf = maxR >= pDef.requiredSelfRank || rSet.has(pDef.requiredSelfRank);
+        if (!hasSelf) return false;
+        const directs = eligibleMains.filter(
+          (d) => d.id !== m.id && d.directSponsorNodeId === m.id
+        );
+        const qualDirects = directs.filter((d) => {
+          const dMaxR = mainMaxRankMap.get(d.id) || 1;
+          const dSet = mainRanksSetMap.get(d.id) || /* @__PURE__ */ new Set([1]);
+          return pDef.allowedDirectRanks.includes(dMaxR) || pDef.allowedDirectRanks.some((r) => dSet.has(r));
+        });
+        return qualDirects.length >= pDef.requiredDirectCount;
+      });
+      if (qualifiedMains.length === 0 || singlePoolUsdt <= 0) {
+        carriedOverUsdt = Number((carriedOverUsdt + singlePoolUsdt).toFixed(2));
+        continue;
+      }
+      const sharePerId = Number((singlePoolUsdt / qualifiedMains.length).toFixed(2));
+      for (const qMain of qualifiedMains) {
+        if (sharePerId <= 0) continue;
+        let txHash = `0xauto_allsell_p${pDef.poolNumber}_id${qMain.id}_${Date.now().toString(16)}`;
+        let mode = "CYCLE_SETTLEMENT";
+        if (usdtWriteContract && signerWallet && signerUsdtBal >= sharePerId) {
+          try {
+            const amtWei = ethers.parseUnits(sharePerId.toFixed(2), activeUsdtDecimals || 18);
+            const tx = await usdtWriteContract.transfer(qMain.owner, amtWei);
+            const receipt = await tx.wait(1);
+            txHash = receipt?.hash || tx.hash;
+            mode = "ONCHAIN_TRANSFER";
+            signerUsdtBal = Math.max(0, signerUsdtBal - sharePerId);
+          } catch {
+          }
+        }
+        totalDistributedUsdt = Number((totalDistributedUsdt + sharePerId).toFixed(2));
+        transfers.push({
+          poolNumber: pDef.poolNumber,
+          poolTitleTh: pDef.titleTh,
+          mainId: qMain.id,
+          recipientWallet: qMain.owner,
+          amountUsdt: sharePerId,
+          txHash,
+          mode
+        });
+      }
+    }
+    const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+    const record = {
+      id: `allsell-cycle-${Date.now()}`,
+      contractAddress: matrixDB.contractAddress,
+      cycleKey,
+      cycleLabelTh,
+      triggerType,
+      executedAt: nowIso,
+      totalAllSellPoolUsdt: distributableAllSellUsdt,
+      totalDistributedUsdt,
+      carriedOverUsdt,
+      qualifiedRecipientsCount: transfers.length,
+      transfers,
+      noteTh: transfers.length > 0 ? `\u0E15\u0E31\u0E14\u0E23\u0E2D\u0E1A\u0E08\u0E48\u0E32\u0E22 AllSell \u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08 (${transfers.length} \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23 \u0E23\u0E27\u0E21 ${totalDistributedUsdt.toFixed(2)} USDT \u2022 \u0E22\u0E01\u0E22\u0E2D\u0E14\u0E2A\u0E30\u0E2A\u0E21\u0E15\u0E48\u0E2D ${carriedOverUsdt.toFixed(2)} USDT)` : `\u0E15\u0E23\u0E27\u0E08\u0E2A\u0E2D\u0E1A\u0E23\u0E2D\u0E1A ${cycleLabelTh} \u0E40\u0E23\u0E35\u0E22\u0E1A\u0E23\u0E49\u0E2D\u0E22\u0E41\u0E25\u0E49\u0E27 (\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E23\u0E2B\u0E31\u0E2A\u0E17\u0E35\u0E48\u0E04\u0E23\u0E1A\u0E40\u0E01\u0E13\u0E11\u0E4C\u0E43\u0E19\u0E23\u0E2D\u0E1A\u0E19\u0E35\u0E49 \u2022 \u0E22\u0E01\u0E22\u0E2D\u0E14\u0E2A\u0E30\u0E2A\u0E21 ${carriedOverUsdt.toFixed(2)} USDT \u0E44\u0E1B\u0E23\u0E2D\u0E1A\u0E16\u0E31\u0E14\u0E44\u0E1B\u0E2D\u0E31\u0E15\u0E42\u0E19\u0E21\u0E31\u0E15\u0E34)`
+    };
+    allSellAutoStore.lastExecutedCycleKey = cycleKey;
+    allSellAutoStore.lastExecutedAt = nowIso;
+    allSellAutoStore.history.unshift(record);
+    if (allSellAutoStore.history.length > 100) {
+      allSellAutoStore.history = allSellAutoStore.history.slice(0, 100);
+    }
+    saveAllSellAutoStore();
+    return record;
+  };
+  setInterval(() => {
+    if (!allSellAutoStore.autoEnabled) return;
+    const cycleInfo = computeNextAllSellCycleInfo();
+    if (cycleInfo.isTodayCycleDay && cycleInfo.todayCycleKey && allSellAutoStore.lastExecutedCycleKey !== cycleInfo.todayCycleKey) {
+      executeAllSellAutoPayoutCycle("AUTO_SCHEDULE").catch(
+        (err) => console.warn("[AutoAllSell] Scheduled payout error:", err)
+      );
+    }
+  }, 60 * 1e3);
+  app.post("/api/matrix/allsell-auto-payout/toggle", (req, res) => {
+    try {
+      const { enabled } = req.body;
+      allSellAutoStore.autoEnabled = typeof enabled === "boolean" ? enabled : !allSellAutoStore.autoEnabled;
+      saveAllSellAutoStore();
+      res.json({
+        success: true,
+        autoEnabled: allSellAutoStore.autoEnabled,
+        message: allSellAutoStore.autoEnabled ? "\u0E40\u0E1B\u0E34\u0E14\u0E23\u0E30\u0E1A\u0E1A\u0E15\u0E31\u0E14\u0E23\u0E2D\u0E1A\u0E08\u0E48\u0E32\u0E22 AllSell \u0E2D\u0E31\u0E15\u0E42\u0E19\u0E21\u0E31\u0E15\u0E34 (\u0E17\u0E38\u0E01\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48 1 \u0E41\u0E25\u0E30 15) \u0E40\u0E23\u0E35\u0E22\u0E1A\u0E23\u0E49\u0E2D\u0E22\u0E41\u0E25\u0E49\u0E27" : "\u0E1B\u0E34\u0E14\u0E23\u0E30\u0E1A\u0E1A\u0E15\u0E31\u0E14\u0E23\u0E2D\u0E1A\u0E08\u0E48\u0E32\u0E22 AllSell \u0E2D\u0E31\u0E15\u0E42\u0E19\u0E21\u0E31\u0E15\u0E34\u0E0A\u0E31\u0E48\u0E27\u0E04\u0E23\u0E32\u0E27"
+      });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+  app.post("/api/matrix/allsell-auto-payout/execute-now", async (req, res) => {
+    try {
+      const { privateKey } = req.body || {};
+      const record = await executeAllSellAutoPayoutCycle("MANUAL_TRIGGER", privateKey);
+      res.json({
+        success: true,
+        record,
+        message: record.noteTh
       });
     } catch (err) {
       res.status(500).json({ success: false, error: err.message });
@@ -4137,6 +5094,315 @@ async function startApp() {
     } catch (err) {
       console.error("Error in /api/admin/upgrade-rank:", err);
       res.status(500).json({ success: false, error: err.message });
+    }
+  });
+  app.get("/api/admin/overview", async (_req, res) => {
+    try {
+      const provider = getProvider();
+      const contract = new ethers.Contract(
+        CONTRACT_ADDRESS,
+        [
+          ...MATRIX_READ_ABI,
+          "function owner() view returns (address)",
+          "function allSellWallet() view returns (address)",
+          "function botWallet() view returns (address)",
+          "function familyPool() view returns (address)"
+        ],
+        provider
+      );
+      const usdtContract = new ethers.Contract(
+        USDT_ADDRESS,
+        [
+          "function balanceOf(address) view returns (uint256)",
+          "function decimals() view returns (uint8)",
+          "function symbol() view returns (string)"
+        ],
+        provider
+      );
+      let ownerAddr = matrixDB.systemWallets.rootOwner || ethers.ZeroAddress;
+      let allSellAddr = matrixDB.systemWallets.allSellWallet || ethers.ZeroAddress;
+      let botAddr = matrixDB.systemWallets.botWallet || ethers.ZeroAddress;
+      let familyAddr = matrixDB.systemWallets.familyPool || ethers.ZeroAddress;
+      try {
+        const [o, a, b, f] = await Promise.all([
+          contract.owner().catch(() => ownerAddr),
+          contract.allSellWallet().catch(() => allSellAddr),
+          contract.botWallet().catch(() => botAddr),
+          contract.familyPool().catch(() => familyAddr)
+        ]);
+        if (o && o !== ethers.ZeroAddress) ownerAddr = String(o);
+        if (a && a !== ethers.ZeroAddress) allSellAddr = String(a);
+        if (b && b !== ethers.ZeroAddress) botAddr = String(b);
+        if (f && f !== ethers.ZeroAddress) familyAddr = String(f);
+      } catch {
+      }
+      const fetchWalletBalances = async (addr) => {
+        if (!addr || !ethers.isAddress(addr) || addr === ethers.ZeroAddress) {
+          return { address: addr || "-", usdt: "0.00", bnb: "0.0000" };
+        }
+        try {
+          const [uBn, bBn] = await Promise.all([
+            usdtContract.balanceOf(addr).catch(() => 0n),
+            provider.getBalance(addr).catch(() => 0n)
+          ]);
+          return {
+            address: addr,
+            usdt: Number(ethers.formatUnits(uBn, activeUsdtDecimals || 18)).toFixed(2),
+            bnb: Number(ethers.formatEther(bBn)).toFixed(4)
+          };
+        } catch {
+          return { address: addr, usdt: "0.00", bnb: "0.0000" };
+        }
+      };
+      const [contractBal, ownerBal, allSellBal, botBal, familyBal] = await Promise.all([
+        fetchWalletBalances(CONTRACT_ADDRESS),
+        fetchWalletBalances(ownerAddr),
+        fetchWalletBalances(allSellAddr),
+        fetchWalletBalances(botAddr),
+        fetchWalletBalances(familyAddr)
+      ]);
+      const r1Nodes = matrixDB.nodesByRank[1] || [];
+      const mainNodesR1 = r1Nodes.filter((n) => !n.isClone && !n.isExtraId).sort((a, b) => a.id - b.id);
+      const mainIdList = mainNodesR1.map((m) => {
+        const stats = computeMainIdDatabaseStats(m.id);
+        return {
+          mainId: m.id,
+          owner: m.owner,
+          directSponsorNodeId: m.directSponsorNodeId || 1,
+          directSponsor: m.directSponsor,
+          parentId: m.parentId,
+          originType: m.originType || "MANUAL_REGISTER",
+          currentRank: stats.currentRank,
+          window5Start: stats.window5Start,
+          window5End: stats.window5End,
+          upgradeRankPool: stats.upgradeRankPool,
+          newAutoIdPool: stats.newAutoIdPool,
+          newExtraIdPool: stats.newExtraIdPool
+        };
+      });
+      const rankCountsMap = {};
+      let totalNodesAllRanks = 0;
+      for (let r = 1; r <= 27; r++) {
+        const cnt = (matrixDB.nodesByRank[r] || []).filter((n) => !n.isSyntheticExtra).length;
+        rankCountsMap[r] = cnt;
+        totalNodesAllRanks += cnt;
+      }
+      const cycleInfo = computeNextAllSellCycleInfo();
+      const rawPk = (process.env.ALLSELL_WALLET_PRIVATE_KEY || process.env.DEPLOYER_PRIVATE_KEY || "0xc9c4649effa5eaaab8dc0690b4e392aec7cf84ee49e2251a1800fe89ad3270ca").trim();
+      let serverSignerAddress = "";
+      if (rawPk && (rawPk.length === 64 || rawPk.length === 66)) {
+        try {
+          const w = new ethers.Wallet(rawPk.startsWith("0x") ? rawPk : `0x${rawPk}`);
+          serverSignerAddress = w.address;
+        } catch {
+          serverSignerAddress = "";
+        }
+      }
+      res.json({
+        success: true,
+        contractAddress: CONTRACT_ADDRESS,
+        usdtAddress: USDT_ADDRESS,
+        lastSyncedAt: matrixDB.lastSyncedAt,
+        serverSignerAddress,
+        wallets: {
+          contract: contractBal,
+          owner: ownerBal,
+          allSell: allSellBal,
+          bot: botBal,
+          familyPool: familyBal
+        },
+        stats: {
+          totalMainIdsRank1: mainIdList.length,
+          totalNodesAllRanks,
+          rankCounts: rankCountsMap
+        },
+        mainIds: mainIdList,
+        allSell: {
+          autoEnabled: allSellAutoStore.autoEnabled,
+          lastExecutedCycleKey: allSellAutoStore.lastExecutedCycleKey,
+          lastExecutedAt: allSellAutoStore.lastExecutedAt,
+          nextCycleInfo: cycleInfo,
+          history: allSellAutoStore.history.slice(0, 20)
+        }
+      });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+  app.post("/api/admin/clear-cache", async (_req, res) => {
+    try {
+      rankSyncTimestamps.clear();
+      for (let r = 1; r <= 27; r++) {
+        matrixDB.nodesByRank[r] = [];
+        matrixDB.rankCounts[r] = 0;
+      }
+      matrixDB.rewardLogs = [];
+      matrixDB.upgradeLogs = [];
+      matrixDB.userRankVaults = {};
+      saveMatrixDBToDisk(true);
+      await syncAllMatrixDatabase(CONTRACT_ADDRESS, true);
+      res.json({
+        success: true,
+        contractAddress: CONTRACT_ADDRESS,
+        lastSyncedAt: matrixDB.lastSyncedAt,
+        message: "\u{1F9F9} \u0E25\u0E49\u0E32\u0E07\u0E41\u0E04\u0E0A\u0E10\u0E32\u0E19\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E40\u0E01\u0E48\u0E32\u0E41\u0E25\u0E30\u0E14\u0E36\u0E07\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E2A\u0E14\u0E08\u0E32\u0E01 Smart Contract \u0E43\u0E2B\u0E21\u0E48\u0E04\u0E23\u0E1A 27 \u0E41\u0E23\u0E07\u0E04\u0E4C\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08!"
+      });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+  app.post("/api/admin/contract-action", async (req, res) => {
+    try {
+      const { action, params, privateKey } = req.body || {};
+      const rawPk = String(
+        privateKey || process.env.DEPLOYER_PRIVATE_KEY || process.env.ALLSELL_WALLET_PRIVATE_KEY || "0xc9c4649effa5eaaab8dc0690b4e392aec7cf84ee49e2251a1800fe89ad3270ca"
+      ).trim();
+      if (!rawPk || rawPk.length !== 64 && rawPk.length !== 66) {
+        return res.status(400).json({
+          success: false,
+          error: "\u0E44\u0E21\u0E48\u0E1E\u0E1A Private Key \u0E2A\u0E33\u0E2B\u0E23\u0E31\u0E1A\u0E40\u0E0B\u0E47\u0E19\u0E18\u0E38\u0E23\u0E01\u0E23\u0E23\u0E21\u0E1C\u0E39\u0E49\u0E14\u0E39\u0E41\u0E25\u0E23\u0E30\u0E1A\u0E1A"
+        });
+      }
+      const provider = getProvider();
+      const pkHex = rawPk.startsWith("0x") ? rawPk : `0x${rawPk}`;
+      const wallet = new ethers.Wallet(pkHex, provider);
+      const contract = new ethers.Contract(
+        CONTRACT_ADDRESS,
+        [
+          ...MATRIX_READ_ABI,
+          "function adminUpgradeRank(address _user, uint8 _targetRank) external",
+          "function adminUpgradeRankForMainId(uint256 _r1MainId, uint8 _targetRank) external",
+          "function setSystemWallets(address _allSell, address _bot, address _familyPool) external",
+          "function emergencyWithdrawToken(address _token, uint256 _amount) external",
+          "function emergencyWithdrawNative() external",
+          "function transferOwnership(address newOwner) external",
+          "function renounceOwnership() external",
+          "function checkAndProcessAutoNewMainId(address _user) external",
+          "function checkAndProcessAutoNewMainIdForNode(uint256 _mainNodeId) external",
+          "function checkAndProcessAutoExtraId(address _user, uint8 _currentRank) external",
+          "function checkAndProcessAutoExtraIdForNode(address _user, uint8 _currentRank, uint256 _sponsorNodeId) external"
+        ],
+        wallet
+      );
+      let tx;
+      let actionDesc = String(action || "");
+      switch (action) {
+        case "adminUpgradeRankForMainId": {
+          const mainId = Number(params?.mainId || 0);
+          const targetRank = Number(params?.targetRank || 2);
+          if (!mainId || targetRank < 2 || targetRank > 27) {
+            return res.status(400).json({ success: false, error: "\u0E1E\u0E32\u0E23\u0E32\u0E21\u0E34\u0E40\u0E15\u0E2D\u0E23\u0E4C mainId \u0E2B\u0E23\u0E37\u0E2D targetRank \u0E44\u0E21\u0E48\u0E16\u0E39\u0E01\u0E15\u0E49\u0E2D\u0E07" });
+          }
+          tx = await contract.adminUpgradeRankForMainId(mainId, targetRank);
+          actionDesc = `adminUpgradeRankForMainId(#${mainId} -> Rank ${targetRank})`;
+          break;
+        }
+        case "adminUpgradeRank": {
+          const targetUser = String(params?.targetUser || "").trim();
+          const targetRank = Number(params?.targetRank || 2);
+          if (!ethers.isAddress(targetUser) || targetRank < 2 || targetRank > 27) {
+            return res.status(400).json({ success: false, error: "Wallet Address \u0E2B\u0E23\u0E37\u0E2D targetRank \u0E44\u0E21\u0E48\u0E16\u0E39\u0E01\u0E15\u0E49\u0E2D\u0E07" });
+          }
+          tx = await contract.adminUpgradeRank(targetUser, targetRank);
+          actionDesc = `adminUpgradeRank(${targetUser.substring(0, 8)}... -> Rank ${targetRank})`;
+          break;
+        }
+        case "setSystemWallets": {
+          const allSell = String(params?.allSell || "").trim();
+          const bot = String(params?.bot || "").trim();
+          const familyPool = String(params?.familyPool || "").trim();
+          if (!ethers.isAddress(allSell) || !ethers.isAddress(bot) || !ethers.isAddress(familyPool)) {
+            return res.status(400).json({ success: false, error: "\u0E01\u0E23\u0E38\u0E13\u0E32\u0E23\u0E30\u0E1A\u0E38 Wallet Address \u0E17\u0E31\u0E49\u0E07 3 \u0E01\u0E23\u0E30\u0E40\u0E1B\u0E4B\u0E32\u0E43\u0E2B\u0E49\u0E16\u0E39\u0E01\u0E15\u0E49\u0E2D\u0E07" });
+          }
+          tx = await contract.setSystemWallets(allSell, bot, familyPool);
+          actionDesc = `setSystemWallets(${allSell.substring(0, 6)}..., ${bot.substring(0, 6)}..., ${familyPool.substring(0, 6)}...)`;
+          break;
+        }
+        case "emergencyWithdrawToken": {
+          const tokenAddr = String(params?.token || USDT_ADDRESS).trim();
+          const amountStr = String(params?.amount || "0").trim();
+          if (!ethers.isAddress(tokenAddr) || Number(amountStr) <= 0) {
+            return res.status(400).json({ success: false, error: "\u0E01\u0E23\u0E38\u0E13\u0E32\u0E23\u0E30\u0E1A\u0E38 Token Address \u0E41\u0E25\u0E30\u0E08\u0E33\u0E19\u0E27\u0E19\u0E17\u0E35\u0E48\u0E15\u0E49\u0E2D\u0E07\u0E01\u0E32\u0E23\u0E16\u0E2D\u0E19\u0E43\u0E2B\u0E49\u0E16\u0E39\u0E01\u0E15\u0E49\u0E2D\u0E07" });
+          }
+          const amountWei = ethers.parseUnits(amountStr, activeUsdtDecimals || 18);
+          tx = await contract.emergencyWithdrawToken(tokenAddr, amountWei);
+          actionDesc = `emergencyWithdrawToken(${amountStr} Token)`;
+          break;
+        }
+        case "emergencyWithdrawNative": {
+          tx = await contract.emergencyWithdrawNative();
+          actionDesc = "emergencyWithdrawNative()";
+          break;
+        }
+        case "transferOwnership": {
+          const newOwner = String(params?.newOwner || "").trim();
+          if (!ethers.isAddress(newOwner) || newOwner === ethers.ZeroAddress) {
+            return res.status(400).json({ success: false, error: "\u0E01\u0E23\u0E38\u0E13\u0E32\u0E23\u0E30\u0E1A\u0E38 Wallet Address \u0E02\u0E2D\u0E07 Owner \u0E43\u0E2B\u0E21\u0E48\u0E43\u0E2B\u0E49\u0E16\u0E39\u0E01\u0E15\u0E49\u0E2D\u0E07" });
+          }
+          tx = await contract.transferOwnership(newOwner);
+          actionDesc = `transferOwnership(${newOwner})`;
+          break;
+        }
+        case "renounceOwnership": {
+          tx = await contract.renounceOwnership();
+          actionDesc = "renounceOwnership()";
+          break;
+        }
+        case "checkAndProcessAutoNewMainIdForNode": {
+          const mainNodeId = Number(params?.mainNodeId || 1);
+          tx = await contract.checkAndProcessAutoNewMainIdForNode(mainNodeId);
+          actionDesc = `checkAndProcessAutoNewMainIdForNode(#${mainNodeId})`;
+          break;
+        }
+        case "checkAndProcessAutoNewMainId": {
+          const userAddr = String(params?.user || wallet.address).trim();
+          tx = await contract.checkAndProcessAutoNewMainId(userAddr);
+          actionDesc = `checkAndProcessAutoNewMainId(${userAddr.substring(0, 8)}...)`;
+          break;
+        }
+        case "checkAndProcessAutoExtraIdForNode": {
+          const userAddr = String(params?.user || wallet.address).trim();
+          const currentRank = Number(params?.currentRank || 4);
+          const sponsorNodeId = Number(params?.sponsorNodeId || 1);
+          tx = await contract.checkAndProcessAutoExtraIdForNode(userAddr, currentRank, sponsorNodeId);
+          actionDesc = `checkAndProcessAutoExtraIdForNode(Rank ${currentRank}, Node #${sponsorNodeId})`;
+          break;
+        }
+        case "checkAndProcessAutoExtraId": {
+          const userAddr = String(params?.user || wallet.address).trim();
+          const currentRank = Number(params?.currentRank || 4);
+          tx = await contract.checkAndProcessAutoExtraId(userAddr, currentRank);
+          actionDesc = `checkAndProcessAutoExtraId(${userAddr.substring(0, 8)}..., Rank ${currentRank})`;
+          break;
+        }
+        default:
+          return res.status(400).json({ success: false, error: `\u0E44\u0E21\u0E48\u0E23\u0E2D\u0E07\u0E23\u0E31\u0E1A\u0E04\u0E33\u0E2A\u0E31\u0E48\u0E07: ${action}` });
+      }
+      const receipt = await Promise.race([
+        tx.wait(1),
+        new Promise(
+          (_, reject) => setTimeout(
+            () => reject(new Error("\u23F1\uFE0F \u0E2B\u0E21\u0E14\u0E40\u0E27\u0E25\u0E32\u0E01\u0E32\u0E23\u0E23\u0E2D\u0E15\u0E23\u0E27\u0E08\u0E2A\u0E2D\u0E1A\u0E18\u0E38\u0E23\u0E01\u0E23\u0E23\u0E21\u0E1A\u0E19\u0E1A\u0E25\u0E47\u0E2D\u0E01\u0E40\u0E0A\u0E19 (\u0E40\u0E01\u0E34\u0E19 2.5 \u0E19\u0E32\u0E17\u0E35) \u0E01\u0E32\u0E23\u0E17\u0E33\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E44\u0E21\u0E48\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08\u0E17\u0E31\u0E19\u0E17\u0E35")),
+            15e4
+          )
+        )
+      ]);
+      const txHash = receipt?.hash || tx.hash;
+      await syncAllMatrixDatabase(CONTRACT_ADDRESS, true).catch(() => {
+      });
+      res.json({
+        success: true,
+        action,
+        txHash,
+        signer: wallet.address,
+        message: `\u2705 \u0E23\u0E31\u0E19\u0E04\u0E33\u0E2A\u0E31\u0E48\u0E07 ${actionDesc} \u0E1A\u0E19\u0E1A\u0E25\u0E47\u0E2D\u0E01\u0E40\u0E0A\u0E19\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08! (Tx: ${txHash.substring(0, 10)}...)`
+      });
+    } catch (err) {
+      console.error("Error in /api/admin/contract-action:", err);
+      res.status(500).json({
+        success: false,
+        error: err?.shortMessage || err?.reason || err?.message || "\u0E18\u0E38\u0E23\u0E01\u0E23\u0E23\u0E21\u0E1A\u0E19\u0E40\u0E0A\u0E19\u0E25\u0E49\u0E21\u0E40\u0E2B\u0E25\u0E27"
+      });
     }
   });
   app.get("/api/matrix/inspect-rank", async (req, res) => {
@@ -4725,6 +5991,105 @@ Transaction: ${txHash}`,
       upgradeLogs: matrixDB.upgradeLogs || []
     });
   });
+  app.get("/api/transactions", async (req, res) => {
+    try {
+      const forceSync = req.query.forceSync === "1";
+      const addressFilter = String(req.query.address || "").toLowerCase();
+      const categoryFilter = String(req.query.category || "all").toLowerCase();
+      if (forceSync || !matrixDB.nodesByRank[1] || matrixDB.nodesByRank[1].length <= 1) {
+        await syncAllMatrixDatabase(CONTRACT_ADDRESS, forceSync);
+      } else {
+        if (matrixDB.rewardLogs.length === 0) rebuildDatabaseRewardLogsFromNodes();
+        if (!matrixDB.upgradeLogs || matrixDB.upgradeLogs.length === 0) rebuildDatabaseUpgradeLogsFromNodes();
+      }
+      const transactions = [];
+      const r1Nodes = matrixDB.nodesByRank[1] || [];
+      r1Nodes.forEach((node) => {
+        const ownerLower = (node.owner || "").toLowerCase();
+        if (addressFilter && ownerLower !== addressFilter) {
+          const isSponsor = (node.directSponsor || "").toLowerCase() === addressFilter;
+          if (!isSponsor && ownerLower !== addressFilter) return;
+        }
+        const nodeAny = node;
+        const isAuto = nodeAny.isAutoMainId || node.originType === "AUTO_MAIN" || node.originType === "AUTO_NEW_MAIN" || node.originMainId > 0 && node.originMainId !== node.id && !node.isClone;
+        const isClone = node.isClone;
+        const typeLabel = isClone ? "Clone ID" : isAuto ? "Auto ID" : "Main ID Registration";
+        const isLeft = nodeAny.isLeft !== void 0 ? Boolean(nodeAny.isLeft) : node.parentId > 0;
+        transactions.push({
+          id: `reg-r1-${node.id}`,
+          category: "REGISTRATION",
+          titleTh: `\u0E2A\u0E21\u0E31\u0E04\u0E23\u0E2A\u0E21\u0E32\u0E0A\u0E34\u0E01 / \u0E2A\u0E23\u0E49\u0E32\u0E07\u0E23\u0E2B\u0E31\u0E2A (${typeLabel} #${node.id})`,
+          titleEn: `Registration / Node (${typeLabel} #${node.id})`,
+          userAddress: node.owner,
+          mainNodeId: node.originMainId || node.id,
+          rank: 1,
+          amountUsdt: 5,
+          timestamp: nodeAny.createdAt || matrixDB.lastSyncedAt || (/* @__PURE__ */ new Date()).toISOString(),
+          blockNumber: nodeAny.blockNumber,
+          detailsTh: `\u0E15\u0E48\u0E2D\u0E2A\u0E32\u0E22\u0E43\u0E15\u0E49 \u0E2D\u0E31\u0E1E\u0E44\u0E25\u0E19\u0E4C #${node.parentId} (${isLeft ? "\u2199 \u0E1D\u0E31\u0E48\u0E07\u0E0B\u0E49\u0E32\u0E22" : "\u2198 \u0E1D\u0E31\u0E48\u0E07\u0E02\u0E27\u0E32"}) \u2022 \u0E1C\u0E39\u0E49\u0E41\u0E19\u0E30\u0E19\u0E33: ${node.directSponsor ? `${node.directSponsor.slice(0, 6)}...${node.directSponsor.slice(-4)}` : "Root"}`,
+          detailsEn: `Placed under Parent #${node.parentId} (${isLeft ? "Left" : "Right"}) \u2022 Sponsor: ${node.directSponsor ? `${node.directSponsor.slice(0, 6)}...${node.directSponsor.slice(-4)}` : "Root"}`
+        });
+      });
+      const upgrades = matrixDB.upgradeLogs || [];
+      upgrades.forEach((u) => {
+        const ownerLower = (u.owner || "").toLowerCase();
+        if (addressFilter && ownerLower !== addressFilter) return;
+        const uCost = parseFloat(u.rankPriceUsdt) || u.costUsdt || RANK_PRICES_USDT[Number(u.toRank) - 1] || 10;
+        transactions.push({
+          id: `upg-${u.id || `${u.mainNodeId}-${u.toRank}`}`,
+          category: "UPGRADE",
+          titleTh: `\u0E2D\u0E31\u0E1E\u0E40\u0E01\u0E23\u0E14\u0E1C\u0E31\u0E07\u0E41\u0E23\u0E07\u0E04\u0E4C Main ID #${u.mainNodeId} \u2192 Rank ${u.toRank}`,
+          titleEn: `Rank Upgrade Main ID #${u.mainNodeId} \u2192 Rank ${u.toRank}`,
+          userAddress: u.owner,
+          mainNodeId: Number(u.mainNodeId),
+          rank: Number(u.toRank),
+          amountUsdt: uCost,
+          timestamp: u.createdAt || matrixDB.lastSyncedAt || (/* @__PURE__ */ new Date()).toISOString(),
+          txHash: u.txHash,
+          detailsTh: `\u0E40\u0E25\u0E37\u0E48\u0E2D\u0E19\u0E41\u0E23\u0E07\u0E04\u0E4C\u0E08\u0E32\u0E01 R${u.fromRank} \u0E44\u0E1B\u0E22\u0E31\u0E07 R${u.toRank} (${uCost.toFixed(2)} USDT)`,
+          detailsEn: `Upgraded from R${u.fromRank} to R${u.toRank} (${uCost.toFixed(2)} USDT)`
+        });
+      });
+      const rewards = matrixDB.rewardLogs || [];
+      rewards.forEach((r, idx) => {
+        const recipientLower = (r.recipient || "").toLowerCase();
+        if (addressFilter && recipientLower !== addressFilter) return;
+        const amt = parseFloat(r.amount) || 0;
+        const rTime = r.createdAt || r.timestamp || matrixDB.lastSyncedAt || (/* @__PURE__ */ new Date()).toISOString();
+        transactions.push({
+          id: `rew-${r.id || idx}`,
+          category: "PAYOUT",
+          titleTh: `\u0E23\u0E31\u0E1A\u0E42\u0E1A\u0E19\u0E31\u0E2A / \u0E04\u0E48\u0E32\u0E04\u0E2D\u0E21\u0E21\u0E34\u0E0A\u0E0A\u0E31\u0E48\u0E19 (${r.rewardType})`,
+          titleEn: `Payout / Reward (${r.rewardType})`,
+          userAddress: r.recipient,
+          mainNodeId: Number(r.toNodeId || 1),
+          rank: Number(r.rank || 1),
+          amountUsdt: amt,
+          timestamp: rTime,
+          blockNumber: r.blockNumber,
+          detailsTh: `\u0E44\u0E14\u0E49\u0E23\u0E31\u0E1A\u0E08\u0E32\u0E01 Node #${r.fromNodeId} \u2192 Node #${r.toNodeId} (Rank ${r.rank})`,
+          detailsEn: `Received from Node #${r.fromNodeId} \u2192 Node #${r.toNodeId} (Rank ${r.rank})`
+        });
+      });
+      transactions.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      let filtered = transactions;
+      if (categoryFilter && categoryFilter !== "all") {
+        filtered = transactions.filter((t) => t.category.toLowerCase() === categoryFilter);
+      }
+      res.json({
+        success: true,
+        source: "DATABASE_INDEXER",
+        contractAddress: matrixDB.contractAddress,
+        lastSyncedAt: matrixDB.lastSyncedAt,
+        totalCount: transactions.length,
+        count: filtered.length,
+        data: filtered
+      });
+    } catch (err) {
+      console.error("[API /api/transactions error]", err);
+      res.status(500).json({ success: false, error: err?.message || "Database error" });
+    }
+  });
   app.post("/api/rewards/mock-test", async (req, res) => {
     const {
       fromNodeId = "5",
@@ -4843,13 +6208,76 @@ Transaction: ${txHash}`,
       res.status(500).json({ success: false, error: err.message });
     }
   });
+  app.get("/api/stream", (req, res) => {
+    res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.flushHeaders?.();
+    sseClients.add(res);
+    try {
+      res.write(`: ${" ".repeat(2048)}
+
+`);
+      const initPayload = JSON.stringify({
+        type: "INIT_MATRIX",
+        lastSyncedAt: matrixDB.lastSyncedAt,
+        rankCounts: matrixDB.rankCounts,
+        nodesByRank: matrixDB.nodesByRank,
+        contractAddress: CONTRACT_ADDRESS,
+        transactions: getAggregatedTransactions(),
+        rewardLogs: matrixDB.rewardLogs || [],
+        upgradeLogs: matrixDB.upgradeLogs || []
+      });
+      res.write(`data: ${initPayload}
+
+`);
+    } catch (e) {
+      console.warn("[SSE Init Error]:", e);
+    }
+    const heartbeatTimer = setInterval(() => {
+      try {
+        res.write(`: heartbeat ${Date.now()}
+
+`);
+      } catch {
+        clearInterval(heartbeatTimer);
+        sseClients.delete(res);
+      }
+    }, 15e3);
+    req.on("close", () => {
+      clearInterval(heartbeatTimer);
+      sseClients.delete(res);
+    });
+  });
   app.all("/api/*", (_req, res) => {
     res.status(404).json({ success: false, error: "API route not found" });
   });
   if (process.env.NODE_ENV === "production") {
-    app.use(express.static(path.resolve(__dirname, "dist")));
+    const distDir = path.resolve(__dirname, "dist");
+    app.use(
+      express.static(distDir, {
+        etag: false,
+        setHeaders: (res, filePath) => {
+          if (filePath.endsWith(".html")) {
+            res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+            res.setHeader("Pragma", "no-cache");
+            res.setHeader("Expires", "0");
+          }
+        }
+      })
+    );
     app.get("*", (_req, res) => {
-      res.sendFile(path.resolve(__dirname, "dist", "index.html"));
+      res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", "0");
+      const indexFile = path.resolve(distDir, "index.html");
+      if (fs.existsSync(indexFile)) {
+        res.sendFile(indexFile);
+      } else {
+        res.status(503).send("\u0E01\u0E33\u0E25\u0E31\u0E07\u0E2D\u0E31\u0E1B\u0E40\u0E14\u0E15\u0E23\u0E30\u0E1A\u0E1A \u0E01\u0E23\u0E38\u0E13\u0E32\u0E23\u0E2D\u0E2A\u0E31\u0E01\u0E04\u0E23\u0E39\u0E48\u0E41\u0E25\u0E49\u0E27\u0E23\u0E35\u0E40\u0E1F\u0E23\u0E0A\u0E2B\u0E19\u0E49\u0E32\u0E40\u0E27\u0E47\u0E1A...");
+      }
     });
   } else {
     process.env.DISABLE_HMR = "true";
@@ -4860,8 +6288,61 @@ Transaction: ${txHash}`,
     });
     app.use(vite.middlewares);
   }
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Backend API Server running on port ${PORT} (Database-First Mode)`);
+  const server = http.createServer(app);
+  const wss = new WebSocketServer({ server, path: "/ws" });
+  setWssServer(wss);
+  wss.on("connection", (ws) => {
+    console.log("\u26A1 [WebSocket] Client connected for Real-time Binary Tree Matrix");
+    try {
+      ws.send(
+        JSON.stringify({
+          type: "INIT_MATRIX",
+          lastSyncedAt: matrixDB.lastSyncedAt,
+          rankCounts: matrixDB.rankCounts,
+          nodesByRank: matrixDB.nodesByRank,
+          contractAddress: CONTRACT_ADDRESS,
+          transactions: getAggregatedTransactions(),
+          rewardLogs: matrixDB.rewardLogs || [],
+          upgradeLogs: matrixDB.upgradeLogs || []
+        })
+      );
+    } catch (err) {
+      console.warn("[WS] Error sending initial payload:", err);
+    }
+    ws.on("message", (message) => {
+      try {
+        const payload = JSON.parse(message.toString());
+        if (payload.type === "GET_RANK_TREE") {
+          const rank = Number(payload.rank) || 1;
+          ws.send(
+            JSON.stringify({
+              type: "RANK_TREE_DATA",
+              rank,
+              nodes: matrixDB.nodesByRank[rank] || [],
+              rankCount: matrixDB.rankCounts[rank] || 0,
+              lastSyncedAt: matrixDB.lastSyncedAt
+            })
+          );
+        } else if (payload.type === "GET_TRANSACTIONS") {
+          ws.send(
+            JSON.stringify({
+              type: "TRANSACTIONS_DATA",
+              lastSyncedAt: matrixDB.lastSyncedAt,
+              transactions: getAggregatedTransactions(payload.address),
+              rewardLogs: matrixDB.rewardLogs || [],
+              upgradeLogs: matrixDB.upgradeLogs || []
+            })
+          );
+        }
+      } catch (err) {
+      }
+    });
+    ws.on("error", (e) => {
+      console.warn("[WS Client Error]:", e);
+    });
+  });
+  server.listen(PORT, "0.0.0.0", () => {
+    console.log(`Backend API Server + WebSocket running on port ${PORT} (Database-First Mode)`);
     initPlacementQueue().catch((err) => console.warn("Queue init error:", err));
     syncAllMatrixDatabase(CONTRACT_ADDRESS, true).then(() => {
       console.log(
@@ -4881,5 +6362,8 @@ startApp().catch((err) => {
   console.error("Failed to start server:", err);
 });
 export {
-  calculateAutoIdAndExtraIdSlot
+  broadcastAllMatrixUpdates,
+  calculateAutoIdAndExtraIdSlot,
+  getAggregatedTransactions,
+  setWssServer
 };

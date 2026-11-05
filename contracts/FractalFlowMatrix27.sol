@@ -950,14 +950,12 @@ contract FractalFlowMatrix27 is Ownable, ReentrancyGuard {
             }
         }
 
-        // 3. For Auto Extra ID: If clones are full, find shallowest spot under clone subtree
-        if (_isExtra) {
-            for (uint256 id = 1; id <= total; id++) {
-                if (_isSpClone(_rank, id, sponsorOwner, originTag, primaryNodeId)) {
-                    (uint256 cParent, bool cLeft) = _findFirstAvailableUnder(_rank, id);
-                    if (cParent != id || rankNodes[_rank][id].leftChild == 0 || rankNodes[_rank][id].rightChild == 0) {
-                        return (cParent, cLeft);
-                    }
+        // 3. For Auto Extra ID & Auto ID: If direct clones are full, check shallowest spot under clone queue subtree
+        for (uint256 id = 1; id <= total; id++) {
+            if (_isSpClone(_rank, id, sponsorOwner, originTag, primaryNodeId)) {
+                (uint256 cParent, bool cLeft) = _findFirstAvailableUnder(_rank, id);
+                if (cParent != id || rankNodes[_rank][id].leftChild == 0 || rankNodes[_rank][id].rightChild == 0) {
+                    return (cParent, cLeft);
                 }
             }
         }

@@ -816,6 +816,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
   const [modalUpgradeError, setModalUpgradeError] = useState<string | null>(null);
   const [isWalletIdsModalOpen, setIsWalletIdsModalOpen] = useState<boolean>(false);
   const [selectedInspectWallet, setSelectedInspectWallet] = useState<string>('');
+  const [vaultLedgerFilter, setVaultLedgerFilter] = useState<'all' | 'in' | 'out'>('all');
 
   // Compact 3-Level "ผังต้นไม้ (Matrix Tree View • 3 ชั้น)" state (alongside the full Binary Tree)
   const buildInitial3LevelMatrixNodes = () => [
@@ -6755,6 +6756,14 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         const directHistory: any[] = sortByLatestRefDesc(mainReport?.direct30History || []);
         const levelHistory: any[] = sortByLatestRefDesc(mainReport?.level30History || []);
         const vaultHistory: any[] = sortByLatestRefDesc(mainReport?.vault35History || []);
+        const rawVaultLedger: any[] = mainReport?.vault35Ledger || [];
+        const vaultInflowCount = rawVaultLedger.filter((item: any) => item.direction === 'IN').length;
+        const vaultOutflowCount = rawVaultLedger.filter((item: any) => item.direction === 'OUT').length;
+        const filteredVaultLedger: any[] = rawVaultLedger.filter((item: any) => {
+          if (vaultLedgerFilter === 'in') return item.direction === 'IN';
+          if (vaultLedgerFilter === 'out') return item.direction === 'OUT';
+          return true;
+        });
         const fallbackAutoIds = (modalNode.spawnedAutoIds || []).map((aid) => {
           const an = activeNodesMap.get(aid);
           return {
@@ -6938,8 +6947,18 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         const levelPage = getSectionPage('level30', levelHistory.length);
         const pagedLevelHistory = levelHistory.slice((levelPage - 1) * ITEMS_PER_PAGE, levelPage * ITEMS_PER_PAGE);
 
-        const vaultPage = getSectionPage('vault35', vaultHistory.length);
-        const pagedVaultHistory = vaultHistory.slice((vaultPage - 1) * ITEMS_PER_PAGE, vaultPage * ITEMS_PER_PAGE);
+        const vaultPage = getSectionPage(
+          'vault35',
+          filteredVaultLedger.length > 0 ? filteredVaultLedger.length : vaultHistory.length
+        );
+        const pagedVaultLedger = filteredVaultLedger.slice(
+          (vaultPage - 1) * ITEMS_PER_PAGE,
+          vaultPage * ITEMS_PER_PAGE
+        );
+        const pagedVaultHistory = vaultHistory.slice(
+          (vaultPage - 1) * ITEMS_PER_PAGE,
+          vaultPage * ITEMS_PER_PAGE
+        );
 
         const rankNodesPage = getSectionPage('rankNodes', rankNodesList.length);
         const pagedRankNodes = rankNodesList.slice((rankNodesPage - 1) * ITEMS_PER_PAGE, rankNodesPage * ITEMS_PER_PAGE);
@@ -7466,7 +7485,10 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                   { key: 'all', label: '📋 ดูทั้งหมดครบทุกหมวด (ล่าสุดขึ้นก่อน • แถวละ 10 รายการ)' },
                   { key: 'direct30', label: `💵 30% ค่าแนะนำ (${directHistory.length})` },
                   { key: 'level30', label: `🪜 30% ค่าชั้น (${levelHistory.length})` },
-                  { key: 'vault35', label: `🏦 35% อัพเกรด (${vaultHistory.length})` },
+                  {
+                    key: 'vault35',
+                    label: `🏦 บัญชีกระปุก 35% Vault (${rawVaultLedger.length > 0 ? rawVaultLedger.length : vaultHistory.length})`,
+                  },
                   {
                     key: 'auto_extra',
                     label: `🤖 Auto ID (${autoIdsList.length}) • Extra ID (${extraIdsList.length}) • โคลน (${clonesList.length})`,
@@ -7707,25 +7729,193 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                     </div>
                   )}
 
-                  {/* 35% Upgrade Vault History */}
+                  {/* 35% Upgrade Vault History & Audit Ledger */}
                   {(benefitModalTab === 'all' || benefitModalTab === 'vault35') && (
                     <div
-                      className={`bg-slate-950/90 border border-indigo-500/30 rounded-xl p-3 space-y-2 ${
+                      className={`bg-slate-950/90 border border-indigo-500/30 rounded-xl p-3 space-y-2.5 ${
                         benefitModalTab === 'vault35' ? 'lg:col-span-3' : ''
                       }`}
                     >
-                      <div className="font-bold text-indigo-300 flex items-center justify-between border-b border-slate-800 pb-1.5">
-                        <span>🏦 ประวัติ 35% อัพเกรด ({vaultHistory.length} รายการ)</span>
-                        <span className="font-mono text-sm">
-                          สะสม +{(mainReport?.vault35GrossTotalUsdt ?? 0).toFixed(2)} U
-                        </span>
+                      <div className="font-bold text-indigo-300 flex items-center justify-between border-b border-slate-800 pb-2 flex-wrap gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm">🏦 บัญชีกระปุก 35% Vault & ประวัติการใช้งาน</span>
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-mono">
+                            {filteredVaultLedger.length > 0 ? filteredVaultLedger.length : vaultHistory.length} รายการ
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 text-xs font-mono">
+                          <span className="text-emerald-400 font-bold">
+                            รับสะสม +{(mainReport?.vault35GrossTotalUsdt ?? 0).toFixed(2)} U
+                          </span>
+                          <span className="text-slate-600">•</span>
+                          <span className="text-rose-400 font-bold">
+                            ใช้ไป -{(mainReport?.vault35DeductedTotalUsdt ?? 0).toFixed(2)} U
+                          </span>
+                          <span className="text-slate-600">•</span>
+                          <span className="text-amber-300 font-extrabold bg-amber-500/15 border border-amber-500/40 px-2 py-0.5 rounded">
+                            คงเหลือ {(mainReport?.vault35RemainingTotalUsdt ?? 0).toFixed(2)} U
+                          </span>
+                        </div>
                       </div>
+
+                      {/* รายละเอียดสรุปยอดการใช้จ่ายและการกระจายกระปุก (Deduction & Pool Balance Summary) */}
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-2 bg-slate-900/90 border border-slate-800 rounded-lg p-2.5 text-[11px] font-mono">
+                        <div className="space-y-1">
+                          <span className="text-slate-400 block text-[10px]">🟢 รับเข้าสะสมทั้งหมด (Gross Vault):</span>
+                          <span className="text-emerald-400 font-extrabold text-sm block">
+                            +{(mainReport?.vault35GrossTotalUsdt ?? 0).toFixed(2)} USDT
+                          </span>
+                          <span className="text-slate-400 text-[10px] block">
+                            จากเม็ดซ้าย {vaultHistory.length} ครั้ง
+                          </span>
+                        </div>
+                        <div className="space-y-1 border-t md:border-t-0 md:border-l border-slate-800 md:pl-2.5">
+                          <span className="text-slate-400 block text-[10px]">🔴 นำไปใช้ทำอะไรบ้าง (รวมหัก):</span>
+                          <span className="text-rose-400 font-extrabold text-sm block">
+                            -{(mainReport?.vault35DeductedTotalUsdt ?? 0).toFixed(2)} USDT
+                          </span>
+                          <div className="space-y-0.5 text-[10px] text-slate-300">
+                            <div>• สร้าง Extra ID: <strong className="text-rose-300">-{mainReport?.vaultDeductedBreakdown?.extraIdsTotalUsdt ?? (extraIdsList.length > 0 ? (mainReport?.extraIdDeductedTotalUsdt ?? 0) : 0)} U</strong> ({extraIdsList.length} รหัส)</div>
+                            <div>• สร้าง Auto ID: <strong className="text-amber-300">-{mainReport?.vaultDeductedBreakdown?.autoIdsTotalUsdt ?? (autoIdsList.length * 5)} U</strong> ({autoIdsList.length} รหัส)</div>
+                            {(mainReport?.vaultDeductedBreakdown?.upgradesTotalUsdt ?? 0) > 0 && (
+                              <div>• ออโต้อัปเกรด: <strong className="text-cyan-300">-{mainReport?.vaultDeductedBreakdown?.upgradesTotalUsdt} U</strong></div>
+                            )}
+                          </div>
+                        </div>
+                        <div className="space-y-1 border-t md:border-t-0 md:border-l border-slate-800 md:pl-2.5">
+                          <span className="text-slate-400 block text-[10px]">💰 ยอดคงเหลือสุทธิปัจจุบัน:</span>
+                          <span className="text-amber-400 font-extrabold text-sm block">
+                            {(mainReport?.vault35RemainingTotalUsdt ?? 0).toFixed(2)} USDT
+                          </span>
+                          <div className="space-y-0.5 text-[10px] text-slate-300">
+                            <div>• Extra Pool: <strong className="text-rose-300">{Number(mainReport?.newExtraIdPool ?? 0).toFixed(2)} U</strong></div>
+                            <div>• Auto ID Pool: <strong className="text-amber-300">{Number(mainReport?.newAutoIdPool ?? 0).toFixed(2)} U</strong></div>
+                            <div>• Upgrade Pool: <strong className="text-indigo-300">{Number(mainReport?.upgradeRankPool ?? 0).toFixed(2)} U</strong></div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* ตัวกรอง รับเข้า vs นำไปใช้ (Inflow vs Outflow Filter Tabs) */}
+                      {rawVaultLedger.length > 0 && (
+                        <div className="flex items-center gap-1.5 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setVaultLedgerFilter('all');
+                              setSectionPage('vault35', 1);
+                            }}
+                            className={`px-2.5 py-1 rounded text-[10.5px] font-bold transition cursor-pointer ${
+                              vaultLedgerFilter === 'all'
+                                ? 'bg-indigo-600 text-white shadow'
+                                : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+                            }`}
+                          >
+                            ทั้งหมด ({rawVaultLedger.length})
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setVaultLedgerFilter('in');
+                              setSectionPage('vault35', 1);
+                            }}
+                            className={`px-2.5 py-1 rounded text-[10.5px] font-bold transition flex items-center gap-1 cursor-pointer ${
+                              vaultLedgerFilter === 'in'
+                                ? 'bg-emerald-600 text-white shadow'
+                                : 'bg-slate-900 text-emerald-400/80 hover:text-emerald-300 border border-slate-800'
+                            }`}
+                          >
+                            <span>🟢 รับเข้า 35% ({vaultInflowCount})</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setVaultLedgerFilter('out');
+                              setSectionPage('vault35', 1);
+                            }}
+                            className={`px-2.5 py-1 rounded text-[10.5px] font-bold transition flex items-center gap-1 cursor-pointer ${
+                              vaultLedgerFilter === 'out'
+                                ? 'bg-rose-600 text-white shadow'
+                                : 'bg-slate-900 text-rose-400/80 hover:text-rose-300 border border-slate-800'
+                            }`}
+                          >
+                            <span>🔴 นำไปใช้/หักออก ({vaultOutflowCount})</span>
+                          </button>
+                        </div>
+                      )}
+
                       <div className="text-[10px] font-mono text-cyan-300/90 flex items-center gap-1">
                         <Clock className="w-2.5 h-2.5" />
                         <span>การแสดงข้อมูลในตาราง: อ้างอิงเวลาล่าสุด (ใหม่สุด → เก่าสุด)</span>
                       </div>
-                      {vaultHistory.length === 0 ? (
-                        <div className="text-slate-500 py-3 text-center">ยังไม่มีประวัติเม็ดซ้ายเข้ากระปุก 35%</div>
+
+                      {/* ตารางรายการ Ledger */}
+                      {filteredVaultLedger.length === 0 && vaultHistory.length === 0 ? (
+                        <div className="text-slate-500 py-3 text-center">ยังไม่มีประวัติในกระปุก 35% Vault</div>
+                      ) : filteredVaultLedger.length > 0 ? (
+                        <>
+                          <div className="space-y-1.5 font-mono text-[11px]">
+                            {pagedVaultLedger.map((item: any, idx: number) => {
+                              const isIn = item.direction === 'IN';
+                              return (
+                                <div
+                                  key={`vl-${vaultPage}-${item.id || idx}`}
+                                  className={`p-2 rounded-lg border flex items-start justify-between gap-2 transition ${
+                                    isIn
+                                      ? 'bg-emerald-950/20 border-emerald-500/30'
+                                      : 'bg-rose-950/20 border-rose-500/30'
+                                  }`}
+                                >
+                                  <div className="space-y-0.5">
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <span
+                                        className={`px-1.5 py-0.5 rounded text-[9.5px] font-extrabold ${
+                                          isIn
+                                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                                            : 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                                        }`}
+                                      >
+                                        {isIn ? '🟢 + รับเข้า' : '🔴 - นำไปใช้'}
+                                      </span>
+                                      <span className="text-amber-300 font-bold">[Rank {item.rank}]</span>
+                                      <span
+                                        className={`px-1.5 py-0.5 rounded text-[9px] font-semibold ${
+                                          item.poolType === 'AUTO_ID_POOL'
+                                            ? 'bg-yellow-500/20 text-yellow-300 border border-yellow-500/30'
+                                            : item.poolType === 'EXTRA_ID_POOL'
+                                            ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                                            : 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+                                        }`}
+                                      >
+                                        {item.poolLabelTh || item.poolType}
+                                      </span>
+                                      <span className="text-slate-200 font-semibold">{item.actionLabelTh}</span>
+                                    </div>
+                                    <div className="text-slate-300 text-[10.5px]">
+                                      {item.descriptionTh || item.note}
+                                    </div>
+                                    <div className="text-[10px] text-cyan-400/90 flex items-center gap-1">
+                                      <Clock className="w-2.5 h-2.5" />
+                                      <span>เวลาทำรายการ: {formatModalRowTime(item.timestamp)}</span>
+                                    </div>
+                                  </div>
+                                  <div className="text-right shrink-0 space-y-0.5">
+                                    <div
+                                      className={`font-black text-xs ${
+                                        isIn ? 'text-emerald-400' : 'text-rose-400'
+                                      }`}
+                                    >
+                                      {isIn ? '+' : '-'}{Number(item.amountUsdt).toFixed(2)} USDT
+                                    </div>
+                                    <div className="text-[9.5px] text-amber-300 font-extrabold bg-slate-900/90 px-1.5 py-0.5 rounded border border-slate-700/80">
+                                      คงเหลือ: {Number(item.balanceAfterUsdt ?? 0).toFixed(2)} U
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                          {renderPaginationBar('vault35', filteredVaultLedger.length)}
+                        </>
                       ) : (
                         <>
                           <div className="space-y-1.5 font-mono text-[11px]">

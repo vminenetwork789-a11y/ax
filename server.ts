@@ -2855,25 +2855,8 @@ function findRankPlacement(rank: number, sponsorAddress?: string, sponsorNodeId?
     if (spNode) startId = spNode.id;
   }
 
-  const queue = [startId];
-  const visited = new Set<number>();
-
-  while (queue.length > 0) {
-    const currId = queue.shift()!;
-    if (visited.has(currId)) continue;
-    visited.add(currId);
-
-    const n = nodesMap.get(currId);
-    if (!n) return { parentId: currId, isLeft: true };
-
-    if (!n.leftChild || n.leftChild === 0) return { parentId: n.id, isLeft: true };
-    if (!n.rightChild || n.rightChild === 0) return { parentId: n.id, isLeft: false };
-
-    if (n.leftChild > 0) queue.push(n.leftChild);
-    if (n.rightChild > 0) queue.push(n.rightChild);
-  }
-
-  return { parentId: startId, isLeft: true };
+  // ตรวจสอบคิวโคลนนิ่งของผู้แนะนำก่อนเสมอ: ตรวจต่อติดตัว -> ตรวจคิวโคลน (ซ้ายก่อน ขวาตาม) -> ตรวจใต้สายงานคิวโคลน
+  return findExtraIdPlacementInRankNodes(rList, startId);
 }
 
 async function simulateFindPlacement(rank: number, sponsorAddress: string, _round: number) {
@@ -4660,6 +4643,22 @@ async function startApp() {
         timestamp: string;
       }
 
+      interface VaultLedgerItem {
+        id: string;
+        timestamp: string;
+        direction: 'IN' | 'OUT';
+        actionType: 'RECEIVE_VAULT' | 'SPAWN_EXTRA_ID' | 'SPAWN_AUTO_ID' | 'AUTO_UPGRADE';
+        actionLabelTh: string;
+        rank: number;
+        amountUsdt: number;
+        poolType: 'UPGRADE_POOL' | 'AUTO_ID_POOL' | 'EXTRA_ID_POOL';
+        poolLabelTh: string;
+        descriptionTh: string;
+        note: string;
+        poolBalanceAfterUsdt: number;
+        balanceAfterUsdt: number;
+      }
+
       interface TierLevelBreakdownItem {
         tier: number;
         maxCapacity: number;
@@ -4715,6 +4714,12 @@ async function startApp() {
         vault35RemainingTotalUsdt: number;
         vault35DeductedTotalUsdt: number;
         vault35History: CommissionItem[];
+        vault35Ledger: VaultLedgerItem[];
+        vaultDeductedBreakdown: {
+          extraIdsTotalUsdt: number;
+          autoIdsTotalUsdt: number;
+          upgradesTotalUsdt: number;
+        };
         upgradeRankPool: number;
         newAutoIdPool: number;
         newExtraIdPool: number;
@@ -4955,6 +4960,12 @@ async function startApp() {
           vault35RemainingTotalUsdt: 0,
           vault35DeductedTotalUsdt: 0,
           vault35History: [],
+          vault35Ledger: [],
+          vaultDeductedBreakdown: {
+            extraIdsTotalUsdt: 0,
+            autoIdsTotalUsdt: 0,
+            upgradesTotalUsdt: 0,
+          },
           upgradeRankPool: stats.upgradeRankPool,
           newAutoIdPool: stats.newAutoIdPool,
           newExtraIdPool: stats.newExtraIdPool,
@@ -5505,6 +5516,201 @@ async function startApp() {
           rep.levelSummary.clonesLevelTotalUsdt = 0;
           rep.levelSummary.combinedLevelTotalUsdt = Number(rep.levelSummary.thisNodeLevelTotalUsdt.toFixed(2));
         }
+
+        // Build 35% Vault Audit Ledger (Inflow vs Outflow & Running Balance)
+        const ledgerEvents: VaultLedgerItem[] = [];
+        const sortedInflows = rep.vault35History.slice().reverse();
+        const sortedAutoSpawned = rep.autoIdsSpawned.slice().reverse();
+        const sortedExtraSpawned = rep.autoExtraIdsSpawned.slice().reverse();
+        const idUpgrades = (matrixDB.upgradeLogs || []).filter(
+          (u) => Number(u.mainNodeId) === rep.id && Number(u.vaultDeductedUsdt) > 0
+        );
+
+        let autoPoolBal = 0;
+        let extraPoolBal = 0;
+        let autoIdx = 0;
+        let extraIdx = 0;
+
+        for (const inf of sortedInflows) {
+          const tMs = new Date(inf.timestamp).getTime() || Date.now();
+          const pType: 'UPGRADE_POOL' | 'AUTO_ID_POOL' | 'EXTRA_ID_POOL' =
+            inf.rank <= 3 ? 'AUTO_ID_POOL' : 'EXTRA_ID_POOL';
+          const pLabel = pType === 'AUTO_ID_POOL' ? 'Auto ID Pool' : 'Extra ID Pool';
+
+          if (pType === 'AUTO_ID_POOL') {
+            autoPoolBal = Number((autoPoolBal + inf.amountUsdt).toFixed(2));
+          } else {
+            extraPoolBal = Number((extraPoolBal + inf.amountUsdt).toFixed(2));
+          }
+
+          ledgerEvents.push({
+            id: `v-in-${rep.id}-${ledgerEvents.length + 1}`,
+            timestamp: inf.timestamp,
+            direction: 'IN',
+            actionType: 'RECEIVE_VAULT',
+            actionLabelTh: `รับ 35% Vault (Rank ${inf.rank})`,
+            rank: inf.rank,
+            amountUsdt: inf.amountUsdt,
+            poolType: pType,
+            poolLabelTh: pLabel,
+            descriptionTh: `รับ 35% Vault (+${inf.amountUsdt.toFixed(2)} USDT) จากเม็ดซ้ายใน Rank ${inf.rank} สะสมเข้า ${pLabel}`,
+            note: inf.note,
+            poolBalanceAfterUsdt: pType === 'AUTO_ID_POOL' ? autoPoolBal : extraPoolBal,
+            balanceAfterUsdt: 0,
+          });
+
+          // Check if Auto ID can be spawned
+          while (autoIdx < sortedAutoSpawned.length && autoPoolBal >= 5.0) {
+            const sp = sortedAutoSpawned[autoIdx];
+            autoPoolBal = Number((autoPoolBal - 5.0).toFixed(2));
+            autoIdx++;
+            const spTime = new Date(tMs + autoIdx * 1000).toISOString();
+            ledgerEvents.push({
+              id: `v-out-auto-${rep.id}-${sp.id}`,
+              timestamp: spTime,
+              direction: 'OUT',
+              actionType: 'SPAWN_AUTO_ID',
+              actionLabelTh: 'หักสร้าง Auto ID',
+              rank: 1,
+              amountUsdt: 5.0,
+              poolType: 'AUTO_ID_POOL',
+              poolLabelTh: 'Auto ID Pool',
+              descriptionTh: `หัก 5.00 USDT จาก Auto ID Pool สร้าง ${sp.label} วางผัง Rank 1 ใต้ R1-#${sp.parentId} (${sp.side})`,
+              note: `สร้าง Auto ID สำเร็จ (ID #${sp.id})`,
+              poolBalanceAfterUsdt: autoPoolBal,
+              balanceAfterUsdt: 0,
+            });
+          }
+
+          // Check if Extra ID can be spawned
+          while (extraIdx < sortedExtraSpawned.length) {
+            const sp = sortedExtraSpawned[extraIdx];
+            const cost = RANK_PRICES_USDT[sp.rank - 1] || 10;
+            if (extraPoolBal < cost) break;
+            extraPoolBal = Number((extraPoolBal - cost).toFixed(2));
+            extraIdx++;
+            const spTime = new Date(tMs + extraIdx * 1000).toISOString();
+            ledgerEvents.push({
+              id: `v-out-extra-${rep.id}-${sp.rank}-${sp.id}`,
+              timestamp: spTime,
+              direction: 'OUT',
+              actionType: 'SPAWN_EXTRA_ID',
+              actionLabelTh: `หักสร้าง Extra ID (${sp.label})`,
+              rank: sp.rank,
+              amountUsdt: cost,
+              poolType: 'EXTRA_ID_POOL',
+              poolLabelTh: 'Extra ID Pool',
+              descriptionTh: `หัก ${cost.toFixed(2)} USDT จาก Extra ID Pool สร้าง ${sp.label} ในผัง Rank ${sp.rank} ใต้ R${sp.rank}-#${sp.parentId} (${sp.side})`,
+              note: `สร้าง Extra ID สำเร็จ (ID #${sp.id})`,
+              poolBalanceAfterUsdt: extraPoolBal,
+              balanceAfterUsdt: 0,
+            });
+          }
+        }
+
+        while (autoIdx < sortedAutoSpawned.length) {
+          const sp = sortedAutoSpawned[autoIdx];
+          autoIdx++;
+          const lastTime =
+            ledgerEvents.length > 0
+              ? new Date(ledgerEvents[ledgerEvents.length - 1].timestamp).getTime() + 1000
+              : Date.now();
+          autoPoolBal = Number(Math.max(0, autoPoolBal - 5.0).toFixed(2));
+          ledgerEvents.push({
+            id: `v-out-auto-${rep.id}-${sp.id}`,
+            timestamp: new Date(lastTime).toISOString(),
+            direction: 'OUT',
+            actionType: 'SPAWN_AUTO_ID',
+            actionLabelTh: 'หักสร้าง Auto ID',
+            rank: 1,
+            amountUsdt: 5.0,
+            poolType: 'AUTO_ID_POOL',
+            poolLabelTh: 'Auto ID Pool',
+            descriptionTh: `หัก 5.00 USDT จาก Auto ID Pool สร้าง ${sp.label} วางผัง Rank 1`,
+            note: `สร้าง Auto ID สำเร็จ (ID #${sp.id})`,
+            poolBalanceAfterUsdt: autoPoolBal,
+            balanceAfterUsdt: 0,
+          });
+        }
+
+        while (extraIdx < sortedExtraSpawned.length) {
+          const sp = sortedExtraSpawned[extraIdx];
+          const cost = RANK_PRICES_USDT[sp.rank - 1] || 10;
+          extraIdx++;
+          const lastTime =
+            ledgerEvents.length > 0
+              ? new Date(ledgerEvents[ledgerEvents.length - 1].timestamp).getTime() + 1000
+              : Date.now();
+          extraPoolBal = Number(Math.max(0, extraPoolBal - cost).toFixed(2));
+          ledgerEvents.push({
+            id: `v-out-extra-${rep.id}-${sp.rank}-${sp.id}`,
+            timestamp: new Date(lastTime).toISOString(),
+            direction: 'OUT',
+            actionType: 'SPAWN_EXTRA_ID',
+            actionLabelTh: `หักสร้าง Extra ID (${sp.label})`,
+            rank: sp.rank,
+            amountUsdt: cost,
+            poolType: 'EXTRA_ID_POOL',
+            poolLabelTh: 'Extra ID Pool',
+            descriptionTh: `หัก ${cost.toFixed(2)} USDT จาก Extra ID Pool สร้าง ${sp.label} ในผัง Rank ${sp.rank}`,
+            note: `สร้าง Extra ID สำเร็จ (ID #${sp.id})`,
+            poolBalanceAfterUsdt: extraPoolBal,
+            balanceAfterUsdt: 0,
+          });
+        }
+
+        for (const u of idUpgrades) {
+          const uCost = Number(u.vaultDeductedUsdt) || 0;
+          if (uCost <= 0) continue;
+          ledgerEvents.push({
+            id: `v-out-up-${rep.id}-${u.toRank}`,
+            timestamp: u.createdAt || new Date().toISOString(),
+            direction: 'OUT',
+            actionType: 'AUTO_UPGRADE',
+            actionLabelTh: `หักออโต้อัปเกรด (สู่ Rank ${u.toRank})`,
+            rank: u.toRank,
+            amountUsdt: uCost,
+            poolType: 'UPGRADE_POOL',
+            poolLabelTh: 'Upgrade Pool',
+            descriptionTh: `หัก ${uCost.toFixed(2)} USDT จาก Upgrade Pool เพื่ออัปเกรด Main #${rep.id} จาก Rank ${u.fromRank} สู่ Rank ${u.toRank}`,
+            note: `อัปเกรดสู่ Rank ${u.toRank} สำเร็จ`,
+            poolBalanceAfterUsdt: 0,
+            balanceAfterUsdt: 0,
+          });
+        }
+
+        // Sort chronological (oldest first) to compute running total
+        ledgerEvents.sort(
+          (a, b) => (new Date(a.timestamp).getTime() || 0) - (new Date(b.timestamp).getTime() || 0)
+        );
+        let netRunningTotal = 0;
+        for (const ev of ledgerEvents) {
+          if (ev.direction === 'IN') {
+            netRunningTotal = Number((netRunningTotal + ev.amountUsdt).toFixed(2));
+          } else {
+            netRunningTotal = Number(Math.max(0, netRunningTotal - ev.amountUsdt).toFixed(2));
+          }
+          ev.balanceAfterUsdt = netRunningTotal;
+        }
+
+        // Deductions breakdown
+        const extraDeduct = rep.autoExtraIdsSpawned.reduce(
+          (s, x) => s + (RANK_PRICES_USDT[x.rank - 1] || 10),
+          0
+        );
+        const autoDeduct = rep.autoIdsSpawned.length * 5.0;
+        const upDeduct = idUpgrades.reduce((s, u) => s + (Number(u.vaultDeductedUsdt) || 0), 0);
+        rep.vaultDeductedBreakdown = {
+          extraIdsTotalUsdt: Number(extraDeduct.toFixed(2)),
+          autoIdsTotalUsdt: Number(autoDeduct.toFixed(2)),
+          upgradesTotalUsdt: Number(upDeduct.toFixed(2)),
+        };
+
+        // Sort descending (newest first) for UI presentation
+        ledgerEvents.sort(
+          (a, b) => (new Date(b.timestamp).getTime() || 0) - (new Date(a.timestamp).getTime() || 0)
+        );
+        rep.vault35Ledger = ledgerEvents;
       }
 
       const allReports = Array.from(reportsMap.values()).sort((a, b) => a.id - b.id);
