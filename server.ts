@@ -185,7 +185,7 @@ const DEFAULT_SYSTEM_CONFIG = {
   contractAddress:
     process.env.OVERRIDE_CONTRACT_ADDRESS ||
     process.env.CONTRACT_ADDRESS ||
-    '0x47Ff540a2E04Aa36CDc4A4Ec6E4feADAC1A71B66',
+    '0x191D0C2Cd0496E05aA4f91273125DDcCc6645DF4',
   usdtAddress: process.env.USDT_ADDRESS || '0x05f24E1F598DF1aE8d0B424ce978f8ea33bB752b',
   chainId: Number(process.env.CHAIN_ID || 97),
   networkName: process.env.NETWORK_NAME || 'BNB Smart Chain Testnet',
@@ -221,6 +221,8 @@ const SERVER_LEGACY_CONTRACTS = new Set([
   '0x07953ba884e2d05fa543ef7eaec426c8de6d58ff',
   '0x7fa05f1aeb74209612aea56472d9a2e2e9d44073',
   '0x003ef4aaab33e517b2f565320df37e88b2db7a69',
+  '0x47ff540a2e04aa36cdc4a4ec6e4feadac1a71b66',
+  '0xc115f39897811d83be2613e9722753cfb78d492b',
 ]);
 
 const SERVER_LEGACY_USDT = new Set([
@@ -1403,16 +1405,15 @@ function reconcileRankTreeLinks(nodes: IndexedTreeNode[]): IndexedTreeNode[] {
     }
   }
 
-  // สำหรับ Rank 2-27: ตรวจสอบว่าผู้แนะนำตรง (Direct Sponsor ID เช่น ID #5) มีโหนดอยู่ใน Rank นั้นหรือยัง
-  // หากผู้แนะนำยังไม่ได้อัปเกรดขึ้นมาถึง Rank นั้น ให้หาตำแหน่งว่างชั้นตื้นลงมาจากซ้ายไปขวา (BFS จาก Root #1)
+  // สำหรับ Rank 1-27: ตรวจสอบว่าโหนดและโคลนนิ่งรอบที่ 1 วางอยู่ใต้ผู้แนะนำตรง/โคลนของผู้แนะนำตามลำดับที่ถูกต้องหรือไม่
   const rankNum = nodes[0]?.rank || 1;
-  if (rankNum > 1 && nodes.length > 1) {
+  if (rankNum >= 1 && nodes.length > 1) {
     const r1Nodes = matrixDB?.nodesByRank?.[1] || [];
     const r9Nodes = matrixDB?.nodesByRank?.[9] || [];
     const r4Nodes = matrixDB?.nodesByRank?.[4] || [];
 
     // 1. Resolve directSponsorNodeId for Extra IDs and Main IDs in Rank 2..27 from Rank 1 before checking tree placement
-    if (r1Nodes.length > 0) {
+    if (rankNum > 1 && r1Nodes.length > 0) {
       for (const n of nodes) {
         if (n.isExtraId && !n.isClone) {
           const ok = (n.owner || '').toLowerCase();
@@ -1458,7 +1459,7 @@ function reconcileRankTreeLinks(nodes: IndexedTreeNode[]): IndexedTreeNode[] {
       }
     }
 
-    // 2. Check if any node in Rank 2..27 is misplaced (e.g. Extra ID not under its Direct Sponsor/Clone) or orphaned
+    // 2. Check if any node in Rank 1..27 is misplaced (e.g. Round 1 Clone or Extra ID not under its Direct Sponsor/Clone) or orphaned
     let needsReplay = false;
     for (const n of nodes) {
       if (n.id <= 1) continue;
@@ -1467,7 +1468,53 @@ function reconcileRankTreeLinks(nodes: IndexedTreeNode[]): IndexedTreeNode[] {
         needsReplay = true;
         break;
       }
-      if (n.isExtraId && !n.isClone) {
+      if (n.isClone && n.cloneRound === 1) {
+        const origId = n.originMainId || n.id;
+        const origNode =
+          nodes.find(
+            (prev) =>
+              !prev.isClone &&
+              (prev.id === origId || (!prev.isExtraId && prev.originMainId === origId))
+          ) || byId.get(origId);
+        const spMainId =
+          origId === 1 || origNode?.id === 1
+            ? 1
+            : origNode?.directSponsorNodeId || n.directSponsorNodeId || 1;
+        const spNodeInRank = nodes.find(
+          (prev) =>
+            prev.id < n.id &&
+            !prev.isClone &&
+            !prev.isExtraId &&
+            (spMainId === 1 ? prev.id === 1 : prev.originMainId === spMainId)
+        );
+        if (spNodeInRank) {
+          const spOrigTag = spNodeInRank.originMainId || spNodeInRank.id;
+          const isUnderSp =
+            p.id === spNodeInRank.id ||
+            (p.isClone &&
+              ((p.originMainId || p.id) === spNodeInRank.id ||
+                (p.originMainId || p.id) === spOrigTag));
+          if (!isUnderSp) {
+            const spHadOpenSlot = nodes.some((prev) => {
+              if (prev.id >= n.id) return false;
+              const isSpOrClone =
+                prev.id === spNodeInRank.id ||
+                (prev.isClone &&
+                  ((prev.originMainId || prev.id) === spNodeInRank.id ||
+                    (prev.originMainId || prev.id) === spOrigTag));
+              if (!isSpOrClone) return false;
+              const leftOpenAtTime = !prev.leftChild || prev.leftChild <= 0 || prev.leftChild > n.id;
+              const rightOpenAtTime =
+                !prev.rightChild || prev.rightChild <= 0 || prev.rightChild > n.id;
+              return leftOpenAtTime || rightOpenAtTime;
+            });
+            if (spHadOpenSlot) {
+              needsReplay = true;
+              break;
+            }
+          }
+        }
+      } else if (n.isExtraId && !n.isClone) {
         const spMainId = n.directSponsorNodeId > 0 ? n.directSponsorNodeId : 1;
         const spNodeInRank = nodes.find(
           (prev) =>
@@ -1488,7 +1535,7 @@ function reconcileRankTreeLinks(nodes: IndexedTreeNode[]): IndexedTreeNode[] {
             break;
           }
         }
-      } else if (!n.isClone && !n.isExtraId) {
+      } else if (!n.isClone && !n.isExtraId && rankNum > 1) {
         const spMainId = n.directSponsorNodeId > 0 ? n.directSponsorNodeId : 1;
         if (spMainId > 1) {
           const sponsorBefore = nodes.some(
@@ -1506,7 +1553,7 @@ function reconcileRankTreeLinks(nodes: IndexedTreeNode[]): IndexedTreeNode[] {
       }
     }
 
-    if (!needsReplay) {
+    if (!needsReplay && rankNum > 1) {
       // Also verify that every origin's filled rightChild count matches its placed clone count
       const rightTriggerCountByOrig = new Map<number, number>();
       const actualCloneCountByOrig = new Map<number, number>();
@@ -1537,7 +1584,25 @@ function reconcileRankTreeLinks(nodes: IndexedTreeNode[]): IndexedTreeNode[] {
       }
     }
 
-    // 3. Chronological replay of Rank 2..27 placements and right-child Rebirth Clone triggers
+    const leftCountBeforeByMain = new Map<number, number>();
+    for (const m of nodes) {
+      if (m.isClone || m.isExtraId) continue;
+      let lc = 0;
+      const mOrig = m.originMainId || m.id;
+      for (const cand of nodes) {
+        const cOrig = cand.originMainId || cand.id;
+        if (
+          (cand.id === m.id || (cand.isClone && (cOrig === m.id || cOrig === mOrig))) &&
+          cand.leftChild > 0 &&
+          byId.has(cand.leftChild)
+        ) {
+          lc++;
+        }
+      }
+      leftCountBeforeByMain.set(m.id, lc);
+    }
+
+    // 3. Chronological replay of Rank 1..27 placements and right-child Rebirth Clone triggers
     if (needsReplay) {
       const rootNode = nodes.find((n) => n.id === 1) || nodes[0];
       const nonCloneList = nodes
@@ -1594,7 +1659,7 @@ function reconcileRankTreeLinks(nodes: IndexedTreeNode[]): IndexedTreeNode[] {
               (p) =>
                 !p.isClone &&
                 !p.isExtraId &&
-                (savedSponsorId === 1 ? p.id === 1 : p.originMainId === savedSponsorId)
+                (savedSponsorId === 1 ? p.id === 1 : p.id === savedSponsorId || p.originMainId === savedSponsorId)
             );
             sponsorNodeInRankId = spNodeInR ? spNodeInR.id : 0;
           }
@@ -1656,7 +1721,7 @@ function reconcileRankTreeLinks(nodes: IndexedTreeNode[]): IndexedTreeNode[] {
           (p) =>
             !p.isClone &&
             !p.isExtraId &&
-            (spMainId === 1 ? p.id === 1 : p.originMainId === spMainId)
+            (spMainId === 1 ? p.id === 1 : p.id === spMainId || p.originMainId === spMainId)
         );
         const slot = spNodeInRank
           ? findExtraIdPlacementInRankNodes(placedNodes, spNodeInRank.id)
@@ -1682,8 +1747,11 @@ function reconcileRankTreeLinks(nodes: IndexedTreeNode[]): IndexedTreeNode[] {
       }
     }
 
-    // Reconcile nodeVault in Rank 2..27 so any parent whose leftChild was moved doesn't retain phantom vault
-    const rUnitVault = Number(((RANK_PRICES_USDT[rankNum - 1] || 10) * 0.35).toFixed(4));
+    // Reconcile nodeVault in Rank 1..27 so any parent whose leftChild was moved doesn't retain phantom vault,
+    // and transfer reclaimed phantom vault to the main node whose clone/node received that relocated leftChild
+    const rUnitVault = Number(((RANK_PRICES_USDT[rankNum - 1] || 5) * 0.35).toFixed(4));
+    let reclaimedVault = 0;
+    const leftCountAfterByMain = new Map<number, number>();
     for (const m of nodes) {
       if (m.isClone || m.isExtraId) continue;
       let leftCount = 0;
@@ -1698,10 +1766,47 @@ function reconcileRankTreeLinks(nodes: IndexedTreeNode[]): IndexedTreeNode[] {
           leftCount++;
         }
       }
+      leftCountAfterByMain.set(m.id, leftCount);
       const maxPossibleVault = Number((leftCount * rUnitVault).toFixed(4));
-      if ((m.nodeVault || 0) > maxPossibleVault) m.nodeVault = maxPossibleVault;
+      const curVault = Number(m.nodeVault || 0);
+      if (curVault > maxPossibleVault) {
+        reclaimedVault = Number((reclaimedVault + (curVault - maxPossibleVault)).toFixed(4));
+        m.nodeVault = maxPossibleVault;
+      }
       if ((m.rawNodeVault || 0) > maxPossibleVault) m.rawNodeVault = maxPossibleVault;
       if ((m.reconciledBaseVault || 0) > maxPossibleVault) m.reconciledBaseVault = maxPossibleVault;
+    }
+
+    if (reclaimedVault > 0) {
+      for (const m of nodes) {
+        if (m.isClone || m.isExtraId || reclaimedVault <= 0) continue;
+        const beforeLc = leftCountBeforeByMain.get(m.id) || 0;
+        const afterLc = leftCountAfterByMain.get(m.id) || 0;
+        let gainedCount = Math.max(0, afterLc - beforeLc);
+        if (gainedCount === 0 && !needsReplay) {
+          const mOrig = m.originMainId || m.id;
+          for (const cand of nodes) {
+            const cOrig = cand.originMainId || cand.id;
+            if (cand.isClone && (cOrig === m.id || cOrig === mOrig) && cand.leftChild > 0) {
+              const lcNode = byId.get(cand.leftChild);
+              if (lcNode && lcNode.isClone && lcNode.cloneRound === 1) {
+                gainedCount++;
+              }
+            }
+          }
+        }
+        if (gainedCount > 0) {
+          const gainedVault = Number((gainedCount * rUnitVault).toFixed(4));
+          const maxPossibleVault = Number((afterLc * rUnitVault).toFixed(4));
+          const addVault = Math.min(reclaimedVault, gainedVault);
+          if (addVault > 0 && (m.nodeVault || 0) + addVault <= maxPossibleVault + 1e-6) {
+            m.nodeVault = Number(((m.nodeVault || 0) + addVault).toFixed(4));
+            m.rawNodeVault = Number(((m.rawNodeVault || 0) + addVault).toFixed(4));
+            m.reconciledBaseVault = Number(((m.reconciledBaseVault || 0) + addVault).toFixed(4));
+            reclaimedVault = Number(Math.max(0, reclaimedVault - addVault).toFixed(4));
+          }
+        }
+      }
     }
   }
 
@@ -2036,6 +2141,7 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
   // Compute expected Auto ID spawns and extra Rank 2..3 Pool 2 vaults per Rank 1 Main ID
   const expectedAutoSpawnsByMain = new Map<number, number>();
   const extraR2To3VaultByMain = new Map<number, number>();
+  const extraR2To3MinR1IdByMain = new Map<number, number>();
   const usedExtraR2To3 = new Set<number>();
 
   for (const mNode of sortedR1) {
@@ -2044,12 +2150,15 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
     if (win5Start <= 1) {
       expectedAutoSpawnsByMain.set(mNode.id, 0);
       extraR2To3VaultByMain.set(mNode.id, 0);
+      extraR2To3MinR1IdByMain.set(mNode.id, mNode.id);
       continue;
     }
 
     let totalGross1To3 = 0;
     let totalRem1To3 = 0;
     let extraR2To3 = 0;
+    let extraR2To3Rem = 0;
+    let extraMinR1Id = mNode.id;
 
     for (let r = 1; r <= 3; r++) {
       if (r >= win5Start) continue;
@@ -2069,6 +2178,16 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
           (sn.isClone && (snOrig === correspMain.id || snOrig === mNode.id));
         if (isSameMain && sn.leftChild > 0) {
           leftCount++;
+          if (r > 1) {
+            for (const rn of rList) {
+              if (rn.id <= sn.leftChild) {
+                const r1Orig = rn.originMainId || 0;
+                if (r1Orig > extraMinR1Id && r1Orig < 1_000_000) {
+                  extraMinR1Id = r1Orig;
+                }
+              }
+            }
+          }
         }
       }
 
@@ -2078,6 +2197,7 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
       totalRem1To3 = Number((totalRem1To3 + remR).toFixed(4));
       if (r > 1) {
         extraR2To3 = Number((extraR2To3 + grossR).toFixed(4));
+        extraR2To3Rem = Number((extraR2To3Rem + remR).toFixed(4));
       }
     }
 
@@ -2103,7 +2223,12 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
       }
     }
     expectedAutoSpawnsByMain.set(mNode.id, expectedSpawns);
-    extraR2To3VaultByMain.set(mNode.id, expectedSpawns > 0 ? extraR2To3 : 0);
+    const effectiveExtraR2To3 =
+      mNode.id === 1
+        ? Math.max(0, Number((extraR2To3 - extraR2To3Rem).toFixed(4)))
+        : extraR2To3;
+    extraR2To3VaultByMain.set(mNode.id, expectedSpawns > 0 ? effectiveExtraR2To3 : 0);
+    extraR2To3MinR1IdByMain.set(mNode.id, extraMinR1Id);
   }
 
   const ownerPrimaryMap = new Map<string, number>();
@@ -2148,6 +2273,8 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
         if (sourceMain === undefined) {
           sourceMain = priorMains.find((mId) => {
             if (usedExtraR2To3.has(mId)) return false;
+            const minReqR1Id = extraR2To3MinR1IdByMain.get(mId) || mId;
+            if (n.id <= minReqR1Id) return false;
             const r1Bal = simAutoVaultByMain.get(mId) || 0;
             const extraBal = extraR2To3VaultByMain.get(mId) || 0;
             return r1Bal + extraBal + 1e-6 >= r1EntryPrice;

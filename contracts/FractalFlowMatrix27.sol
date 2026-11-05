@@ -914,13 +914,11 @@ contract FractalFlowMatrix27 is Ownable, ReentrancyGuard {
         if (primaryNode.rightChild == 0) return (primaryNodeId, false);
 
         uint256 total = totalNodesInRank[_rank];
-        // 2. Direct sponsor's clone nodes & clone subtrees (checks clone left, right, then shallowest under clone)
+        // 2. Direct sponsor's clone nodes (check direct leftChild / rightChild across all sponsor clones first)
         for (uint256 id = 1; id <= total; id++) {
             if (_isSpClone(_rank, id, originTag, primaryNodeId)) {
-                (uint256 cParent, bool cLeft) = _findFirstAvailableUnder(_rank, id);
-                if (cParent != id || rankNodes[_rank][id].leftChild == 0 || rankNodes[_rank][id].rightChild == 0) {
-                    return (cParent, cLeft);
-                }
+                if (rankNodes[_rank][id].leftChild == 0) return (id, true);
+                if (rankNodes[_rank][id].rightChild == 0) return (id, false);
             }
         }
 

@@ -1533,11 +1533,11 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
       const snapR4ForPlacement = multiRankSnapshots.get(4);
 
       for (const [rNum, sMap] of multiRankSnapshots.entries()) {
-        if (rNum <= 1 || sMap.size <= 1) continue;
+        if (rNum < 1 || sMap.size <= 1) continue;
         const sIds = Array.from(sMap.keys()).sort((a, b) => a - b);
 
         // 1. Resolve directSponsorNodeId for Extra IDs and Main IDs in Rank 2..27 from Rank 1 before checking tree placement
-        if (snapR1ForPlacement && snapR1ForPlacement.size > 0) {
+        if (rNum > 1 && snapR1ForPlacement && snapR1ForPlacement.size > 0) {
           const r1List = Array.from(snapR1ForPlacement.values()).sort((a, b) => a.id - b.id);
           for (const nid of sIds) {
             const node = sMap.get(nid)!;
@@ -1598,17 +1598,89 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           }
         }
 
-        // 2. Check if any node in Rank 2..27 is misplaced (e.g. Extra ID not under its Direct Sponsor/Clone) or orphaned
+        // 2. Check if any node in Rank 1..27 is misplaced (e.g. Round 1 Clone or Extra ID not under its Direct Sponsor/Clone) or orphaned
         let needsReplay = false;
+        const cloneSeqByOrig = new Map<number, number>();
         for (const nid of sIds) {
-          if (nid <= 1) continue;
           const node = sMap.get(nid)!;
+          let nodeCloneRound = 0;
+          if (node.isClone) {
+            const origKey = node.originMainId || node.id;
+            const nextSeq = (cloneSeqByOrig.get(origKey) || 0) + 1;
+            cloneSeqByOrig.set(origKey, nextSeq);
+            nodeCloneRound = ((nextSeq - 1) % 2) + 1;
+          }
+          if (nid <= 1) continue;
           const p = sMap.get(node.parentId);
           if (!p || (p.leftChild !== node.id && p.rightChild !== node.id)) {
             needsReplay = true;
             break;
           }
-          if (node.isExtraId && !node.isClone) {
+          if (node.isClone && nodeCloneRound === 1) {
+            const origId = node.originMainId || node.id;
+            let origNode: RankNodeSnapshot | undefined = sMap.get(origId);
+            if (!origNode || origNode.isClone) {
+              for (const prevId of sIds) {
+                const prev = sMap.get(prevId);
+                if (
+                  prev &&
+                  !prev.isClone &&
+                  (prev.id === origId || (!prev.isExtraId && prev.originMainId === origId))
+                ) {
+                  origNode = prev;
+                  break;
+                }
+              }
+            }
+            const spMainId =
+              origId === 1 || origNode?.id === 1
+                ? 1
+                : origNode?.directSponsorNodeId || node.directSponsorNodeId || 1;
+            let spNodeInRank: RankNodeSnapshot | undefined;
+            for (const prevId of sIds) {
+              if (prevId >= nid) break;
+              const prev = sMap.get(prevId);
+              if (!prev || prev.isClone || prev.isExtraId) continue;
+              if (
+                spMainId === 1
+                  ? prev.id === 1
+                  : prev.id === spMainId || prev.originMainId === spMainId
+              ) {
+                spNodeInRank = prev;
+                break;
+              }
+            }
+            if (spNodeInRank) {
+              const spOrigTag = spNodeInRank.originMainId || spNodeInRank.id;
+              const isUnderSp =
+                p.id === spNodeInRank.id ||
+                (p.isClone &&
+                  ((p.originMainId || p.id) === spNodeInRank.id ||
+                    (p.originMainId || p.id) === spOrigTag));
+              if (!isUnderSp) {
+                const spHadOpenSlot = sIds.some((prevId) => {
+                  if (prevId >= nid) return false;
+                  const prev = sMap.get(prevId);
+                  if (!prev) return false;
+                  const isSpOrClone =
+                    prev.id === spNodeInRank!.id ||
+                    (prev.isClone &&
+                      ((prev.originMainId || prev.id) === spNodeInRank!.id ||
+                        (prev.originMainId || prev.id) === spOrigTag));
+                  if (!isSpOrClone) return false;
+                  const leftOpenAtTime =
+                    !prev.leftChild || prev.leftChild <= 0 || prev.leftChild > nid;
+                  const rightOpenAtTime =
+                    !prev.rightChild || prev.rightChild <= 0 || prev.rightChild > nid;
+                  return leftOpenAtTime || rightOpenAtTime;
+                });
+                if (spHadOpenSlot) {
+                  needsReplay = true;
+                  break;
+                }
+              }
+            }
+          } else if (node.isExtraId && !node.isClone) {
             const spMainId = node.directSponsorNodeId > 0 ? node.directSponsorNodeId : 1;
             let spNodeInRank: RankNodeSnapshot | undefined;
             for (const prevId of sIds) {
@@ -1632,7 +1704,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                 break;
               }
             }
-          } else if (!node.isClone && !node.isExtraId) {
+          } else if (!node.isClone && !node.isExtraId && rNum > 1) {
             const spMainId = node.directSponsorNodeId > 0 ? node.directSponsorNodeId : 1;
             if (spMainId > 1) {
               const sponsorBefore = sIds.some((prevId) => {
@@ -1650,7 +1722,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           }
         }
 
-        if (!needsReplay) {
+        if (!needsReplay && rNum > 1) {
           const rightTriggerCountByOrig = new Map<number, number>();
           const actualCloneCountByOrig = new Map<number, number>();
           for (const node of sMap.values()) {
@@ -1680,7 +1752,25 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           }
         }
 
-        // 3. Chronological replay of Rank 2..27 placements and right-child Rebirth Clone triggers
+        const leftCountBeforeByMain = new Map<number, number>();
+        for (const m of sMap.values()) {
+          if (m.isClone || m.isExtraId) continue;
+          let lc = 0;
+          const mOrig = m.originMainId || m.id;
+          for (const cand of sMap.values()) {
+            const cOrig = cand.originMainId || cand.id;
+            if (
+              (cand.id === m.id || (cand.isClone && (cOrig === m.id || cOrig === mOrig))) &&
+              cand.leftChild > 0 &&
+              sMap.has(cand.leftChild)
+            ) {
+              lc++;
+            }
+          }
+          leftCountBeforeByMain.set(m.id, lc);
+        }
+
+        // 3. Chronological replay of Rank 1..27 placements and right-child Rebirth Clone triggers
         if (needsReplay) {
           const allSnaps = Array.from(sMap.values()).sort((a, b) => a.id - b.id);
           const rootSnap = sMap.get(1) || allSnaps[0];
@@ -1745,12 +1835,6 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                 return { parentId: cand.id, isLeft: false };
               }
             }
-            for (const cand of placedSorted) {
-              if (!cand.isClone) continue;
-              const cOrig = cand.originMainId || cand.id;
-              if (cOrig !== spMain.id && cOrig !== spOrigTag) continue;
-              return findBfsSlot(cand.id);
-            }
             return findBfsSlot(spMain.id);
           };
 
@@ -1789,7 +1873,9 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                   (p) =>
                     !p.isClone &&
                     !p.isExtraId &&
-                    (savedSponsorId === 1 ? p.id === 1 : p.originMainId === savedSponsorId)
+                    (savedSponsorId === 1
+                      ? p.id === 1
+                      : p.id === savedSponsorId || p.originMainId === savedSponsorId)
                 );
                 sponsorNodeInRankId = spNodeInR ? spNodeInR.id : 0;
               }
@@ -1846,7 +1932,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
               (p) =>
                 !p.isClone &&
                 !p.isExtraId &&
-                (spMainId === 1 ? p.id === 1 : p.originMainId === spMainId)
+                (spMainId === 1 ? p.id === 1 : p.id === spMainId || p.originMainId === spMainId)
             );
             const slot = spNodeInRank ? findSponsorSlot(spNodeInRank.id) : findBfsSlot(1);
             const targetParent = placedMap.get(slot.parentId) || rootSnap;
@@ -1892,8 +1978,11 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           }
         }
 
-        // Cap nodeVault by actual leftChild count in Rank rNum so moved leftChild doesn't leave phantom vault
-        const rUnitVault = Number(((RANK_PRICES_USDT[rNum - 1] || 10) * 0.35).toFixed(4));
+        // Cap nodeVault by actual leftChild count in Rank rNum so moved leftChild doesn't leave phantom vault,
+        // and transfer reclaimed phantom vault to the main node that received the relocated leftChild
+        const rUnitVault = Number(((RANK_PRICES_USDT[rNum - 1] || 5) * 0.35).toFixed(4));
+        let reclaimedVault = 0;
+        const leftCountAfterByMain = new Map<number, number>();
         for (const m of sMap.values()) {
           if (m.isClone || m.isExtraId) continue;
           let leftCount = 0;
@@ -1908,11 +1997,47 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
               leftCount++;
             }
           }
+          leftCountAfterByMain.set(m.id, leftCount);
           const maxPossible = Number((leftCount * rUnitVault).toFixed(4));
-          if ((m.nodeVault || 0) > maxPossible) {
+          const curVault = Number(m.nodeVault || 0);
+          if (curVault > maxPossible) {
+            reclaimedVault = Number((reclaimedVault + (curVault - maxPossible)).toFixed(4));
             m.nodeVault = maxPossible;
             if (rNum === activeRank) {
               onChainNodeVaultMap.set(m.id, maxPossible);
+            }
+          }
+        }
+
+        if (reclaimedVault > 0) {
+          for (const m of sMap.values()) {
+            if (m.isClone || m.isExtraId || reclaimedVault <= 0) continue;
+            const beforeLc = leftCountBeforeByMain.get(m.id) || 0;
+            const afterLc = leftCountAfterByMain.get(m.id) || 0;
+            let gainedCount = Math.max(0, afterLc - beforeLc);
+            if (gainedCount === 0 && !needsReplay) {
+              const mOrig = m.originMainId || m.id;
+              for (const cand of sMap.values()) {
+                const cOrig = cand.originMainId || cand.id;
+                if (cand.isClone && (cOrig === m.id || cOrig === mOrig) && cand.leftChild > 0) {
+                  const lcNode = sMap.get(cand.leftChild);
+                  if (lcNode && lcNode.isClone) {
+                    gainedCount++;
+                  }
+                }
+              }
+            }
+            if (gainedCount > 0) {
+              const gainedVault = Number((gainedCount * rUnitVault).toFixed(4));
+              const maxPossible = Number((afterLc * rUnitVault).toFixed(4));
+              const addVault = Math.min(reclaimedVault, gainedVault);
+              if (addVault > 0 && (m.nodeVault || 0) + addVault <= maxPossible + 1e-6) {
+                m.nodeVault = Number(((m.nodeVault || 0) + addVault).toFixed(4));
+                if (rNum === activeRank) {
+                  onChainNodeVaultMap.set(m.id, m.nodeVault);
+                }
+                reclaimedVault = Number(Math.max(0, reclaimedVault - addVault).toFixed(4));
+              }
             }
           }
         }
@@ -2566,6 +2691,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
       const crossRankAutoIdCount = new Map<number, number>();
       const crossRankBreakdownText = new Map<number, string>();
       const extraVaultFromRanks2To4 = new Map<number, number>();
+      const extraVaultMinR1IdFromRanks2To4 = new Map<number, number>();
       const crossRankExtraIdCount = new Map<number, number>();
       const crossRankExtraCostMap = new Map<number, number>();
       const crossRankExtraRanksMap = new Map<number, string[]>();
@@ -2685,6 +2811,8 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           let totalGross1To3 = 0;
           let totalRem1To3 = 0;
           let extraR2To3 = 0;
+          let extraR2To3Rem = 0;
+          let extraMinR1Id = r1Id;
           const grossParts: string[] = [];
           const remParts: string[] = [];
 
@@ -2706,6 +2834,19 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                 (sn.isClone && (sn.originMainId === correspId || sn.originMainId === r1Id));
               if (isSnSameMain && sn.leftChild > 0) {
                 leftCountInR++;
+                if (r > 1) {
+                  for (const rn of snapR.values()) {
+                    if (rn.id <= sn.leftChild) {
+                      const r1Orig =
+                        rn.originMainId > 0 && rn.originMainId < 1_000_000
+                          ? rn.originMainId
+                          : getCorrespondingMainIdInRank(r, rn.id, rn.owner, 1);
+                      if (r1Orig > extraMinR1Id && r1Orig < 1_000_000) {
+                        extraMinR1Id = r1Orig;
+                      }
+                    }
+                  }
+                }
               }
             }
 
@@ -2717,6 +2858,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
               totalRem1To3 = Number((totalRem1To3 + remR).toFixed(4));
               if (r > 1) {
                 extraR2To3 = Number((extraR2To3 + grossR).toFixed(4));
+                extraR2To3Rem = Number((extraR2To3Rem + remR).toFixed(4));
               }
               grossParts.push(`R${r}: ${grossR.toFixed(2)}`);
               remParts.push(`R${r}: ${remR.toFixed(2)}`);
@@ -2748,7 +2890,12 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
 
           crossRankGrossVault1To4.set(r1Id, totalGross1To3);
           crossRankRemVault1To4.set(r1Id, totalRem1To3);
-          extraVaultFromRanks2To4.set(r1Id, spawnedCount > 0 ? extraR2To3 : 0);
+          const effectiveExtraR2To3 =
+            r1Id === 1
+              ? Math.max(0, Number((extraR2To3 - extraR2To3Rem).toFixed(4)))
+              : extraR2To3;
+          extraVaultFromRanks2To4.set(r1Id, spawnedCount > 0 ? effectiveExtraR2To3 : 0);
+          extraVaultMinR1IdFromRanks2To4.set(r1Id, extraMinR1Id);
           crossRankAutoIdCount.set(r1Id, spawnedCount);
 
           if (grossParts.length > 1 && spawnedCount > 0) {
@@ -3054,6 +3201,8 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           if (sourceMain === undefined && activeRank === 1) {
             sourceMain = priorMains.find((mId) => {
               if (usedExtraR2To4ForMain.has(mId)) return false;
+              const minReqR1Id = extraVaultMinR1IdFromRanks2To4.get(mId) || mId;
+              if (n.id <= minReqR1Id) return false;
               const r1Bal = lineageAutoIdVault.get(mId) || 0;
               const extraBal = extraVaultFromRanks2To4.get(mId) || 0;
               return r1Bal + extraBal + 1e-9 >= rank1EntryPrice;
@@ -3441,6 +3590,8 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             if (sourceMain === undefined) {
               sourceMain = priorMains.find((m) => {
                 if (s1UsedExtraR2To3.has(m)) return false;
+                const minReqR1Id = extraVaultMinR1IdFromRanks2To4.get(m) || m;
+                if (id1 <= minReqR1Id) return false;
                 const r1Bal = s1AutoVaultSim.get(m) || 0;
                 const extraBal = extraVaultFromRanks2To4.get(m) || 0;
                 return r1Bal + extraBal + 1e-9 >= r1Price;
