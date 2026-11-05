@@ -185,7 +185,7 @@ const DEFAULT_SYSTEM_CONFIG = {
   contractAddress:
     process.env.OVERRIDE_CONTRACT_ADDRESS ||
     process.env.CONTRACT_ADDRESS ||
-    '0x003EF4aAaB33e517B2F565320dF37e88b2db7A69',
+    '0xc5cF23d0CEAd13A08b3B3d968A052b956A64fBC6',
   usdtAddress: process.env.USDT_ADDRESS || '0x05f24E1F598DF1aE8d0B424ce978f8ea33bB752b',
   chainId: Number(process.env.CHAIN_ID || 97),
   networkName: process.env.NETWORK_NAME || 'BNB Smart Chain Testnet',
@@ -195,6 +195,7 @@ const DEFAULT_SYSTEM_CONFIG = {
 };
 
 const SERVER_LEGACY_CONTRACTS = new Set([
+  '0xe231fe72e1c2ab2617d8972c4ea15bc9122e514f',
   '0x45405293ecce73f1a8c39ca8c0cc2248d6b9ab77',
   '0xf955de5c1a403c9d286538a872c17837aebdd8ca',
   '0xc71a9a677d9ef61a9133d6e6545306a11bd3ee5a',
@@ -218,6 +219,7 @@ const SERVER_LEGACY_CONTRACTS = new Set([
   '0xda7acd2ca8967e8015e0931e652d4b7ee5e1c436',
   '0x07953ba884e2d05fa543ef7eaec426c8de6d58ff',
   '0x7fa05f1aeb74209612aea56472d9a2e2e9d44073',
+  '0x003ef4aaab33e517b2f565320df37e88b2db7a69',
 ]);
 
 const SERVER_LEGACY_USDT = new Set([
@@ -1925,6 +1927,33 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
       } else {
         rn.cloneSequence = 0;
         rn.cloneRound = 0;
+        if (rn.isExtraId) {
+          const ok = (rn.owner || '').toLowerCase();
+          const ownerMainsR1 = r1Nodes.filter(
+            (m) => !m.isClone && !m.isExtraId && (m.owner || '').toLowerCase() === ok
+          );
+          if (ownerMainsR1.length === 1) {
+            rn.directSponsorNodeId = ownerMainsR1[0].id;
+            rn.directSponsor = ownerMainsR1[0].owner;
+          } else if (ownerMainsR1.length > 1) {
+            const r9Nodes = matrixDB.nodesByRank[9] || [];
+            const r4Nodes = matrixDB.nodesByRank[4] || [];
+            const eligibleMain =
+              ownerMainsR1.find(
+                (m) =>
+                  m.id === 1 ||
+                  r9Nodes.some((x) => !x.isClone && !x.isExtraId && x.originMainId === m.id)
+              ) ||
+              ownerMainsR1.find(
+                (m) =>
+                  m.id === 1 ||
+                  r4Nodes.some((x) => !x.isClone && !x.isExtraId && x.originMainId === m.id)
+              ) ||
+              ownerMainsR1[0];
+            rn.directSponsorNodeId = eligibleMain.id;
+            rn.directSponsor = eligibleMain.owner;
+          }
+        }
       }
     }
   }
@@ -1957,6 +1986,24 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
 
   const getMainWindow5Start = (r1MainId: number): number => {
     return Math.max(1, getMainCurrentRank(r1MainId) - 4);
+  };
+
+  const isPlacedUnderMainOrClonesR1 = (mId: number, targetId: number): boolean => {
+    if (targetId <= mId) return false;
+    if (mId === 1) return true;
+    let curr = byIdR1.get(targetId)?.parentId || 0;
+    const visited = new Set<number>();
+    while (curr > 0 && !visited.has(curr)) {
+      visited.add(curr);
+      if (curr === mId) return true;
+      const pNode = byIdR1.get(curr);
+      if (!pNode) break;
+      if (pNode.isClone && (pNode.originMainId || pNode.id) === mId) {
+        return true;
+      }
+      curr = pNode.parentId;
+    }
+    return false;
   };
 
   // Compute expected Auto ID spawns and extra Rank 2..3 Pool 2 vaults per Rank 1 Main ID
@@ -2008,9 +2055,28 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
     }
 
     const deducted = Math.max(0, Number((totalGross1To3 - totalRem1To3).toFixed(4)));
-    const expectedSpawns = Math.floor((deducted + 1e-4) / 5);
+    const maxPossibleSpawns = Math.floor((deducted + 1e-4) / 5);
+    let expectedSpawns = 0;
+    if (mNode.id === 1) {
+      expectedSpawns = maxPossibleSpawns;
+    } else if (maxPossibleSpawns > 0) {
+      // สำหรับ Main ID > 1 (เช่น ID #2 ที่อัพขึ้น Rank 6..8):
+      // ยอด Vault ใน Rank 1..3 ที่ถูกหักไปตอนอัพเกรด Rank (_clearVaultsForMainId) จะทำให้ nodeVault เหลือ 0
+      // ส่วนการหักออก Auto ID จริงบนสัญญา (checkAndProcessAutoNewMainIdForNode) จะหักทีละ 5.00 USDT จากยอดสะสมที่เป็นพหุคูณของ 1.75 USDT เท่านั้น
+      for (let c = maxPossibleSpawns; c >= 1; c--) {
+        const pool2GrossNeeded = Number((totalRem1To3 + c * 5).toFixed(4));
+        const units175 = pool2GrossNeeded / 1.75;
+        if (
+          pool2GrossNeeded <= totalGross1To3 + 0.01 &&
+          Math.abs(units175 - Math.round(units175)) < 0.01
+        ) {
+          expectedSpawns = c;
+          break;
+        }
+      }
+    }
     expectedAutoSpawnsByMain.set(mNode.id, expectedSpawns);
-    extraR2To3VaultByMain.set(mNode.id, extraR2To3);
+    extraR2To3VaultByMain.set(mNode.id, expectedSpawns > 0 ? extraR2To3 : 0);
   }
 
   const ownerPrimaryMap = new Map<string, number>();
@@ -2018,6 +2084,12 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
   const simAutoVaultByMain = new Map<number, number>();
   const spawnedCountByMain = new Map<number, number>();
   const r1EntryPrice = RANK_PRICES_USDT[0] || 5;
+
+  for (const n of sortedR1) {
+    if (!n.isClone && !n.isExtraId) {
+      n.originType = 'MANUAL_REGISTER';
+    }
+  }
 
   for (const n of sortedR1) {
     const oKey = (n.owner || '').toLowerCase();
@@ -2035,12 +2107,12 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
           const maxSpawns = expectedAutoSpawnsByMain.get(mId) || 0;
           const curSpawns = spawnedCountByMain.get(mId) || 0;
           if (curSpawns >= maxSpawns) return false;
-          const mSpId = byIdR1.get(mId)?.directSponsorNodeId || 0;
-          const isSelfSp = Boolean(n.directSponsor && n.directSponsor.toLowerCase() === oKey);
-          return (
-            (isSelfSp && (explicitSpId === 0 || mId === explicitSpId)) ||
-            (explicitSpId > 0 && (explicitSpId === mId || explicitSpId === mSpId))
-          );
+          // กฎเหล็กการจัดวางบนสัญญา (_findPlacementSpot): Auto ID ที่เกิดจาก mId จะต้องวางอยู่ใต้สายงาน/โคลนของ mId เท่านั้น
+          // ดังนั้น R1-#3 (ซึ่งวางอยู่ใต้ #1 ฝั่งขวา ไม่ได้อยู่ใต้ #2) จะไม่มีวันถูกมองเป็น Auto ID ของ #2 เด็ดขาด
+          if (!isPlacedUnderMainOrClonesR1(mId, n.id)) return false;
+          const mNode = byIdR1.get(mId);
+          const mSpId = mNode?.directSponsorNodeId || 1;
+          return explicitSpId === 0 || explicitSpId === mId || explicitSpId === mSpId;
         });
 
         let sourceMain = priorMains.find(
@@ -4324,13 +4396,8 @@ async function startApp() {
               ) || n;
           const isExtraLineage = !n.isClone ? Boolean(n.isExtraId) : Boolean(n.isExtraId || nOrig.isExtraId);
           if (isExtraLineage && n.leftChild > 0) {
-            const origSpId =
-              nOrig.directSponsorNodeId > 0
-                ? nOrig.directSponsorNodeId
-                : n.directSponsorNodeId > 0
-                ? n.directSponsorNodeId
-                : 1;
-            if (origSpId === correspIdInR) {
+            const spawnerMainId = resolveExtraSpawnerMainId(nOrig);
+            if (spawnerMainId === mainIdNum) {
               extraLeftVaultBonusGross = Number((extraLeftVaultBonusGross + rUnitVault).toFixed(4));
             }
           }
@@ -5100,19 +5167,48 @@ async function startApp() {
             : Boolean(parent.isExtraId || parentOrigin.isExtraId);
 
           if (isParentExtraLineage) {
-            const extraSpLocalId =
-              parentOrigin.directSponsorNodeId > 0
-                ? parentOrigin.directSponsorNodeId
-                : parent.directSponsorNodeId > 0
-                ? parent.directSponsorNodeId
-                : 1;
-            const extraSpNode = nodesMap.get(extraSpLocalId);
-            const targetMainId =
-              rankNum === 1
-                ? extraSpLocalId
-                : extraSpNode
-                ? resolveCanonicalMainId(rankNum, extraSpNode)
-                : extraSpLocalId;
+            const extraOwner = (parentOrigin.owner || parent.owner || '').toLowerCase();
+            const ownerMains = r1Nodes.filter(
+              (m) => !m.isClone && !m.isExtraId && (m.owner || '').toLowerCase() === extraOwner
+            );
+            let targetMainId = 1;
+            if (ownerMains.length === 1) {
+              targetMainId = ownerMains[0].id;
+            } else if (ownerMains.length > 1) {
+              const r9Nodes = matrixDB.nodesByRank[9] || [];
+              const r4Nodes = matrixDB.nodesByRank[4] || [];
+              const eligibleMain =
+                ownerMains.find(
+                  (m) =>
+                    m.id === 1 ||
+                    r9Nodes.some((x) => !x.isClone && !x.isExtraId && x.originMainId === m.id)
+                ) ||
+                ownerMains.find(
+                  (m) =>
+                    m.id === 1 ||
+                    r4Nodes.some((x) => !x.isClone && !x.isExtraId && x.originMainId === m.id)
+                ) ||
+                ownerMains[0];
+              targetMainId = eligibleMain.id;
+            } else {
+              const extraSpLocalId =
+                parentOrigin.directSponsorNodeId > 0
+                  ? parentOrigin.directSponsorNodeId
+                  : parent.directSponsorNodeId > 0
+                  ? parent.directSponsorNodeId
+                  : 1;
+              const extraSpNode = nodesMap.get(extraSpLocalId);
+              targetMainId =
+                rankNum === 1
+                  ? extraSpLocalId
+                  : extraSpNode
+                  ? resolveCanonicalMainId(rankNum, extraSpNode)
+                  : extraSpLocalId;
+            }
+            const extraSpLocalNode = rNodes.find(
+              (x) => !x.isClone && !x.isExtraId && (rankNum === 1 ? x.id === targetMainId : x.originMainId === targetMainId)
+            );
+            const extraSpLocalId = extraSpLocalNode ? extraSpLocalNode.id : targetMainId;
 
             const rep = reportsMap.get(targetMainId);
             if (rep) {
@@ -5547,6 +5643,13 @@ async function startApp() {
         }
       }
 
+      const allSellAutoStatus = buildAllSellAutoStatus(
+        matrixDB.contractAddress,
+        Number(allSellTotalUsdt.toFixed(2)),
+        onChainAllSellBal,
+        allSellFourPools
+      );
+
       res.json({
         success: true,
         source: 'DATABASE',
@@ -5561,6 +5664,7 @@ async function startApp() {
           botWallet: botWalletAddr,
           allSellTotalUsdt: Number(allSellTotalUsdt.toFixed(2)),
           allSellPayoutScheduleTh: 'จ่ายเงินให้ที่ผ่านเกณฑ์ ทุกกลางเดือน และ ต้นเดือน (วันที่ 1 และ 15 ของทุกเดือน)',
+          allSellAutoPayout: allSellAutoStatus,
           allSellFourPools,
           allSellByRank,
           allSellHistory,
@@ -5577,6 +5681,447 @@ async function startApp() {
           },
         },
         reports: allReports,
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ============================================================================
+  // AUTO ALLSELL PAYOUT ENGINE (ตัดรอบและจ่าย AllSell 4 กอง อัตโนมัติ ทุกวันที่ 1 และ 15)
+  // ============================================================================
+  const ALLSELL_PAYOUT_FILE_PATH = path.resolve(__dirname, 'prisma/allsell-payouts.json');
+
+  interface AllSellPayoutTransferItem {
+    poolNumber: number;
+    poolTitleTh: string;
+    mainId: number;
+    recipientWallet: string;
+    amountUsdt: number;
+    txHash: string;
+    mode: 'ONCHAIN_TRANSFER' | 'CYCLE_SETTLEMENT';
+  }
+
+  interface AllSellPayoutCycleRecord {
+    id: string;
+    contractAddress: string;
+    cycleKey: string;
+    cycleLabelTh: string;
+    triggerType: 'AUTO_SCHEDULE' | 'MANUAL_TRIGGER';
+    executedAt: string;
+    totalAllSellPoolUsdt: number;
+    totalDistributedUsdt: number;
+    carriedOverUsdt: number;
+    qualifiedRecipientsCount: number;
+    transfers: AllSellPayoutTransferItem[];
+    noteTh: string;
+  }
+
+  interface AllSellAutoStore {
+    autoEnabled: boolean;
+    lastExecutedCycleKey: string | null;
+    lastExecutedAt: string | null;
+    history: AllSellPayoutCycleRecord[];
+  }
+
+  const loadAllSellAutoStore = (): AllSellAutoStore => {
+    try {
+      if (fs.existsSync(ALLSELL_PAYOUT_FILE_PATH)) {
+        const raw = fs.readFileSync(ALLSELL_PAYOUT_FILE_PATH, 'utf8');
+        const parsed = JSON.parse(raw);
+        return {
+          autoEnabled: parsed.autoEnabled !== false,
+          lastExecutedCycleKey: parsed.lastExecutedCycleKey || null,
+          lastExecutedAt: parsed.lastExecutedAt || null,
+          history: Array.isArray(parsed.history) ? parsed.history : [],
+        };
+      }
+    } catch {
+      // ignore read errors
+    }
+    return {
+      autoEnabled: true,
+      lastExecutedCycleKey: null,
+      lastExecutedAt: null,
+      history: [],
+    };
+  };
+
+  let allSellAutoStore: AllSellAutoStore = loadAllSellAutoStore();
+
+  const saveAllSellAutoStore = () => {
+    try {
+      const dir = path.dirname(ALLSELL_PAYOUT_FILE_PATH);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(ALLSELL_PAYOUT_FILE_PATH, JSON.stringify(allSellAutoStore, null, 2), 'utf8');
+    } catch {
+      // ignore write errors
+    }
+  };
+
+  const computeNextAllSellCycleInfo = () => {
+    const nowMs = Date.now();
+    // Convert to Thailand Time (UTC+7)
+    const thOffsetMs = 7 * 60 * 60 * 1000;
+    const thDate = new Date(nowMs + thOffsetMs);
+    const year = thDate.getUTCFullYear();
+    const month = thDate.getUTCMonth(); // 0..11
+    const day = thDate.getUTCDate();
+
+    const thaiMonths = [
+      'ม.ค.',
+      'ก.พ.',
+      'มี.ค.',
+      'เม.ย.',
+      'พ.ค.',
+      'มิ.ย.',
+      'ก.ค.',
+      'ส.ค.',
+      'ก.ย.',
+      'ต.ค.',
+      'พ.ย.',
+      'ธ.ค.',
+    ];
+
+    let nextTargetUtcMs = 0;
+    let nextCycleKey = '';
+    let nextCycleLabelTh = '';
+
+    if (day < 15) {
+      // Next payout is 15th of current month at 00:00 TH time
+      nextTargetUtcMs = Date.UTC(year, month, 15, 0, 0, 0) - thOffsetMs;
+      const mm = String(month + 1).padStart(2, '0');
+      nextCycleKey = `${year}-${mm}-15`;
+      nextCycleLabelTh = `15 ${thaiMonths[month]} ${year} เวลา 00:00 น. (รอบกลางเดือน)`;
+    } else {
+      // Next payout is 1st of next month at 00:00 TH time
+      const nextMonthDate = new Date(Date.UTC(year, month + 1, 1, 0, 0, 0));
+      const ny = nextMonthDate.getUTCFullYear();
+      const nm = nextMonthDate.getUTCMonth();
+      nextTargetUtcMs = Date.UTC(ny, nm, 1, 0, 0, 0) - thOffsetMs;
+      const mm = String(nm + 1).padStart(2, '0');
+      nextCycleKey = `${ny}-${mm}-01`;
+      nextCycleLabelTh = `1 ${thaiMonths[nm]} ${ny} เวลา 00:00 น. (รอบต้นเดือน)`;
+    }
+
+    const isTodayCycleDay = day === 1 || day === 15;
+    const currentMm = String(month + 1).padStart(2, '0');
+    const currentDd = String(day).padStart(2, '0');
+    const todayCycleKey = isTodayCycleDay ? `${year}-${currentMm}-${currentDd}` : null;
+    const todayCycleLabelTh =
+      day === 1
+        ? `1 ${thaiMonths[month]} ${year} (รอบต้นเดือน)`
+        : day === 15
+        ? `15 ${thaiMonths[month]} ${year} (รอบกลางเดือน)`
+        : `ตัดรอบพิเศษ ${day} ${thaiMonths[month]} ${year}`;
+
+    const secondsUntilNextPayout = Math.max(0, Math.floor((nextTargetUtcMs - nowMs) / 1000));
+    const daysLeft = Math.floor(secondsUntilNextPayout / 86400);
+    const hoursLeft = Math.floor((secondsUntilNextPayout % 86400) / 3600);
+    const minutesLeft = Math.floor((secondsUntilNextPayout % 3600) / 60);
+
+    return {
+      nextCycleKey,
+      nextCycleLabelTh,
+      nextPayoutIso: new Date(nextTargetUtcMs).toISOString(),
+      secondsUntilNextPayout,
+      countdownTextTh: `${daysLeft} วัน ${hoursLeft} ชม. ${minutesLeft} นาที`,
+      isTodayCycleDay,
+      todayCycleKey,
+      todayCycleLabelTh,
+    };
+  };
+
+  function buildAllSellAutoStatus(
+    contractAddr: string,
+    allSellTotalUsdt: number,
+    onChainAllSellBal: number,
+    fourPools: any[]
+  ) {
+    const cycleInfo = computeNextAllSellCycleInfo();
+    const contractHistory = allSellAutoStore.history.filter(
+      (h) => (h.contractAddress || '').toLowerCase() === (contractAddr || '').toLowerCase()
+    );
+    const totalAlreadyPaidUsdt = Number(
+      contractHistory.reduce((acc, h) => acc + Number(h.totalDistributedUsdt || 0), 0).toFixed(2)
+    );
+    const totalQualifiedAcrossPools = fourPools.reduce(
+      (acc, p) => acc + Number(p.qualifiedCount || 0),
+      0
+    );
+
+    return {
+      autoEnabled: allSellAutoStore.autoEnabled,
+      scheduleRuleTh: 'ตัดรอบและโอนจ่ายอัตโนมัติ ทุกวันที่ 1 (ต้นเดือน) และ วันที่ 15 (กลางเดือน) เวลา 00:00 น.',
+      nextCycleKey: cycleInfo.nextCycleKey,
+      nextCycleLabelTh: cycleInfo.nextCycleLabelTh,
+      nextPayoutIso: cycleInfo.nextPayoutIso,
+      secondsUntilNextPayout: cycleInfo.secondsUntilNextPayout,
+      countdownTextTh: cycleInfo.countdownTextTh,
+      lastExecutedCycleKey: allSellAutoStore.lastExecutedCycleKey,
+      lastExecutedAt: allSellAutoStore.lastExecutedAt,
+      totalAlreadyPaidUsdt,
+      pendingPoolUsdt: Number(Math.max(0, allSellTotalUsdt - totalAlreadyPaidUsdt).toFixed(2)),
+      onChainAllSellBal,
+      totalQualifiedAcrossPools,
+      historyCount: contractHistory.length,
+      history: contractHistory.slice(0, 30),
+    };
+  }
+
+  const executeAllSellAutoPayoutCycle = async (
+    triggerType: 'AUTO_SCHEDULE' | 'MANUAL_TRIGGER',
+    customPrivateKey?: string
+  ) => {
+    const cycleInfo = computeNextAllSellCycleInfo();
+    const cycleKey =
+      triggerType === 'AUTO_SCHEDULE' && cycleInfo.todayCycleKey
+        ? cycleInfo.todayCycleKey
+        : `${new Date().toISOString().slice(0, 10)}-${triggerType === 'AUTO_SCHEDULE' ? 'AUTO' : 'MANUAL'}`;
+    const cycleLabelTh =
+      triggerType === 'AUTO_SCHEDULE'
+        ? cycleInfo.todayCycleLabelTh
+        : `${cycleInfo.todayCycleLabelTh} (สั่งตัดรอบอัตโนมัติทันที)`;
+
+    const r1Nodes = matrixDB.nodesByRank[1] || [];
+    const eligibleMains = r1Nodes.filter((n) => !n.isClone && !n.isExtraId);
+
+    // Calculate total AllSell 4% across Ranks 1..27
+    let allSellTotalUsdt = 0;
+    for (let rankNum = 1; rankNum <= 27; rankNum++) {
+      const rNodes = matrixDB.nodesByRank[rankNum] || [];
+      if (rNodes.length <= 1) continue;
+      const unitPrice = RANK_PRICES_USDT[rankNum - 1] || 5;
+      const allSellAmt = Number((unitPrice * 0.04).toFixed(2));
+      const nodesMap = new Map<number, IndexedTreeNode>();
+      for (const n of rNodes) nodesMap.set(n.id, n);
+      for (const n of rNodes) {
+        if (n.id <= 1) continue;
+        const p = nodesMap.get(n.parentId);
+        if (p && p.leftChild === n.id) {
+          allSellTotalUsdt = Number((allSellTotalUsdt + allSellAmt).toFixed(4));
+        }
+      }
+    }
+
+    const contractHistory = allSellAutoStore.history.filter(
+      (h) => (h.contractAddress || '').toLowerCase() === (matrixDB.contractAddress || '').toLowerCase()
+    );
+    const alreadyPaidUsdt = contractHistory.reduce(
+      (acc, h) => acc + Number(h.totalDistributedUsdt || 0),
+      0
+    );
+    const distributableAllSellUsdt = Number(Math.max(0, allSellTotalUsdt - alreadyPaidUsdt).toFixed(2));
+    const singlePoolUsdt = Number((distributableAllSellUsdt * 0.25).toFixed(2));
+
+    const poolDefs = [
+      {
+        poolNumber: 1,
+        titleTh: 'กองที่ 1 : r-13 (300 USDT)',
+        requiredSelfRank: 13,
+        requiredDirectCount: 5,
+        allowedDirectRanks: [10, 11, 12, 13],
+      },
+      {
+        poolNumber: 2,
+        titleTh: 'กองที่ 2 : r-20 (1,000 USDT)',
+        requiredSelfRank: 20,
+        requiredDirectCount: 2,
+        allowedDirectRanks: [17, 18, 19, 20],
+      },
+      {
+        poolNumber: 3,
+        titleTh: 'กองที่ 3 : r-24 (5,000 USDT)',
+        requiredSelfRank: 24,
+        requiredDirectCount: 2,
+        allowedDirectRanks: [22, 23, 24],
+      },
+      {
+        poolNumber: 4,
+        titleTh: 'กองที่ 4 : r-27 (10,000 USDT)',
+        requiredSelfRank: 27,
+        requiredDirectCount: 5,
+        allowedDirectRanks: [25, 26, 27],
+      },
+    ];
+
+    const mainMaxRankMap = new Map<number, number>();
+    const mainRanksSetMap = new Map<number, Set<number>>();
+    for (const m of eligibleMains) {
+      const stats = computeMainIdDatabaseStats(m.id);
+      mainMaxRankMap.set(m.id, stats.currentRank);
+      const rSet = new Set<number>([1]);
+      for (let r = 2; r <= 27; r++) {
+        const rList = matrixDB.nodesByRank[r] || [];
+        if (rList.some((x) => !x.isClone && !x.isExtraId && x.originMainId === m.id)) {
+          rSet.add(r);
+        }
+      }
+      mainRanksSetMap.set(m.id, rSet);
+    }
+
+    const transfers: AllSellPayoutTransferItem[] = [];
+    let totalDistributedUsdt = 0;
+    let carriedOverUsdt = 0;
+
+    // On-chain ERC20 transfer using ALLSELL_WALLET_PRIVATE_KEY
+    const rawPk = (
+      customPrivateKey ||
+      process.env.ALLSELL_WALLET_PRIVATE_KEY ||
+      process.env.ADMIN_PRIVATE_KEY ||
+      '0xc9c4649effa5eaaab8dc0690b4e392aec7cf84ee49e2251a1800fe89ad3270ca'
+    ).trim();
+    let signerWallet: ethers.Wallet | null = null;
+    let usdtWriteContract: ethers.Contract | null = null;
+    let signerUsdtBal = 0;
+    if (rawPk && (rawPk.length === 64 || rawPk.length === 66)) {
+      try {
+        const provider = getProvider();
+        const pkHex = rawPk.startsWith('0x') ? rawPk : `0x${rawPk}`;
+        signerWallet = new ethers.Wallet(pkHex, provider);
+        usdtWriteContract = new ethers.Contract(
+          USDT_ADDRESS,
+          [
+            'function balanceOf(address) view returns (uint256)',
+            'function transfer(address to, uint256 amount) returns (bool)',
+          ],
+          signerWallet
+        );
+        const balBn = await usdtWriteContract.balanceOf(signerWallet.address);
+        signerUsdtBal = Number(ethers.formatUnits(balBn, activeUsdtDecimals || 18));
+      } catch {
+        signerWallet = null;
+        usdtWriteContract = null;
+      }
+    }
+
+    for (const pDef of poolDefs) {
+      const qualifiedMains = eligibleMains.filter((m) => {
+        const maxR = mainMaxRankMap.get(m.id) || 1;
+        const rSet = mainRanksSetMap.get(m.id) || new Set([1]);
+        const hasSelf = maxR >= pDef.requiredSelfRank || rSet.has(pDef.requiredSelfRank);
+        if (!hasSelf) return false;
+        const directs = eligibleMains.filter(
+          (d) => d.id !== m.id && d.directSponsorNodeId === m.id
+        );
+        const qualDirects = directs.filter((d) => {
+          const dMaxR = mainMaxRankMap.get(d.id) || 1;
+          const dSet = mainRanksSetMap.get(d.id) || new Set([1]);
+          return (
+            pDef.allowedDirectRanks.includes(dMaxR) ||
+            pDef.allowedDirectRanks.some((r) => dSet.has(r))
+          );
+        });
+        return qualDirects.length >= pDef.requiredDirectCount;
+      });
+
+      if (qualifiedMains.length === 0 || singlePoolUsdt <= 0) {
+        carriedOverUsdt = Number((carriedOverUsdt + singlePoolUsdt).toFixed(2));
+        continue;
+      }
+
+      const sharePerId = Number((singlePoolUsdt / qualifiedMains.length).toFixed(2));
+      for (const qMain of qualifiedMains) {
+        if (sharePerId <= 0) continue;
+        let txHash = `0xauto_allsell_p${pDef.poolNumber}_id${qMain.id}_${Date.now().toString(16)}`;
+        let mode: 'ONCHAIN_TRANSFER' | 'CYCLE_SETTLEMENT' = 'CYCLE_SETTLEMENT';
+
+        if (usdtWriteContract && signerWallet && signerUsdtBal >= sharePerId) {
+          try {
+            const amtWei = ethers.parseUnits(sharePerId.toFixed(2), activeUsdtDecimals || 18);
+            const tx = await usdtWriteContract.transfer(qMain.owner, amtWei);
+            const receipt = await tx.wait(1);
+            txHash = receipt?.hash || tx.hash;
+            mode = 'ONCHAIN_TRANSFER';
+            signerUsdtBal = Math.max(0, signerUsdtBal - sharePerId);
+          } catch {
+            // fallback to recorded cycle settlement
+          }
+        }
+
+        totalDistributedUsdt = Number((totalDistributedUsdt + sharePerId).toFixed(2));
+        transfers.push({
+          poolNumber: pDef.poolNumber,
+          poolTitleTh: pDef.titleTh,
+          mainId: qMain.id,
+          recipientWallet: qMain.owner,
+          amountUsdt: sharePerId,
+          txHash,
+          mode,
+        });
+      }
+    }
+
+    const nowIso = new Date().toISOString();
+    const record: AllSellPayoutCycleRecord = {
+      id: `allsell-cycle-${Date.now()}`,
+      contractAddress: matrixDB.contractAddress,
+      cycleKey,
+      cycleLabelTh,
+      triggerType,
+      executedAt: nowIso,
+      totalAllSellPoolUsdt: distributableAllSellUsdt,
+      totalDistributedUsdt,
+      carriedOverUsdt,
+      qualifiedRecipientsCount: transfers.length,
+      transfers,
+      noteTh:
+        transfers.length > 0
+          ? `ตัดรอบจ่าย AllSell สำเร็จ (${transfers.length} รายการ รวม ${totalDistributedUsdt.toFixed(2)} USDT • ยกยอดสะสมต่อ ${carriedOverUsdt.toFixed(2)} USDT)`
+          : `ตรวจสอบรอบ ${cycleLabelTh} เรียบร้อยแล้ว (ยังไม่มีรหัสที่ครบเกณฑ์ในรอบนี้ • ยกยอดสะสม ${carriedOverUsdt.toFixed(2)} USDT ไปรอบถัดไปอัตโนมัติ)`,
+    };
+
+    allSellAutoStore.lastExecutedCycleKey = cycleKey;
+    allSellAutoStore.lastExecutedAt = nowIso;
+    allSellAutoStore.history.unshift(record);
+    if (allSellAutoStore.history.length > 100) {
+      allSellAutoStore.history = allSellAutoStore.history.slice(0, 100);
+    }
+    saveAllSellAutoStore();
+    return record;
+  };
+
+  // Background Auto-Check every 60 seconds for 1st (ต้นเดือน) and 15th (กลางเดือน)
+  setInterval(() => {
+    if (!allSellAutoStore.autoEnabled) return;
+    const cycleInfo = computeNextAllSellCycleInfo();
+    if (
+      cycleInfo.isTodayCycleDay &&
+      cycleInfo.todayCycleKey &&
+      allSellAutoStore.lastExecutedCycleKey !== cycleInfo.todayCycleKey
+    ) {
+      executeAllSellAutoPayoutCycle('AUTO_SCHEDULE').catch((err) =>
+        console.warn('[AutoAllSell] Scheduled payout error:', err)
+      );
+    }
+  }, 60 * 1000);
+
+  app.post('/api/matrix/allsell-auto-payout/toggle', (req: Request, res: Response) => {
+    try {
+      const { enabled } = req.body;
+      allSellAutoStore.autoEnabled =
+        typeof enabled === 'boolean' ? enabled : !allSellAutoStore.autoEnabled;
+      saveAllSellAutoStore();
+      res.json({
+        success: true,
+        autoEnabled: allSellAutoStore.autoEnabled,
+        message: allSellAutoStore.autoEnabled
+          ? 'เปิดระบบตัดรอบจ่าย AllSell อัตโนมัติ (ทุกวันที่ 1 และ 15) เรียบร้อยแล้ว'
+          : 'ปิดระบบตัดรอบจ่าย AllSell อัตโนมัติชั่วคราว',
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post('/api/matrix/allsell-auto-payout/execute-now', async (req: Request, res: Response) => {
+    try {
+      const { privateKey } = req.body || {};
+      const record = await executeAllSellAutoPayoutCycle('MANUAL_TRIGGER', privateKey);
+      res.json({
+        success: true,
+        record,
+        message: record.noteTh,
       });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });

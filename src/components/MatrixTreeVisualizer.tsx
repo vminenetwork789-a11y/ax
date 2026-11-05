@@ -785,6 +785,8 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
   const [systemPoolsData, setSystemPoolsData] = useState<any>(null);
   const [isSystemPoolsModalOpen, setIsSystemPoolsModalOpen] = useState<boolean>(false);
   const [systemPoolsModalTab, setSystemPoolsModalTab] = useState<'all' | 'allsell' | 'family'>('all');
+  const [isRunningAllSellAuto, setIsRunningAllSellAuto] = useState<boolean>(false);
+  const [allSellAutoMsg, setAllSellAutoMsg] = useState<string | null>(null);
   const [isAutoExtraAlertModalOpen, setIsAutoExtraAlertModalOpen] = useState<boolean>(false);
   const [autoExtraAlertTab, setAutoExtraAlertTab] = useState<
     'all' | 'auto' | 'extra' | 'pool' | 'mine'
@@ -2507,6 +2509,10 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           );
           if (ownerMains.length === 1) return ownerMains[0].id;
           if (ownerMains.length > 1) {
+            const rank9Main = ownerMains.find(
+              (m) => m.id === 1 || getMainIdCurrentRank(m.id, m.owner) >= 9
+            );
+            if (rank9Main) return rank9Main.id;
             const eligibleMain = ownerMains.find(
               (m) =>
                 m.id === 1 ||
@@ -2530,6 +2536,13 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           : getCorrespondingMainIdInRank(rankNum, sourceMainInR, extraNode.owner, 1) || sourceMainInR;
       };
 
+      // Update extraIdSourceMainMap in activeRank so every Extra ID points to the exact Rank 1 Main ID that spawned it (e.g. #2 for Extra R2-#6)
+      for (const n of rawNodes.values()) {
+        if (n.isExtraId && !n.isClone) {
+          extraIdSourceMainMap.set(n.id, resolveExtraSpawnerInR1(activeRank, n));
+        }
+      }
+
       // Count actual spawned Auto Extra IDs (!isClone && isExtraId) from Rank 27 down to Rank 1 per Rank 1 Main ID (`r1MainId`)
       // and accumulate any left-child rewards from EXTRA IDs back to their directSponsor
       for (let r = 27; r >= 1; r--) {
@@ -2550,7 +2563,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           }
 
           // กรณี EXTRA ID (หรือโคลนของ EXTRA ID) มีเม็ดซ้าย (leftChild > 0):
-          // - 30% ค่าแนะนำ ส่งกลับไปให้ directSponsor
+          // - 30% ค่าแนะนำ ส่งกลับไปให้ directSponsor (รหัสหลักต้นทางที่สร้าง Extra ID นั้น เช่น Main #2)
           // - 30% ค่าชั้น ส่งกลับไปให้ directSponsor
           // - Vault (35%) ส่งกลับที่ New Extra ID Pool ของ directSponsor
           const snOrigin = !sn.isClone
@@ -2565,16 +2578,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             ? Boolean(sn.isExtraId)
             : Boolean(sn.isExtraId || snOrigin.isExtraId);
           if (isSnExtraLineage && sn.leftChild > 0) {
-            const spInR =
-              snOrigin.directSponsorNodeId && snOrigin.directSponsorNodeId > 0
-                ? snOrigin.directSponsorNodeId
-                : sn.directSponsorNodeId && sn.directSponsorNodeId > 0
-                ? sn.directSponsorNodeId
-                : 1;
-            const r1SponsorMain =
-              r === 1
-                ? spInR
-                : getCorrespondingMainIdInRank(r, spInR, snOrigin.owner, 1) || spInR;
+            const r1SponsorMain = resolveExtraSpawnerInR1(r, snOrigin);
             crossRankExtraLeftDirectBonusMap.set(
               r1SponsorMain,
               Number(((crossRankExtraLeftDirectBonusMap.get(r1SponsorMain) || 0) + rPrice * 0.3).toFixed(4))
@@ -2643,13 +2647,32 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             }
           }
 
+          const deducted = Math.max(0, Number((totalGross1To3 - totalRem1To3).toFixed(4)));
+          const maxPossibleSpawns =
+            window5Start > 1 ? Math.floor((deducted + 1e-4) / 5) : 0;
+          let spawnedCount = 0;
+          if (r1Id === 1) {
+            spawnedCount = maxPossibleSpawns;
+          } else if (maxPossibleSpawns > 0) {
+            // สำหรับ Main ID > 1 (เช่น ID #2 ที่อัพขึ้น Rank 6..8):
+            // ยอด Vault ใน Rank 1..3 ที่ถูกหักไปใช้เป็นส่วนลดตอนอัพเกรด Rank (_clearVaultsForMainId) จะทำให้ nodeVault เหลือ 0
+            // ส่วนการหักออก Auto ID จริงบนสัญญา (checkAndProcessAutoNewMainIdForNode) จะหักทีละ 5.00 USDT จากยอดสะสมที่เป็นพหุคูณของ 1.75 USDT เท่านั้น
+            for (let c = maxPossibleSpawns; c >= 1; c--) {
+              const pool2GrossNeeded = Number((totalRem1To3 + c * 5).toFixed(4));
+              const units175 = pool2GrossNeeded / 1.75;
+              if (
+                pool2GrossNeeded <= totalGross1To3 + 0.01 &&
+                Math.abs(units175 - Math.round(units175)) < 0.01
+              ) {
+                spawnedCount = c;
+                break;
+              }
+            }
+          }
+
           crossRankGrossVault1To4.set(r1Id, totalGross1To3);
           crossRankRemVault1To4.set(r1Id, totalRem1To3);
-          extraVaultFromRanks2To4.set(r1Id, extraR2To3);
-
-          const deducted = Math.max(0, Number((totalGross1To3 - totalRem1To3).toFixed(4)));
-          const spawnedCount =
-            window5Start > 1 ? Math.floor((deducted + 1e-4) / 5) : 0;
+          extraVaultFromRanks2To4.set(r1Id, spawnedCount > 0 ? extraR2To3 : 0);
           crossRankAutoIdCount.set(r1Id, spawnedCount);
 
           if (grossParts.length > 1 && spawnedCount > 0) {
@@ -2906,6 +2929,24 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
       const usedExtraR2To4ForMain = new Set<number>();
       const nodeSpawnedAutoIds = new Map<number, number[]>();
 
+      const isPlacedUnderMainOrClonesActive = (mId: number, targetId: number): boolean => {
+        if (targetId <= mId) return false;
+        if (mId === 1) return true;
+        let curr = rawNodes.get(targetId)?.parentId || 0;
+        const visited = new Set<number>();
+        while (curr > 0 && !visited.has(curr)) {
+          visited.add(curr);
+          if (curr === mId) return true;
+          const pNode = rawNodes.get(curr);
+          if (!pNode) break;
+          if (pNode.isClone && (originMainIdMap.get(curr) || pNode.id) === mId) {
+            return true;
+          }
+          curr = pNode.parentId;
+        }
+        return false;
+      };
+
       for (const id of sortedIds) {
         const n = rawNodes.get(id)!;
         const ownerKey = n.owner.toLowerCase();
@@ -2922,14 +2963,15 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             if (getMainIdWindow5Start(mId, n.owner) <= 1) return false;
             const maxAllowedSpawns = crossRankAutoIdCount.get(mId) || 0;
             const currentSpawns = mainNodeAutoIdSpawnCount.get(mId) || 0;
-            if (!isBackendTaggedAuto && currentSpawns >= maxAllowedSpawns) return false;
-            const mSponsorId = onChainSponsorNodeMap.get(mId) || 0;
-            const isSelfSponsored = Boolean(
-              n.directSponsor && n.directSponsor.toLowerCase() === ownerKey
-            );
+            if (currentSpawns >= maxAllowedSpawns) return false;
+            // กฎเหล็กการจัดวางบนสัญญา (_findPlacementSpot): Auto ID ที่เกิดจาก mId จะต้องวางอยู่ใต้สายงาน/โคลนของ mId เท่านั้น
+            // ดังนั้น R1-#3 (ซึ่งวางอยู่ใต้ #1 ฝั่งขวา ไม่ได้อยู่ใต้ #2) จะไม่มีวันถูกมองเป็น Auto ID ของ #2 เด็ดขาด
+            if (!isPlacedUnderMainOrClonesActive(mId, n.id)) return false;
+            const mSpId = onChainSponsorNodeMap.get(mId) || 1;
             return (
-              (isSelfSponsored && (explicitSponsorId === 0 || mId === explicitSponsorId)) ||
-              (explicitSponsorId > 0 && (explicitSponsorId === mId || explicitSponsorId === mSponsorId))
+              explicitSponsorId === 0 ||
+              mId === explicitSponsorId ||
+              explicitSponsorId === mSpId
             );
           });
 
@@ -2950,11 +2992,11 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
               lineageAutoIdVault.set(sourceMain, Number((r1Bal + extraBal).toFixed(4)));
             }
           }
-          if (sourceMain === undefined && isBackendTaggedAuto) {
+          if (sourceMain === undefined && isBackendTaggedAuto && priorMains.length > 0) {
             sourceMain =
               explicitSponsorId > 0 && priorMains.includes(explicitSponsorId)
                 ? explicitSponsorId
-                : priorMains[0] ?? firstMainOfOwner;
+                : priorMains[0];
           }
 
           if (sourceMain !== undefined) {
@@ -3009,23 +3051,17 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             // - 4% all sell
             // - 1% bot
             if (isParentExtraLineage) {
-              const extraSponsorNodeId =
-                extraIdSourceMainMap.get(parentMainId) ||
-                onChainSponsorNodeMap.get(parentMainId) ||
-                onChainSponsorNodeMap.get(parent.id) ||
-                resolveSponsorNodeIdForNode(parentMainId, (parentMainNode || parent).directSponsor) ||
-                1;
               const extraSponsorR1MainId =
-                activeRank === 1
-                  ? originMainIdMap.get(extraSponsorNodeId) || extraSponsorNodeId
-                  : extraSponsorNodeId;
+                extraIdSourceMainMap.get(parentMainId) ||
+                resolveExtraSpawnerInR1(activeRank, parentMainNode || parent) ||
+                1;
               const extraSponsorLocalMainId =
                 activeRank === 1
                   ? extraSponsorR1MainId
                   : getCorrespondingMainIdInRank(
                       1,
                       extraSponsorR1MainId,
-                      (parentMainNode || parent).directSponsor,
+                      (parentMainNode || parent).owner,
                       activeRank
                     );
               const fullLevelBonusUnit = Number((unitPrice * 0.3).toFixed(4));
@@ -3288,6 +3324,24 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         const r1UnilevelUnit = r1Price * 0.02;
         const r1VaultUnit = r1Price * 0.35;
 
+        const isPlacedUnderMainOrClones1 = (mId: number, targetId: number): boolean => {
+          if (targetId <= mId) return false;
+          if (mId === 1) return true;
+          let curr = snap1.get(targetId)?.parentId || 0;
+          const visited = new Set<number>();
+          while (curr > 0 && !visited.has(curr)) {
+            visited.add(curr);
+            if (curr === mId) return true;
+            const pNode = snap1.get(curr);
+            if (!pNode) break;
+            if (pNode.isClone && (s1OriginMainMap.get(curr) || pNode.id) === mId) {
+              return true;
+            }
+            curr = pNode.parentId;
+          }
+          return false;
+        };
+
         for (const id1 of s1Ids) {
           const sn = snap1.get(id1)!;
           const oKey = sn.owner.toLowerCase();
@@ -3302,13 +3356,11 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
               if (getMainIdWindow5Start(m, sn.owner) <= 1) return false;
               const maxAllowed = crossRankAutoIdCount.get(m) || 0;
               const curSpawns = s1AutoIdCountByMain.get(m) || 0;
-              if (!isSnapTaggedAuto && curSpawns >= maxAllowed) return false;
-              const mSpId = snap1.get(m)?.directSponsorNodeId || 0;
-              const isSelfSp = Boolean(sn.directSponsor && sn.directSponsor.toLowerCase() === oKey);
-              return (
-                (isSelfSp && (explicitSpId === 0 || m === explicitSpId)) ||
-                (explicitSpId > 0 && (explicitSpId === m || explicitSpId === mSpId))
-              );
+              if (curSpawns >= maxAllowed) return false;
+              // กฎเหล็กการจัดวางบนสัญญา (_findPlacementSpot): Auto ID ที่เกิดจาก m จะต้องวางอยู่ใต้สายงาน/โคลนของ m เท่านั้น
+              if (!isPlacedUnderMainOrClones1(m, id1)) return false;
+              const mSpId = snap1.get(m)?.directSponsorNodeId || 1;
+              return explicitSpId === 0 || m === explicitSpId || explicitSpId === mSpId;
             });
             let sourceMain = priorMains.find(
               (m) => (s1AutoVaultSim.get(m) || 0) + 1e-9 >= r1Price
@@ -3330,11 +3382,11 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                 );
               }
             }
-            if (sourceMain === undefined && isSnapTaggedAuto) {
+            if (sourceMain === undefined && isSnapTaggedAuto && priorMains.length > 0) {
               sourceMain =
                 explicitSpId > 0 && priorMains.includes(explicitSpId)
                   ? explicitSpId
-                  : priorMains[0] ?? firstMain;
+                  : priorMains[0];
             }
             if (sourceMain !== undefined) {
               s1AutoIdSourceMap.set(id1, sourceMain);
@@ -3486,22 +3538,10 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         } else if (autoIdSourceMainMap.has(n.id)) {
           directUplineNodeId = autoIdSourceMainMap.get(n.id)!;
         } else if (n.isExtraId || extraIdSourceMainMap.has(n.id)) {
-          const rawExtraSp =
-            extraIdSourceMainMap.get(n.id) ||
-            onChainSponsorNodeMap.get(n.id) ||
-            resolveSponsorNodeIdForNode(n.id, n.directSponsor) ||
-            1;
           const extraSpR1 =
-            activeRank === 1
-              ? rawExtraSp
-              : onChainOriginMap.get(rawExtraSp) ||
-                getCorrespondingMainIdInRank(
-                  activeRank,
-                  rawExtraSp,
-                  n.directSponsor || n.owner,
-                  1
-                ) ||
-                rawExtraSp;
+            extraIdSourceMainMap.get(n.id) ||
+            resolveExtraSpawnerInR1(activeRank, n) ||
+            1;
           directUplineNodeId = extraSpR1 > 0 ? extraSpR1 : 1;
         } else if (n.isClone) {
           const originEnriched = enrichedMap.get(originMainId);
@@ -3510,18 +3550,8 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           } else if (autoIdSourceMainMap.has(originMainId)) {
             directUplineNodeId = autoIdSourceMainMap.get(originMainId)!;
           } else if (extraIdSourceMainMap.has(originMainId)) {
-            const rawExtraSp = extraIdSourceMainMap.get(originMainId)!;
-            directUplineNodeId =
-              activeRank === 1
-                ? rawExtraSp
-                : onChainOriginMap.get(rawExtraSp) ||
-                  getCorrespondingMainIdInRank(
-                    activeRank,
-                    rawExtraSp,
-                    n.directSponsor || n.owner,
-                    1
-                  ) ||
-                  rawExtraSp;
+            const extraSpR1 = extraIdSourceMainMap.get(originMainId)!;
+            directUplineNodeId = extraSpR1 > 0 ? extraSpR1 : 1;
           } else {
             directUplineNodeId = resolveSponsorNodeIdForNode(n.id, n.directSponsor);
           }
@@ -3586,8 +3616,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             !n.isExtraId &&
             effectiveR1MainId > 1 &&
             (s1AutoIdSourceMap.has(effectiveR1MainId) ||
-              (activeRank === 1 && autoMainNodeIds.has(n.id)) ||
-              onChainOriginTypeMap.get(n.id) === 'AUTO_NEW_MAIN'),
+              (activeRank === 1 && autoMainNodeIds.has(n.id))),
           originMainId,
           r1MainId,
           isExtraLineage: isExtraOrigin,
@@ -6730,7 +6759,12 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             ? modalUpgradeTargetRank
             : Math.min(27, currentMaxR + 1);
         const targetRankPrice = RANK_PRICES_USDT[effectiveTargetRank - 1] || 10;
-        const poolDeduct = Math.min(modalNode.upgradeRankPool, targetRankPrice);
+        const curUpgradePoolVal = Number(
+          modalNode.isExtraLineage
+            ? 0
+            : mainReport?.upgradeRankPool ?? modalNode.upgradeRankPool ?? 0
+        );
+        const poolDeduct = Math.min(curUpgradePoolVal, targetRankPrice);
         const netDiffToPay = Math.max(0, Number((targetRankPrice - poolDeduct).toFixed(2)));
 
         const handleTriggerModalUpgrade = async (rankToUpgrade: number) => {
@@ -7017,9 +7051,9 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                         </span>
                       </div>
                       <div className="grid grid-cols-3 gap-1.5 pt-1.5 border-t border-indigo-500/20 text-[10px]">
-                        <div className="bg-slate-950/90 border border-amber-500/30 rounded p-1.5 text-center">
+                        <div className="bg-slate-950/90 border border-amber-500/30 rounded p-1.5 text-center space-y-0.5">
                           <span className="text-slate-400 block">Upgrade Pool</span>
-                          <span className="text-amber-400 font-extrabold text-xs">
+                          <span className="text-amber-400 font-extrabold text-xs block">
                             {Number(
                               modalNode.isExtraLineage
                                 ? 0
@@ -7028,7 +7062,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                             U
                           </span>
                         </div>
-                        <div className="bg-slate-950/90 border border-yellow-500/30 rounded p-1.5 text-center">
+                        <div className="bg-slate-950/90 border border-yellow-500/30 rounded p-1.5 text-center space-y-0.5">
                           <span className="text-slate-400 block">Auto ID Pool</span>
                           <span className="text-yellow-400 font-extrabold text-xs block">
                             {Number(
@@ -7042,7 +7076,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                             ออกแล้ว: {Math.max(modalNode.totalAutoIdCount, autoIdsList.length)} รหัส
                           </span>
                         </div>
-                        <div className="bg-slate-950/90 border border-rose-500/30 rounded p-1.5 text-center">
+                        <div className="bg-slate-950/90 border border-rose-500/30 rounded p-1.5 text-center space-y-0.5">
                           <span className="text-slate-400 block">Extra ID Pool (รวมยอดเก่า)</span>
                           <span className="text-rose-400 font-extrabold text-xs block">
                             {Number(
@@ -7104,7 +7138,6 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                               <strong className="text-emerald-400">{netDiffToPay.toFixed(2)} U</strong>
                             </span>
                           </div>
-
                           <button
                             type="button"
                             disabled={isModalUpgrading}
@@ -8447,6 +8480,71 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                     ? systemPoolsData.allSellFourPools
                     : fallbackFourPools;
 
+                const autoStatus = systemPoolsData?.allSellAutoPayout;
+                const isAutoEnabled = autoStatus ? Boolean(autoStatus.autoEnabled) : true;
+                const nextCycleLabel =
+                  autoStatus?.nextCycleLabelTh || 'วันที่ 1 (ต้นเดือน) และ วันที่ 15 (กลางเดือน) เวลา 00:00 น.';
+                const countdownText = autoStatus?.countdownTextTh || 'คำนวณเวลานับถอยหลังอัตโนมัติ';
+                const autoHistoryList: any[] = Array.isArray(autoStatus?.history) ? autoStatus.history : [];
+
+                const handleToggleAutoAllSell = async () => {
+                  try {
+                    setIsRunningAllSellAuto(true);
+                    setAllSellAutoMsg(null);
+                    const res = await fetch('/api/matrix/allsell-auto-payout/toggle', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ enabled: !isAutoEnabled }),
+                    });
+                    const data = await res.json();
+                    if (data.success) {
+                      setAllSellAutoMsg(data.message);
+                      setSystemPoolsData((prev: any) =>
+                        prev
+                          ? {
+                              ...prev,
+                              allSellAutoPayout: {
+                                ...(prev.allSellAutoPayout || {}),
+                                autoEnabled: data.autoEnabled,
+                              },
+                            }
+                          : prev
+                      );
+                    }
+                  } catch (e: any) {
+                    setAllSellAutoMsg(e?.message || 'เกิดข้อผิดพลาดในการสลับสถานะ Auto AllSell');
+                  } finally {
+                    setIsRunningAllSellAuto(false);
+                  }
+                };
+
+                const handleExecuteAutoAllSellNow = async () => {
+                  try {
+                    setIsRunningAllSellAuto(true);
+                    setAllSellAutoMsg(null);
+                    const res = await fetch('/api/matrix/allsell-auto-payout/execute-now', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({}),
+                    });
+                    const data = await res.json();
+                    if (data.success) {
+                      setAllSellAutoMsg(data.message || 'ตัดรอบจ่าย AllSell อัตโนมัติสำเร็จ!');
+                      const refreshRes = await fetch('/api/matrix/per-id-history');
+                      const refreshJson = await refreshRes.json();
+                      if (refreshJson?.success && refreshJson.systemPools) {
+                        setSystemPoolsData(refreshJson.systemPools);
+                      }
+                    } else {
+                      setAllSellAutoMsg(data.error || 'ไม่สามารถตัดรอบได้');
+                    }
+                  } catch (e: any) {
+                    setAllSellAutoMsg(e?.message || 'เกิดข้อผิดพลาดในการสั่งตัดรอบ');
+                  } finally {
+                    setIsRunningAllSellAuto(false);
+                  }
+                };
+
                 return (
                   <div className="rounded-xl bg-[#091526] border border-cyan-500/40 p-3.5 space-y-2.5 font-mono">
                     <div className="flex items-center justify-between flex-wrap gap-2 border-b border-cyan-500/20 pb-2">
@@ -8459,8 +8557,16 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                         </p>
                       </div>
                       <div className="flex flex-wrap items-center gap-1.5">
-                        <span className="px-2.5 py-1 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-300 font-extrabold text-[10.5px]">
-                          🗓️ รอบจ่ายเงินผู้ผ่านเกณฑ์: ทุกต้นเดือน และ กลางเดือน
+                        <span
+                          className={`px-2.5 py-1 rounded-lg font-extrabold text-[10.5px] border ${
+                            isAutoEnabled
+                              ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300'
+                              : 'bg-slate-800 border-slate-700 text-slate-400'
+                          }`}
+                        >
+                          {isAutoEnabled
+                            ? '🟢 ระบบตัดจ่ายอัตโนมัติ: เปิดใช้งาน (Auto ON)'
+                            : '⚪ ระบบตัดจ่ายอัตโนมัติ: ปิดชั่วคราว'}
                         </span>
                         <span className="px-2.5 py-1 rounded-lg bg-cyan-500/15 border border-cyan-500/35 text-cyan-200 font-bold text-[10.5px]">
                           4 กอง × 25% = 100% ของ AllSell (4%)
@@ -8468,13 +8574,84 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                       </div>
                     </div>
 
-                    <div className="rounded-lg bg-amber-500/10 border border-amber-500/35 px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-[11px]">
-                      <div className="text-amber-200 font-bold">
-                        📌 เงื่อนไขรอบการจ่าย AllSell: ระบบจะตัดรอบและจ่ายเงินให้รหัสที่ผ่านเกณฑ์ <span className="text-amber-300 underline">ทุกกลางเดือน และ ต้นเดือน</span> (เดือนละ 2 รอบ: วันที่ 1 และ วันที่ 15 ของทุกเดือน)
+                    {/* แผงควบคุมการตัดรอบจ่าย AllSell อัตโนมัติ (ทุกต้นเดือน วันที่ 1 และกลางเดือน วันที่ 15) */}
+                    <div className="rounded-xl bg-gradient-to-r from-amber-500/10 via-cyan-500/10 to-emerald-500/10 border border-amber-500/40 p-3 space-y-2 text-[11px]">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="space-y-0.5">
+                          <div className="text-amber-200 font-extrabold flex items-center gap-1.5 flex-wrap">
+                            <span>⚡ ระบบตัดรอบและจ่ายเงิน AllSell อัตโนมัติ (Auto Scheduler):</span>
+                            <span className="text-emerald-300 underline">
+                              ทุกกลางเดือน (วันที่ 15) และ ต้นเดือน (วันที่ 1) เวลา 00:00 น.
+                            </span>
+                          </div>
+                          <div className="text-[10.5px] text-slate-300 flex flex-wrap items-center gap-3">
+                            <span>
+                              🗓️ รอบตัดจ่ายถัดไป: <strong className="text-amber-300">{nextCycleLabel}</strong>
+                            </span>
+                            <span>
+                              ⏳ นับถอยหลัง: <strong className="text-cyan-300">{countdownText}</strong>
+                            </span>
+                            {autoStatus?.lastExecutedAt && (
+                              <span>
+                                ✅ ตัดรอบล่าสุด: <strong className="text-emerald-300">{formatModalRowTime(autoStatus.lastExecutedAt)}</strong>
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <button
+                            type="button"
+                            disabled={isRunningAllSellAuto}
+                            onClick={handleToggleAutoAllSell}
+                            className={`px-2.5 py-1.5 rounded-lg font-bold text-[10.5px] border transition cursor-pointer disabled:opacity-50 ${
+                              isAutoEnabled
+                                ? 'bg-slate-900 hover:bg-slate-800 text-amber-300 border-amber-500/40'
+                                : 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-400'
+                            }`}
+                          >
+                            {isAutoEnabled ? '⏸️ ปิด Auto ชั่วคราว' : '▶️ เปิด Auto Payout'}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isRunningAllSellAuto}
+                            onClick={handleExecuteAutoAllSellNow}
+                            className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-emerald-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 text-white font-extrabold text-[10.5px] border border-emerald-400/50 shadow cursor-pointer disabled:opacity-50"
+                          >
+                            {isRunningAllSellAuto ? '⏳ กำลังประมวลผลรอบจ่าย...' : '⚡ สั่งตัดรอบจ่ายผู้ผ่านเกณฑ์ทันที'}
+                          </button>
+                        </div>
                       </div>
-                      <span className="px-2 py-0.5 rounded bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-[10px] font-bold">
-                        จ่าย 2 รอบ / เดือน (ต้นเดือน & กลางเดือน)
-                      </span>
+
+                      {allSellAutoMsg && (
+                        <div className="rounded-lg bg-slate-950/90 border border-emerald-500/40 px-2.5 py-1.5 text-[10.5px] text-emerald-300 font-bold">
+                          🔔 {allSellAutoMsg}
+                        </div>
+                      )}
+
+                      {autoHistoryList.length > 0 && (
+                        <div className="pt-1.5 border-t border-slate-800/80 space-y-1">
+                          <div className="text-[10px] text-cyan-300 font-bold">
+                            📜 ประวัติการตัดรอบจ่าย AllSell อัตโนมัติล่าสุด ({autoHistoryList.length} รอบ):
+                          </div>
+                          <div className="max-h-28 overflow-y-auto space-y-1 pr-1">
+                            {autoHistoryList.slice(0, 5).map((rec: any) => (
+                              <div
+                                key={rec.id}
+                                className="bg-slate-950/85 border border-slate-800 rounded-lg px-2.5 py-1 flex items-center justify-between flex-wrap gap-2 text-[10px]"
+                              >
+                                <div>
+                                  <span className="text-amber-300 font-bold">[{rec.cycleLabelTh}]</span>{' '}
+                                  <span className="text-slate-300">{rec.noteTh}</span>
+                                </div>
+                                <span className="text-cyan-400 font-mono">
+                                  {formatModalRowTime(rec.executedAt)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 text-[11px]">
@@ -8504,8 +8681,8 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                                 <strong className="text-cyan-200">{pool.allowedDirectRanksLabel}</strong>
                               </div>
                               <div>
-                                <span className="text-amber-300 font-bold">3.</span> จ่ายเงินให้ผู้ผ่านเกณฑ์{' '}
-                                <strong className="text-amber-300">ทุกกลางเดือน และ ต้นเดือน</strong>
+                                <span className="text-amber-300 font-bold">3.</span> ระบบตัดจ่ายอัตโนมัติ{' '}
+                                <strong className="text-amber-300">ทุกกลางเดือน (15) & ต้นเดือน (1)</strong>
                               </div>
                             </div>
                           </div>

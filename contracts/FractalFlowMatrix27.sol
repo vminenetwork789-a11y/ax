@@ -481,11 +481,8 @@ contract FractalFlowMatrix27 is Ownable, ReentrancyGuard {
     }
 
     function _spawnExtraNode(uint256 _r1MainId, address _nodeOwner, uint8 _targetRank) internal {
-        uint256 r1SponsorId = nodeDirectSponsorNodeId[1][_r1MainId];
-        if (r1SponsorId == 0) r1SponsorId = 1;
-        address directSponsorAddr = rankNodes[1][_r1MainId].directSponsor;
-        if (directSponsorAddr == address(0)) directSponsorAddr = rankNodes[1][r1SponsorId].owner;
-        if (directSponsorAddr == address(0)) directSponsorAddr = _nodeOwner;
+        uint256 r1SponsorId = _r1MainId > 0 ? _r1MainId : 1;
+        address directSponsorAddr = _nodeOwner != address(0) ? _nodeOwner : rankNodes[1][r1SponsorId].owner;
         uint256 sponsorNodeInTarget = getMainIdNodeInRank(r1SponsorId, _targetRank);
 
         uint256 extraNodeId = _createAndPlaceAutoNode(_targetRank, _nodeOwner, directSponsorAddr, sponsorNodeInTarget, true);
