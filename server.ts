@@ -6570,6 +6570,344 @@ async function startApp() {
     }
   });
 
+  // ==========================================
+  // ADMIN FULL OVERVIEW & SYSTEM WALLETS API
+  // ==========================================
+  app.get('/api/admin/overview', async (_req: Request, res: Response) => {
+    try {
+      const provider = getProvider();
+      const contract = new ethers.Contract(
+        CONTRACT_ADDRESS,
+        [
+          ...MATRIX_READ_ABI,
+          'function owner() view returns (address)',
+          'function allSellWallet() view returns (address)',
+          'function botWallet() view returns (address)',
+          'function familyPool() view returns (address)',
+        ],
+        provider
+      );
+      const usdtContract = new ethers.Contract(
+        USDT_ADDRESS,
+        [
+          'function balanceOf(address) view returns (uint256)',
+          'function decimals() view returns (uint8)',
+          'function symbol() view returns (string)',
+        ],
+        provider
+      );
+
+      let ownerAddr = matrixDB.systemWallets.rootOwner || ethers.ZeroAddress;
+      let allSellAddr = matrixDB.systemWallets.allSellWallet || ethers.ZeroAddress;
+      let botAddr = matrixDB.systemWallets.botWallet || ethers.ZeroAddress;
+      let familyAddr = matrixDB.systemWallets.familyPool || ethers.ZeroAddress;
+
+      try {
+        const [o, a, b, f] = await Promise.all([
+          contract.owner().catch(() => ownerAddr),
+          contract.allSellWallet().catch(() => allSellAddr),
+          contract.botWallet().catch(() => botAddr),
+          contract.familyPool().catch(() => familyAddr),
+        ]);
+        if (o && o !== ethers.ZeroAddress) ownerAddr = String(o);
+        if (a && a !== ethers.ZeroAddress) allSellAddr = String(a);
+        if (b && b !== ethers.ZeroAddress) botAddr = String(b);
+        if (f && f !== ethers.ZeroAddress) familyAddr = String(f);
+      } catch {
+        // fallback to cached systemWallets
+      }
+
+      const fetchWalletBalances = async (addr: string) => {
+        if (!addr || !ethers.isAddress(addr) || addr === ethers.ZeroAddress) {
+          return { address: addr || '-', usdt: '0.00', bnb: '0.0000' };
+        }
+        try {
+          const [uBn, bBn] = await Promise.all([
+            usdtContract.balanceOf(addr).catch(() => 0n),
+            provider.getBalance(addr).catch(() => 0n),
+          ]);
+          return {
+            address: addr,
+            usdt: Number(ethers.formatUnits(uBn, activeUsdtDecimals || 18)).toFixed(2),
+            bnb: Number(ethers.formatEther(bBn)).toFixed(4),
+          };
+        } catch {
+          return { address: addr, usdt: '0.00', bnb: '0.0000' };
+        }
+      };
+
+      const [contractBal, ownerBal, allSellBal, botBal, familyBal] = await Promise.all([
+        fetchWalletBalances(CONTRACT_ADDRESS),
+        fetchWalletBalances(ownerAddr),
+        fetchWalletBalances(allSellAddr),
+        fetchWalletBalances(botAddr),
+        fetchWalletBalances(familyAddr),
+      ]);
+
+      // Build list of all Main IDs in Rank 1
+      const r1Nodes = matrixDB.nodesByRank[1] || [];
+      const mainNodesR1 = r1Nodes
+        .filter((n) => !n.isClone && !n.isExtraId)
+        .sort((a, b) => a.id - b.id);
+
+      const mainIdList = mainNodesR1.map((m) => {
+        const stats = computeMainIdDatabaseStats(m.id);
+        return {
+          mainId: m.id,
+          owner: m.owner,
+          directSponsorNodeId: m.directSponsorNodeId || 1,
+          directSponsor: m.directSponsor,
+          parentId: m.parentId,
+          originType: m.originType || 'MANUAL_REGISTER',
+          currentRank: stats.currentRank,
+          window5Start: stats.window5Start,
+          window5End: stats.window5End,
+          upgradeRankPool: stats.upgradeRankPool,
+          newAutoIdPool: stats.newAutoIdPool,
+          newExtraIdPool: stats.newExtraIdPool,
+        };
+      });
+
+      const rankCountsMap: Record<number, number> = {};
+      let totalNodesAllRanks = 0;
+      for (let r = 1; r <= 27; r++) {
+        const cnt = (matrixDB.nodesByRank[r] || []).filter((n) => !n.isSyntheticExtra).length;
+        rankCountsMap[r] = cnt;
+        totalNodesAllRanks += cnt;
+      }
+
+      const cycleInfo = computeNextAllSellCycleInfo();
+      const rawPk = (
+        process.env.ALLSELL_WALLET_PRIVATE_KEY ||
+        process.env.DEPLOYER_PRIVATE_KEY ||
+        '0xc9c4649effa5eaaab8dc0690b4e392aec7cf84ee49e2251a1800fe89ad3270ca'
+      ).trim();
+      let serverSignerAddress = '';
+      if (rawPk && (rawPk.length === 64 || rawPk.length === 66)) {
+        try {
+          const w = new ethers.Wallet(rawPk.startsWith('0x') ? rawPk : `0x${rawPk}`);
+          serverSignerAddress = w.address;
+        } catch {
+          serverSignerAddress = '';
+        }
+      }
+
+      res.json({
+        success: true,
+        contractAddress: CONTRACT_ADDRESS,
+        usdtAddress: USDT_ADDRESS,
+        lastSyncedAt: matrixDB.lastSyncedAt,
+        serverSignerAddress,
+        wallets: {
+          contract: contractBal,
+          owner: ownerBal,
+          allSell: allSellBal,
+          bot: botBal,
+          familyPool: familyBal,
+        },
+        stats: {
+          totalMainIdsRank1: mainIdList.length,
+          totalNodesAllRanks,
+          rankCounts: rankCountsMap,
+        },
+        mainIds: mainIdList,
+        allSell: {
+          autoEnabled: allSellAutoStore.autoEnabled,
+          lastExecutedCycleKey: allSellAutoStore.lastExecutedCycleKey,
+          lastExecutedAt: allSellAutoStore.lastExecutedAt,
+          nextCycleInfo: cycleInfo,
+          history: allSellAutoStore.history.slice(0, 20),
+        },
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ==========================================
+  // ADMIN CLEAR CACHE & FORCE FULL RESYNC API
+  // ==========================================
+  app.post('/api/admin/clear-cache', async (_req: Request, res: Response) => {
+    try {
+      rankSyncTimestamps.clear();
+      for (let r = 1; r <= 27; r++) {
+        matrixDB.nodesByRank[r] = [];
+        matrixDB.rankCounts[r] = 0;
+      }
+      matrixDB.rewardLogs = [];
+      matrixDB.upgradeLogs = [];
+      matrixDB.userRankVaults = {};
+      saveMatrixDBToDisk(true);
+      await syncAllMatrixDatabase(CONTRACT_ADDRESS, true);
+      res.json({
+        success: true,
+        contractAddress: CONTRACT_ADDRESS,
+        lastSyncedAt: matrixDB.lastSyncedAt,
+        message: '🧹 ล้างแคชฐานข้อมูลเก่าและดึงข้อมูลสดจาก Smart Contract ใหม่ครบ 27 แรงค์สำเร็จ!',
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ==========================================
+  // ADMIN SERVER-SIDE ON-CHAIN CONTRACT EXECUTOR
+  // ==========================================
+  app.post('/api/admin/contract-action', async (req: Request, res: Response) => {
+    try {
+      const { action, params, privateKey } = req.body || {};
+      const rawPk = String(
+        privateKey ||
+          process.env.DEPLOYER_PRIVATE_KEY ||
+          process.env.ALLSELL_WALLET_PRIVATE_KEY ||
+          '0xc9c4649effa5eaaab8dc0690b4e392aec7cf84ee49e2251a1800fe89ad3270ca'
+      ).trim();
+
+      if (!rawPk || (rawPk.length !== 64 && rawPk.length !== 66)) {
+        return res.status(400).json({
+          success: false,
+          error: 'ไม่พบ Private Key สำหรับเซ็นธุรกรรมผู้ดูแลระบบ',
+        });
+      }
+
+      const provider = getProvider();
+      const pkHex = rawPk.startsWith('0x') ? rawPk : `0x${rawPk}`;
+      const wallet = new ethers.Wallet(pkHex, provider);
+      const contract = new ethers.Contract(
+        CONTRACT_ADDRESS,
+        [
+          ...MATRIX_READ_ABI,
+          'function adminUpgradeRank(address _user, uint8 _targetRank) external',
+          'function adminUpgradeRankForMainId(uint256 _r1MainId, uint8 _targetRank) external',
+          'function setSystemWallets(address _allSell, address _bot, address _familyPool) external',
+          'function emergencyWithdrawToken(address _token, uint256 _amount) external',
+          'function emergencyWithdrawNative() external',
+          'function transferOwnership(address newOwner) external',
+          'function renounceOwnership() external',
+          'function checkAndProcessAutoNewMainId(address _user) external',
+          'function checkAndProcessAutoNewMainIdForNode(uint256 _mainNodeId) external',
+          'function checkAndProcessAutoExtraId(address _user, uint8 _currentRank) external',
+          'function checkAndProcessAutoExtraIdForNode(address _user, uint8 _currentRank, uint256 _sponsorNodeId) external',
+        ],
+        wallet
+      );
+
+      let tx: any;
+      let actionDesc = String(action || '');
+
+      switch (action) {
+        case 'adminUpgradeRankForMainId': {
+          const mainId = Number(params?.mainId || 0);
+          const targetRank = Number(params?.targetRank || 2);
+          if (!mainId || targetRank < 2 || targetRank > 27) {
+            return res.status(400).json({ success: false, error: 'พารามิเตอร์ mainId หรือ targetRank ไม่ถูกต้อง' });
+          }
+          tx = await contract.adminUpgradeRankForMainId(mainId, targetRank);
+          actionDesc = `adminUpgradeRankForMainId(#${mainId} -> Rank ${targetRank})`;
+          break;
+        }
+        case 'adminUpgradeRank': {
+          const targetUser = String(params?.targetUser || '').trim();
+          const targetRank = Number(params?.targetRank || 2);
+          if (!ethers.isAddress(targetUser) || targetRank < 2 || targetRank > 27) {
+            return res.status(400).json({ success: false, error: 'Wallet Address หรือ targetRank ไม่ถูกต้อง' });
+          }
+          tx = await contract.adminUpgradeRank(targetUser, targetRank);
+          actionDesc = `adminUpgradeRank(${targetUser.substring(0, 8)}... -> Rank ${targetRank})`;
+          break;
+        }
+        case 'setSystemWallets': {
+          const allSell = String(params?.allSell || '').trim();
+          const bot = String(params?.bot || '').trim();
+          const familyPool = String(params?.familyPool || '').trim();
+          if (!ethers.isAddress(allSell) || !ethers.isAddress(bot) || !ethers.isAddress(familyPool)) {
+            return res.status(400).json({ success: false, error: 'กรุณาระบุ Wallet Address ทั้ง 3 กระเป๋าให้ถูกต้อง' });
+          }
+          tx = await contract.setSystemWallets(allSell, bot, familyPool);
+          actionDesc = `setSystemWallets(${allSell.substring(0, 6)}..., ${bot.substring(0, 6)}..., ${familyPool.substring(0, 6)}...)`;
+          break;
+        }
+        case 'emergencyWithdrawToken': {
+          const tokenAddr = String(params?.token || USDT_ADDRESS).trim();
+          const amountStr = String(params?.amount || '0').trim();
+          if (!ethers.isAddress(tokenAddr) || Number(amountStr) <= 0) {
+            return res.status(400).json({ success: false, error: 'กรุณาระบุ Token Address และจำนวนที่ต้องการถอนให้ถูกต้อง' });
+          }
+          const amountWei = ethers.parseUnits(amountStr, activeUsdtDecimals || 18);
+          tx = await contract.emergencyWithdrawToken(tokenAddr, amountWei);
+          actionDesc = `emergencyWithdrawToken(${amountStr} Token)`;
+          break;
+        }
+        case 'emergencyWithdrawNative': {
+          tx = await contract.emergencyWithdrawNative();
+          actionDesc = 'emergencyWithdrawNative()';
+          break;
+        }
+        case 'transferOwnership': {
+          const newOwner = String(params?.newOwner || '').trim();
+          if (!ethers.isAddress(newOwner) || newOwner === ethers.ZeroAddress) {
+            return res.status(400).json({ success: false, error: 'กรุณาระบุ Wallet Address ของ Owner ใหม่ให้ถูกต้อง' });
+          }
+          tx = await contract.transferOwnership(newOwner);
+          actionDesc = `transferOwnership(${newOwner})`;
+          break;
+        }
+        case 'renounceOwnership': {
+          tx = await contract.renounceOwnership();
+          actionDesc = 'renounceOwnership()';
+          break;
+        }
+        case 'checkAndProcessAutoNewMainIdForNode': {
+          const mainNodeId = Number(params?.mainNodeId || 1);
+          tx = await contract.checkAndProcessAutoNewMainIdForNode(mainNodeId);
+          actionDesc = `checkAndProcessAutoNewMainIdForNode(#${mainNodeId})`;
+          break;
+        }
+        case 'checkAndProcessAutoNewMainId': {
+          const userAddr = String(params?.user || wallet.address).trim();
+          tx = await contract.checkAndProcessAutoNewMainId(userAddr);
+          actionDesc = `checkAndProcessAutoNewMainId(${userAddr.substring(0, 8)}...)`;
+          break;
+        }
+        case 'checkAndProcessAutoExtraIdForNode': {
+          const userAddr = String(params?.user || wallet.address).trim();
+          const currentRank = Number(params?.currentRank || 4);
+          const sponsorNodeId = Number(params?.sponsorNodeId || 1);
+          tx = await contract.checkAndProcessAutoExtraIdForNode(userAddr, currentRank, sponsorNodeId);
+          actionDesc = `checkAndProcessAutoExtraIdForNode(Rank ${currentRank}, Node #${sponsorNodeId})`;
+          break;
+        }
+        case 'checkAndProcessAutoExtraId': {
+          const userAddr = String(params?.user || wallet.address).trim();
+          const currentRank = Number(params?.currentRank || 4);
+          tx = await contract.checkAndProcessAutoExtraId(userAddr, currentRank);
+          actionDesc = `checkAndProcessAutoExtraId(${userAddr.substring(0, 8)}..., Rank ${currentRank})`;
+          break;
+        }
+        default:
+          return res.status(400).json({ success: false, error: `ไม่รองรับคำสั่ง: ${action}` });
+      }
+
+      const receipt = await tx.wait(1);
+      const txHash = receipt?.hash || tx.hash;
+      await syncAllMatrixDatabase(CONTRACT_ADDRESS, true).catch(() => {});
+
+      res.json({
+        success: true,
+        action,
+        txHash,
+        signer: wallet.address,
+        message: `✅ รันคำสั่ง ${actionDesc} บนบล็อกเชนสำเร็จ! (Tx: ${txHash.substring(0, 10)}...)`,
+      });
+    } catch (err: any) {
+      console.error('Error in /api/admin/contract-action:', err);
+      res.status(500).json({
+        success: false,
+        error: err?.shortMessage || err?.reason || err?.message || 'ธุรกรรมบนเชนล้มเหลว',
+      });
+    }
+  });
+
   app.get('/api/matrix/inspect-rank', async (req: Request, res: Response) => {
     const rankNum = Math.min(Math.max(Number(req.query.rank) || 1, 1), 27);
     const addrParam = String(req.query.address || '').toLowerCase();

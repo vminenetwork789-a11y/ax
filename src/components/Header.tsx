@@ -8,6 +8,7 @@ import {
   RefreshCw,
   Zap,
   LogOut,
+  Shield,
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -23,6 +24,8 @@ interface HeaderProps {
   onToggleLanguage: () => void;
   onOpenDeployModal: () => void;
   contractAddress?: string;
+  isAdminView?: boolean;
+  onToggleAdminView?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -37,6 +40,8 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleLanguage,
   onOpenDeployModal,
   contractAddress,
+  isAdminView = false,
+  onToggleAdminView,
 }) => {
   const shortAddress = account
     ? `${account.substring(0, 6)}...${account.substring(account.length - 4)}`
@@ -114,6 +119,30 @@ export const Header: React.FC<HeaderProps> = ({
           {/* Action Toolbar: Clean single-line pills on mobile & desktop */}
           <div className="flex items-center justify-between md:justify-end gap-2 overflow-x-auto no-scrollbar pt-1 md:pt-0 border-t border-slate-800/60 md:border-t-0">
             <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+              {/* Admin Control Center Toggle Button */}
+              {onToggleAdminView && (
+                <button
+                  type="button"
+                  onClick={onToggleAdminView}
+                  className={`text-[11px] sm:text-xs px-3 py-1.5 rounded-xl font-bold transition duration-200 inline-flex items-center gap-1.5 shadow-sm whitespace-nowrap shrink-0 cursor-pointer ${
+                    isAdminView
+                      ? 'bg-amber-500 text-slate-950 border border-amber-400'
+                      : 'bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-300'
+                  }`}
+                >
+                  <Shield className="w-3.5 h-3.5 shrink-0" />
+                  <span>
+                    {isAdminView
+                      ? language === 'th'
+                        ? 'กลับหน้าผังหลัก'
+                        : 'Back to Matrix'
+                      : language === 'th'
+                      ? 'หน้า Admin'
+                      : 'Admin Panel'}
+                  </span>
+                </button>
+              )}
+
               {/* Deploy Contract Shortcut */}
               <button
                 onClick={onOpenDeployModal}

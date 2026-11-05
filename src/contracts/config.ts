@@ -245,6 +245,8 @@ export const MATRIX_ABI = [
   'function setSystemWallets(address _allSell, address _bot, address _familyPool) external',
   'function emergencyWithdrawToken(address _token, uint256 _amount) external',
   'function emergencyWithdrawNative() external',
+  'function transferOwnership(address newOwner) external',
+  'function renounceOwnership() external',
 
   // Events
   'event UserRegistered(address indexed user, address indexed sponsor, uint256 indexed sponsorNodeId, uint256 mainNodeId)',
