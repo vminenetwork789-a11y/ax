@@ -376,7 +376,7 @@ export default function App() {
         onRefresh={refreshUserData}
         language={language}
         onToggleLanguage={() => setLanguage(language === 'th' ? 'en' : 'th')}
-        onOpenDeployModal={() => isAdminUser && setIsDeployModalOpen(true)}
+        onOpenDeployModal={() => setIsDeployModalOpen(true)}
         contractAddress={contractAddress}
         isAdminUser={isAdminUser}
         isAdminView={isAdminUser && isAdminView}

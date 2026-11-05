@@ -145,21 +145,19 @@ export const Header: React.FC<HeaderProps> = ({
                 </button>
               )}
 
-              {/* Deploy Contract Shortcut (Visible ONLY to Admin) */}
-              {isAdminUser && (
-                <button
-                  onClick={onOpenDeployModal}
-                  className="text-[11px] sm:text-xs bg-slate-800/80 hover:bg-slate-700/80 border border-indigo-500/30 text-indigo-300 hover:text-indigo-200 px-2.5 sm:px-3 py-1.5 rounded-xl font-medium transition duration-200 inline-flex items-center gap-1.5 shadow-sm whitespace-nowrap shrink-0 cursor-pointer"
-                  title={
-                    language === 'th'
-                      ? 'จัดการและทดสอบ Deploy สัญญา'
-                      : 'Contract deployment manager'
-                  }
-                >
-                  <Zap className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                  <span>{language === 'th' ? 'Deploy สัญญา' : 'Deploy Contract'}</span>
-                </button>
-              )}
+              {/* Deploy Contract Shortcut (Visible to Everyone) */}
+              <button
+                onClick={onOpenDeployModal}
+                className="text-[11px] sm:text-xs bg-slate-800/80 hover:bg-slate-700/80 border border-indigo-500/30 text-indigo-300 hover:text-indigo-200 px-2.5 sm:px-3 py-1.5 rounded-xl font-medium transition duration-200 inline-flex items-center gap-1.5 shadow-sm whitespace-nowrap shrink-0 cursor-pointer"
+                title={
+                  language === 'th'
+                    ? 'ศูนย์จัดการและทดสอบ Deploy Smart Contract (เปิดให้ทุกคนเข้าดูได้)'
+                    : 'Contract deployment manager (Public)'
+                }
+              >
+                <Zap className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                <span>{language === 'th' ? 'Deploy สัญญา' : 'Deploy Contract'}</span>
+              </button>
 
               {/* Desktop Language Switch */}
               <button
