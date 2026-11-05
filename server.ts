@@ -646,6 +646,7 @@ export interface IndexedTreeNode {
   reconciledBaseVault?: number;
   isLocalUpgrade?: boolean;
   originType?: 'MANUAL_REGISTER' | 'AUTO_MAIN' | 'AUTO_NEW_MAIN' | 'AUTO_EXTRA' | 'CLONE';
+  createdAt?: string;
 }
 
 interface PersistentMatrixDatabase {
@@ -748,7 +749,39 @@ const inMemoryDB = {
 };
 
 // Reconstruct deterministic on-chain reward logs from indexed nodes across Ranks 1..27 so the Database always has 100% of rewards
+function ensurePersistentNodeTimestamps() {
+  let missingAny = false;
+  const seenTimes = new Set<string>();
+  for (let r = 1; r <= 27; r++) {
+    for (const n of matrixDB.nodesByRank[r] || []) {
+      if (!n.createdAt || seenTimes.has(n.createdAt)) {
+        missingAny = true;
+        break;
+      }
+      seenTimes.add(n.createdAt);
+    }
+    if (missingAny) break;
+  }
+  if (!missingAny) return;
+
+  // Build a deterministic chronological sequence across all ranks so historical nodes each have a unique, stable timestamp
+  const orderedNodes: IndexedTreeNode[] = [];
+  for (let r = 1; r <= 27; r++) {
+    const rList = (matrixDB.nodesByRank[r] || []).slice().sort((a, b) => a.id - b.id);
+    for (const n of rList) {
+      orderedNodes.push(n);
+    }
+  }
+  const totalCount = orderedNodes.length;
+  const fixedAnchorMs = 1793853600000; // Fixed historical anchor so historical node timestamps never shift on sync
+  orderedNodes.forEach((n, idx) => {
+    const stepsFromEnd = Math.max(0, totalCount - 1 - idx);
+    n.createdAt = new Date(fixedAnchorMs - stepsFromEnd * 37000).toISOString();
+  });
+}
+
 function rebuildDatabaseRewardLogsFromNodes() {
+  ensurePersistentNodeTimestamps();
   const r1Nodes = matrixDB.nodesByRank[1] || [];
   if (r1Nodes.length <= 1) return;
 
@@ -845,10 +878,11 @@ function rebuildDatabaseRewardLogsFromNodes() {
         .padStart(4, '0')}db48acb86c42a389efda47cc1b16938eea73f1f892000000000000${id
         .toString(16)
         .padStart(4, '0')}`;
-      const anchorMs = matrixDB.lastSyncedAt ? new Date(matrixDB.lastSyncedAt).getTime() : Date.now();
-      const safeAnchorMs = Number.isFinite(anchorMs) ? anchorMs : Date.now();
-      const offsetMinutes = Math.max(0, rNodes.length - id) + Math.max(0, 27 - rankNum) * 0.25;
-      const eventTime = new Date(safeAnchorMs - Math.round(offsetMinutes * 60000)).toISOString();
+      const eventTime =
+        child.createdAt ||
+        new Date(
+          1793853600000 - (Math.max(0, rNodes.length - id) * 45000 + Math.max(0, 27 - rankNum) * 19000)
+        ).toISOString();
 
       const parentOrigin = nodesMap.get(parent.originMainId || parent.id) || parent;
       const isParentExtraLineage = Boolean(parent.isExtraId || parentOrigin.isExtraId);
@@ -1242,10 +1276,11 @@ function rebuildDatabaseUpgradeLogsFromNodes() {
         blockNumber: liveMeta?.blockNumber || baseBlock - Math.max(0, rNodes.length - node.id),
         createdAt:
           liveMeta?.createdAt ||
+          node.createdAt ||
           new Date(
-            (matrixDB.lastSyncedAt ? new Date(matrixDB.lastSyncedAt).getTime() : Date.now()) -
-              Math.max(0, rNodes.length - node.id) * 60000 -
-              Math.max(0, 27 - rankNum) * 15000
+            1793853600000 -
+              Math.max(0, rNodes.length - node.id) * 45000 -
+              Math.max(0, 27 - rankNum) * 19000
           ).toISOString(),
       });
     }
@@ -3898,6 +3933,8 @@ async function startApp() {
           );
           for (const item of chunkResults) {
             if (item) {
+              const prevCreatedAt = mergedMap.get(item.id)?.createdAt;
+              item.createdAt = prevCreatedAt || new Date().toISOString();
               mergedMap.set(item.id, item);
               newlyFetchedNodes.push(item);
             }
@@ -3925,6 +3962,8 @@ async function startApp() {
             );
             for (const pItem of refreshedNodes) {
               if (pItem) {
+                const prevCreatedAt = mergedMap.get(pItem.id)?.createdAt;
+                if (prevCreatedAt) pItem.createdAt = prevCreatedAt;
                 mergedMap.set(pItem.id, pItem);
               }
             }
@@ -4198,6 +4237,7 @@ async function startApp() {
     let upgradeRankPool = 0;
     let newAutoIdPool = 0;
     let r4To27OutsideWindow = 0;
+    let grossR4To27OutsideWindow = 0;
 
     for (let r = 1; r <= 27; r++) {
       const v = vaultsByRank[r] || 0;
@@ -4211,13 +4251,52 @@ async function startApp() {
       if (r >= 4 && r <= 27) {
         if (currentRank === 27 || !inWindow5) {
           r4To27OutsideWindow += v;
+          const rNodes = matrixDB.nodesByRank[r] || [];
+          const correspNode =
+            r === 1
+              ? targetNode
+              : rNodes.find((n) => !n.isClone && !n.isExtraId && n.originMainId === mainIdNum);
+          if (correspNode) {
+            const rUnitVault = Number(((RANK_PRICES_USDT[r - 1] || 30) * 0.35).toFixed(4));
+            let leftCountInR = 0;
+            for (const rn of rNodes) {
+              const isSameMain =
+                rn.id === correspNode.id ||
+                (rn.isClone && (rn.originMainId === correspNode.id || rn.originMainId === mainIdNum));
+              if (isSameMain && rn.leftChild > 0) {
+                leftCountInR++;
+              }
+            }
+            grossR4To27OutsideWindow = Number(
+              (grossR4To27OutsideWindow + leftCountInR * rUnitVault).toFixed(4)
+            );
+          }
         }
       }
     }
 
+    const resolveExtraSpawnerMainId = (extraNode: IndexedTreeNode): number => {
+      const extraOwner = (extraNode.owner || '').toLowerCase();
+      const ownerMains = r1Nodes.filter(
+        (m) => !m.isClone && !m.isExtraId && (m.owner || '').toLowerCase() === extraOwner
+      );
+      if (ownerMains.length === 1) return ownerMains[0].id;
+      if (ownerMains.length > 1) {
+        const r4Nodes = matrixDB.nodesByRank[4] || [];
+        const eligibleMain = ownerMains.find(
+          (m) =>
+            m.id === 1 ||
+            r4Nodes.some((x) => !x.isClone && !x.isExtraId && x.originMainId === m.id)
+        );
+        if (eligibleMain) return eligibleMain.id;
+        return ownerMains[0].id;
+      }
+      return extraNode.directSponsorNodeId > 0 ? extraNode.directSponsorNodeId : 1;
+    };
+
     let totalExtraIdCount = 0;
     let extraIdDeductedTotalUsdt = 0;
-    let extraLeftVaultBonus = 0;
+    let extraLeftVaultBonusGross = 0;
     for (let r = 1; r <= 27; r++) {
       const rNodes = matrixDB.nodesByRank[r] || [];
       const correspondingNode =
@@ -4225,21 +4304,15 @@ async function startApp() {
           ? targetNode
           : rNodes.find((n) => !n.isClone && !n.isExtraId && n.originMainId === mainIdNum);
       const correspIdInR = correspondingNode?.id || 0;
-      if (correspIdInR > 0) {
-        const rPrice = RANK_PRICES_USDT[r - 1] || 10;
-        const rUnitVault = Number((rPrice * 0.35).toFixed(4));
-        for (const n of rNodes) {
-          const spId =
-            n.directSponsorNodeId > 0
-              ? n.directSponsorNodeId
-              : n.originMainId && n.originMainId !== n.id
-              ? n.originMainId
-              : 1;
-          if (n.isExtraId && !n.isClone && spId === correspIdInR) {
-            totalExtraIdCount++;
-            extraIdDeductedTotalUsdt = Number((extraIdDeductedTotalUsdt + rPrice).toFixed(4));
-          }
-          // กรณี EXTRA ID (หรือโคลนของ EXTRA ID) มีเม็ดซ้าย: Vault (35%) จะถูกส่งกลับที่ New Extra ID Pool ของ directSponsor
+      const rPrice = RANK_PRICES_USDT[r - 1] || 10;
+      const rUnitVault = Number((rPrice * 0.35).toFixed(4));
+      for (const n of rNodes) {
+        if (n.isExtraId && !n.isClone && resolveExtraSpawnerMainId(n) === mainIdNum) {
+          totalExtraIdCount++;
+          extraIdDeductedTotalUsdt = Number((extraIdDeductedTotalUsdt + rPrice).toFixed(4));
+        }
+        // กรณี EXTRA ID (หรือโคลนของ EXTRA ID) มีเม็ดซ้าย: Vault (35%) จะถูกส่งกลับที่ New Extra ID Pool ของ directSponsor
+        if (correspIdInR > 0) {
           const nOrig = !n.isClone
             ? n
             : rNodes.find(
@@ -4257,12 +4330,25 @@ async function startApp() {
                 ? n.directSponsorNodeId
                 : 1;
             if (origSpId === correspIdInR) {
-              extraLeftVaultBonus = Number((extraLeftVaultBonus + rUnitVault).toFixed(4));
+              extraLeftVaultBonusGross = Number((extraLeftVaultBonusGross + rUnitVault).toFixed(4));
             }
           }
         }
       }
     }
+
+    const deductedFromR4To27 = Math.max(
+      0,
+      Number((grossR4To27OutsideWindow - r4To27OutsideWindow).toFixed(4))
+    );
+    const deductedFromExtraLeftBonus = Math.min(
+      extraLeftVaultBonusGross,
+      Math.max(0, Number((extraIdDeductedTotalUsdt - deductedFromR4To27).toFixed(4)))
+    );
+    const extraLeftVaultBonus = Math.max(
+      0,
+      Number((extraLeftVaultBonusGross - deductedFromExtraLeftBonus).toFixed(4))
+    );
 
     const r1To3LeftoverOldVault = 0;
     const oldCarryoverVault = Number(
@@ -4272,7 +4358,10 @@ async function startApp() {
       (r4To27OutsideWindow + extraLeftVaultBonus).toFixed(4)
     );
     const newExtraIdPoolGross = Number(
-      (newExtraIdPool + extraIdDeductedTotalUsdt).toFixed(4)
+      Math.max(
+        grossR4To27OutsideWindow + extraLeftVaultBonusGross,
+        newExtraIdPool + extraIdDeductedTotalUsdt
+      ).toFixed(4)
     );
 
     const autoMainSourceMap = reconcileRank1AutoMainIds();
@@ -4301,6 +4390,7 @@ async function startApp() {
       r1To3LeftoverOldVault: Number(r1To3LeftoverOldVault.toFixed(2)),
       r4To27OutsideWindowVault: Number(r4To27OutsideWindow.toFixed(2)),
       extraLeftVaultBonus: Number(extraLeftVaultBonus.toFixed(2)),
+      extraLeftVaultBonusGross: Number(extraLeftVaultBonusGross.toFixed(2)),
       extraIdDeductedTotalUsdt: Number(extraIdDeductedTotalUsdt.toFixed(2)),
       newExtraIdPoolGross: Number(newExtraIdPoolGross.toFixed(2)),
       totalAutoIdCount: spawnedAutoIdsList.length,
@@ -4436,13 +4526,16 @@ async function startApp() {
         return node.originMainId || 1;
       };
 
-      const syncBaseMs = matrixDB.lastSyncedAt ? new Date(matrixDB.lastSyncedAt).getTime() : Date.now();
-      const safeSyncBaseMs = Number.isFinite(syncBaseMs) ? syncBaseMs : Date.now();
+      ensurePersistentNodeTimestamps();
       const computeNodeTimestamp = (rankNum: number, nodeId: number) => {
         const rList = matrixDB.nodesByRank[rankNum] || [];
+        const found = rList.find((x) => x.id === nodeId);
+        if (found?.createdAt) return found.createdAt;
         const totalInRank = Math.max(rList.length, nodeId, 1);
         const stepsBack = Math.max(0, totalInRank - nodeId);
-        return new Date(safeSyncBaseMs - stepsBack * 45000).toISOString();
+        return new Date(
+          1793853600000 - stepsBack * 45000 - Math.max(0, 27 - rankNum) * 19000
+        ).toISOString();
       };
 
       interface CommissionItem {
@@ -4810,15 +4903,32 @@ async function startApp() {
             n.parentId === 0 ? 'ROOT' : pNode && pNode.leftChild === n.id ? 'LEFT' : 'RIGHT';
 
           if (n.isExtraId && !n.isClone) {
-            // Find which Rank 1 Main ID spawned this Extra ID
-            const localSpId = n.directSponsorNodeId || 1;
-            const localSpNode = nodesMap.get(localSpId);
-            const r1MainSpId =
-              rankNum === 1
-                ? localSpId
-                : localSpNode
-                ? resolveCanonicalMainId(rankNum, localSpNode)
-                : localSpId;
+            // Find which Rank 1 Main ID spawned this Extra ID (by matching Extra ID owner's Rank 4+ Main ID)
+            const extraOwner = (n.owner || '').toLowerCase();
+            const ownerMains = r1Nodes.filter(
+              (m) => !m.isClone && !m.isExtraId && (m.owner || '').toLowerCase() === extraOwner
+            );
+            let r1MainSpId = 1;
+            if (ownerMains.length === 1) {
+              r1MainSpId = ownerMains[0].id;
+            } else if (ownerMains.length > 1) {
+              const r4Nodes = matrixDB.nodesByRank[4] || [];
+              const eligibleMain = ownerMains.find(
+                (m) =>
+                  m.id === 1 ||
+                  r4Nodes.some((x) => !x.isClone && !x.isExtraId && x.originMainId === m.id)
+              );
+              r1MainSpId = eligibleMain ? eligibleMain.id : ownerMains[0].id;
+            } else {
+              const localSpId = n.directSponsorNodeId || 1;
+              const localSpNode = nodesMap.get(localSpId);
+              r1MainSpId =
+                rankNum === 1
+                  ? localSpId
+                  : localSpNode
+                  ? resolveCanonicalMainId(rankNum, localSpNode)
+                  : localSpId;
+            }
             const spReport = reportsMap.get(r1MainSpId) || reportsMap.get(1);
             if (spReport) {
               spReport.autoExtraIdsSpawned.push({

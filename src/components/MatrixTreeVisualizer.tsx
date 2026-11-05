@@ -2489,11 +2489,46 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
       const crossRankBreakdownText = new Map<number, string>();
       const extraVaultFromRanks2To4 = new Map<number, number>();
       const crossRankExtraIdCount = new Map<number, number>();
+      const crossRankExtraCostMap = new Map<number, number>();
       const crossRankExtraRanksMap = new Map<number, string[]>();
       const crossRankExtraBreakdownText = new Map<number, string>();
       const crossRankExtraLeftVaultMap = new Map<number, number>();
+      const crossRankExtraLeftVaultGrossMap = new Map<number, number>();
       const crossRankExtraLeftDirectBonusMap = new Map<number, number>();
       const crossRankExtraLeftLevelBonusMap = new Map<number, number>();
+
+      const snap1ForExtra = multiRankSnapshots.get(1);
+      const snap4ForExtra = multiRankSnapshots.get(4);
+      const resolveExtraSpawnerInR1 = (rankNum: number, extraNode: any): number => {
+        if (snap1ForExtra) {
+          const extraOwner = (extraNode.owner || '').toLowerCase();
+          const ownerMains = Array.from(snap1ForExtra.values()).filter(
+            (m) => !m.isClone && !m.isExtraId && (m.owner || '').toLowerCase() === extraOwner
+          );
+          if (ownerMains.length === 1) return ownerMains[0].id;
+          if (ownerMains.length > 1) {
+            const eligibleMain = ownerMains.find(
+              (m) =>
+                m.id === 1 ||
+                (snap4ForExtra &&
+                  Array.from(snap4ForExtra.values()).some(
+                    (x) => !x.isClone && !x.isExtraId && x.originMainId === m.id
+                  ))
+            );
+            if (eligibleMain) return eligibleMain.id;
+            return ownerMains[0].id;
+          }
+        }
+        const sourceMainInR =
+          extraNode.directSponsorNodeId && extraNode.directSponsorNodeId > 0
+            ? extraNode.directSponsorNodeId
+            : extraNode.originMainId > 0 && extraNode.originMainId !== extraNode.id
+            ? extraNode.originMainId
+            : 1;
+        return rankNum === 1
+          ? sourceMainInR
+          : getCorrespondingMainIdInRank(rankNum, sourceMainInR, extraNode.owner, 1) || sourceMainInR;
+      };
 
       // Count actual spawned Auto Extra IDs (!isClone && isExtraId) from Rank 27 down to Rank 1 per Rank 1 Main ID (`r1MainId`)
       // and accumulate any left-child rewards from EXTRA IDs back to their directSponsor
@@ -2503,17 +2538,12 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         const rPrice = RANK_PRICES_USDT[r - 1] || 10;
         for (const sn of snapR.values()) {
           if (sn.isExtraId && !sn.isClone) {
-            const sourceMainInR =
-              sn.directSponsorNodeId && sn.directSponsorNodeId > 0
-                ? sn.directSponsorNodeId
-                : sn.originMainId > 0 && sn.originMainId !== sn.id
-                ? sn.originMainId
-                : 1;
-            const r1Main =
-              r === 1
-                ? sourceMainInR
-                : getCorrespondingMainIdInRank(r, sourceMainInR, sn.owner, 1) || sourceMainInR;
+            const r1Main = resolveExtraSpawnerInR1(r, sn);
             crossRankExtraIdCount.set(r1Main, (crossRankExtraIdCount.get(r1Main) || 0) + 1);
+            crossRankExtraCostMap.set(
+              r1Main,
+              Number(((crossRankExtraCostMap.get(r1Main) || 0) + rPrice).toFixed(4))
+            );
             const list = crossRankExtraRanksMap.get(r1Main) || [];
             list.push(`R${r}`);
             crossRankExtraRanksMap.set(r1Main, list);
@@ -2553,10 +2583,11 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
               r1SponsorMain,
               Number(((crossRankExtraLeftLevelBonusMap.get(r1SponsorMain) || 0) + rPrice * 0.3).toFixed(4))
             );
-            crossRankExtraLeftVaultMap.set(
-              r1SponsorMain,
-              Number(((crossRankExtraLeftVaultMap.get(r1SponsorMain) || 0) + rPrice * 0.35).toFixed(4))
+            const nextLeftVaultGross = Number(
+              ((crossRankExtraLeftVaultGrossMap.get(r1SponsorMain) || 0) + rPrice * 0.35).toFixed(4)
             );
+            crossRankExtraLeftVaultGrossMap.set(r1SponsorMain, nextLeftVaultGross);
+            crossRankExtraLeftVaultMap.set(r1SponsorMain, nextLeftVaultGross);
           }
         }
       }
@@ -2672,13 +2703,26 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             }
           }
 
-          const extraLeftVaultBonus = crossRankExtraLeftVaultMap.get(r1Id) || 0;
+          const extraLeftVaultBonusGross = crossRankExtraLeftVaultGrossMap.get(r1Id) || 0;
+          const totalExtraCostForMain = crossRankExtraCostMap.get(r1Id) || 0;
+          const deductedFromR4To27 = Math.max(0, Number((totalGross4To27 - totalRem4To27).toFixed(4)));
+          const deductedFromExtraLeftBonus = Math.min(
+            extraLeftVaultBonusGross,
+            Math.max(0, Number((totalExtraCostForMain - deductedFromR4To27).toFixed(4)))
+          );
+          const remainingExtraLeftBonus = Math.max(
+            0,
+            Number((extraLeftVaultBonusGross - deductedFromExtraLeftBonus).toFixed(4))
+          );
+          crossRankExtraLeftVaultMap.set(r1Id, remainingExtraLeftBonus);
 
-          if (extraLeftVaultBonus > 0) {
-            totalGross4To27 = Number((totalGross4To27 + extraLeftVaultBonus).toFixed(4));
-            totalRem4To27 = Number((totalRem4To27 + extraLeftVaultBonus).toFixed(4));
-            extraGrossParts.push(`เม็ดซ้าย Extra: +${extraLeftVaultBonus.toFixed(2)}`);
-            extraRemParts.push(`เม็ดซ้าย Extra: ${extraLeftVaultBonus.toFixed(2)}`);
+          if (extraLeftVaultBonusGross > 0) {
+            totalGross4To27 = Number((totalGross4To27 + extraLeftVaultBonusGross).toFixed(4));
+            totalRem4To27 = Number((totalRem4To27 + remainingExtraLeftBonus).toFixed(4));
+            extraGrossParts.push(`เม็ดซ้าย Extra: +${extraLeftVaultBonusGross.toFixed(2)}`);
+            if (remainingExtraLeftBonus > 0) {
+              extraRemParts.push(`เม็ดซ้าย Extra: ${remainingExtraLeftBonus.toFixed(2)}`);
+            }
           }
 
           const extraDeducted = Math.max(0, Number((totalGross4To27 - totalRem4To27).toFixed(4)));
@@ -3365,7 +3409,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
 
           const extraLeftDirect = crossRankExtraLeftDirectBonusMap.get(id1) || 0;
           const extraLeftLevel = crossRankExtraLeftLevelBonusMap.get(id1) || 0;
-          const extraLeftVault = crossRankExtraLeftVaultMap.get(id1) || 0;
+          const extraLeftVault = crossRankExtraLeftVaultGrossMap.get(id1) || 0;
 
           unifiedSummaryByR1Main.set(id1, {
             directRewardAllNodes: Number((sumDir + extraLeftDirect).toFixed(4)),
