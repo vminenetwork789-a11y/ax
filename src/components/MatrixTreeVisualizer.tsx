@@ -2803,11 +2803,8 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
 
           const extraLeftVaultBonusGross = crossRankExtraLeftVaultGrossMap.get(r1Id) || 0;
           const totalExtraCostForMain = crossRankExtraCostMap.get(r1Id) || 0;
-          const deductedFromR4To27 = Math.max(0, Number((totalGross4To27 - totalRem4To27).toFixed(4)));
-          const deductedFromExtraLeftBonus = Math.min(
-            extraLeftVaultBonusGross,
-            Math.max(0, Number((totalExtraCostForMain - deductedFromR4To27).toFixed(4)))
-          );
+          // ใน Smart Contract (_deductExtraPool): จะหักจาก bonus เม็ดซ้าย Extra ID ก่อนเป็นอันดับแรก
+          const deductedFromExtraLeftBonus = Math.min(extraLeftVaultBonusGross, totalExtraCostForMain);
           const remainingExtraLeftBonus = Math.max(
             0,
             Number((extraLeftVaultBonusGross - deductedFromExtraLeftBonus).toFixed(4))
