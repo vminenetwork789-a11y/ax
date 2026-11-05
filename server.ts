@@ -6915,7 +6915,16 @@ async function startApp() {
           return res.status(400).json({ success: false, error: `ไม่รองรับคำสั่ง: ${action}` });
       }
 
-      const receipt = await tx.wait(1);
+      // กำหนด Timeout การรอตรวจสอบธุรกรรม 2.5 นาที (150,000 ms) ถ้าเกินเวลา ไม่สำเร็จทันที
+      const receipt = await Promise.race([
+        tx.wait(1),
+        new Promise((_, reject) =>
+          setTimeout(
+            () => reject(new Error('⏱️ หมดเวลาการรอตรวจสอบธุรกรรมบนบล็อกเชน (เกิน 2.5 นาที) การทำรายการไม่สำเร็จทันที')),
+            150000
+          )
+        ),
+      ]);
       const txHash = receipt?.hash || tx.hash;
       await syncAllMatrixDatabase(CONTRACT_ADDRESS, true).catch(() => {});
 

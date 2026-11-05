@@ -243,7 +243,19 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
           throw new Error(`Unsupported Web3 action: ${actionName}`);
         }
 
-        const receipt = await tx.wait();
+        // กำหนด Timeout การรอตรวจสอบธุรกรรม 2.5 นาที (150,000 ms) ถ้าเกินเวลา ไม่สำเร็จทันที
+        const waitWith2_5MinTimeout = (txObj: any) =>
+          Promise.race([
+            txObj.wait(),
+            new Promise((_, reject) =>
+              setTimeout(
+                () => reject(new Error('⏱️ หมดเวลาการรอตรวจสอบธุรกรรม (เกิน 2.5 นาที) การทำรายการไม่สำเร็จทันที')),
+                150000
+              )
+            ),
+          ]);
+
+        const receipt: any = await waitWith2_5MinTimeout(tx);
         const hash = receipt?.hash || tx.hash;
         await fetch('/api/db/sync', { method: 'POST' }).catch(() => {});
         await fetchAdminOverview();
@@ -257,16 +269,30 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
         return;
       }
 
-      // Server-side Admin Key Execution
-      const res = await fetch('/api/admin/contract-action', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: actionName,
-          params,
-          privateKey: customAdminPk.trim() || undefined,
-        }),
-      });
+      // Server-side Admin Key Execution (จำกัดเวลารอไม่เกิน 2.5 นาที)
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 150000);
+
+      let res: Response;
+      try {
+        res = await fetch('/api/admin/contract-action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
+          body: JSON.stringify({
+            action: actionName,
+            params,
+            privateKey: customAdminPk.trim() || undefined,
+          }),
+        });
+      } catch (fetchErr: any) {
+        if (fetchErr?.name === 'AbortError') {
+          throw new Error('⏱️ หมดเวลาการรอตรวจสอบธุรกรรมของ Server (เกิน 2.5 นาที) การทำรายการไม่สำเร็จทันที');
+        }
+        throw fetchErr;
+      } finally {
+        clearTimeout(timeoutId);
+      }
       const data = await res.json();
       if (!res.ok || !data.success) {
         throw new Error(data.error || `รันคำสั่ง ${actionName} ไม่สำเร็จ`);

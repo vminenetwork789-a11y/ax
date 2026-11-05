@@ -37,12 +37,19 @@ const readOnlyBscProvider = new ethers.JsonRpcProvider(
 );
 readOnlyBscProvider.on('error', () => {});
 
-const waitTxWithTimeout = async (tx: any, timeoutMs = 12000): Promise<any> => {
+// กำหนดเวลา Timeout สูงสุดสำหรับการรอตรวจสอบการทำรายการอัพ Rank (2.5 นาที = 150,000 ms)
+export const RANK_UPGRADE_TIMEOUT_MS = 150000;
+
+const waitTxWithTimeout = async (
+  tx: any,
+  timeoutMs = RANK_UPGRADE_TIMEOUT_MS,
+  timeoutErrorMessage = 'หมดเวลาการตรวจสอบการทำรายการ (เกิน 2.5 นาที) การอัปเกรดแรงค์ไม่สำเร็จทันที กรุณาตรวจสอบสถานะกระเป๋าหรือทำรายการใหม่อีกครั้ง'
+): Promise<any> => {
   if (!tx || typeof tx.wait !== 'function') return tx;
   return Promise.race([
     tx.wait(),
     new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('RPC_TIMEOUT_FALLBACK')), timeoutMs)
+      setTimeout(() => reject(new Error(timeoutErrorMessage)), timeoutMs)
     ),
   ]);
 };
@@ -1291,7 +1298,8 @@ export function useWeb3() {
                 step: `ส่งคำสั่งอนุมัติวงเงินส่วนต่าง (${formattedDiffUsdt} USDT) แล้ว กำลังรอการยืนยันบน BNB Testnet...`,
                 txHash: approveTx.hash,
               }));
-              await waitTxWithTimeout(approveTx, 12000);
+              const approveTimeoutMsg = 'หมดเวลาการตรวจสอบการอนุมัติเหรียญ USDT (เกิน 2.5 นาที) ไม่สำเร็จทันที กรุณาลองใหม่อีกครั้ง';
+              await waitTxWithTimeout(approveTx, RANK_UPGRADE_TIMEOUT_MS, approveTimeoutMsg);
             }
           }
 
@@ -1315,11 +1323,12 @@ export function useWeb3() {
 
           setTxState((prev) => ({
             ...prev,
-            step: 'ส่ง Transaction แล้ว รอการประมวลผลบนบล็อกเชน...',
+            step: 'ส่งคำสั่งแล้ว กำลังรอการตรวจสอบบนบล็อกเชน (จำกัดเวลา 2.5 นาที)...',
             txHash: upgradeTx.hash,
           }));
 
-          const receipt = await waitTxWithTimeout(upgradeTx, 12000);
+          const upgradeTimeoutMsg = `หมดเวลาการตรวจสอบธุรกรรมอัปเกรดแรงค์ ${targetRank} (เกิน 2.5 นาที) การอัปเกรดไม่สำเร็จทันที`;
+          const receipt = await waitTxWithTimeout(upgradeTx, RANK_UPGRADE_TIMEOUT_MS, upgradeTimeoutMsg);
 
           setTxState({
             isLoading: false,
@@ -1347,6 +1356,18 @@ export function useWeb3() {
 
           if (isUserRejected) {
             throw new Error('ยกเลิกการทำรายการในกระเป๋า Web3 (User Rejected)');
+          }
+
+          // หากเกินเวลา 2.5 นาที (Timeout) ให้ตัดจบเป็น "ไม่สำเร็จทันที" ห้าม fallback หรือปล่อยค้าง
+          const isTimeout =
+            rawErrMsg.includes('เกิน 2.5 นาที') ||
+            rawErrMsg.includes('หมดเวลาการตรวจสอบ') ||
+            rawErrMsg.includes('timeout') ||
+            rawErrMsg.includes('TIMEOUT');
+          if (isTimeout) {
+            throw new Error(
+              `⏱️ หมดเวลาการรอการตรวจสอบของอัพ Rank (เกิน 2.5 นาที) การทำรายการไม่สำเร็จทันที กรุณาตรวจสอบสถานะในกระเป๋าหรือทำรายการใหม่อีกครั้ง`
+            );
           }
 
           console.warn(
