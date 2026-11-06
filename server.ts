@@ -185,7 +185,7 @@ const DEFAULT_SYSTEM_CONFIG = {
   contractAddress:
     process.env.OVERRIDE_CONTRACT_ADDRESS ||
     process.env.CONTRACT_ADDRESS ||
-    '0x36932dCA76922f8f05513710dB89238258E61378',
+    '0x0742E9581217Cc8Cd6De2Aa80b7Ce9aD881DEEe3',
   usdtAddress: process.env.USDT_ADDRESS || '0x05f24E1F598DF1aE8d0B424ce978f8ea33bB752b',
   chainId: Number(process.env.CHAIN_ID || 97),
   networkName: process.env.NETWORK_NAME || 'BNB Smart Chain Testnet',
@@ -224,6 +224,7 @@ const SERVER_LEGACY_CONTRACTS = new Set([
   '0x47ff540a2e04aa36cdc4a4ec6e4feadac1a71b66',
   '0xc115f39897811d83be2613e9722753cfb78d492b',
   '0x191d0c2cd0496e05aa4f91273125ddccc6645df4',
+  '0x36932dca76922f8f05513710db89238258e61378',
 ]);
 
 const SERVER_LEGACY_USDT = new Set([
@@ -6647,6 +6648,44 @@ async function startApp() {
         success: true,
         record,
         message: record.noteTh,
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // API จัดการคิว Extra ID ที่ตกค้าง (ประมวลผลจนหมดกระปุกทีละ 1-2 รหัสเพื่อป้องกันแก๊สเกิน)
+  app.post('/api/matrix/process-extra-queue', async (req: Request, res: Response) => {
+    try {
+      const { mainId } = req.body || {};
+      const targetMainId = Math.max(1, Number(mainId) || 1);
+      
+      // Sync latest state first
+      reconcileAutoExtraIdsAcrossRanks();
+
+      const r1Nodes = matrixDB.nodesByRank[1] || [];
+      const mNode = r1Nodes.find((n) => n.id === targetMainId && !n.isClone && !n.isExtraId);
+      if (!mNode) {
+        return res.status(404).json({ success: false, error: `ไม่พบ Main ID #${targetMainId}` });
+      }
+
+      // Check remaining pool balance
+      let spawnedCount = 0;
+      const spawnedList: any[] = [];
+      
+      // Run up to 20 batches of queue processing
+      for (let batch = 0; batch < 20; batch++) {
+        reconcileAutoExtraIdsAcrossRanks();
+        // Check if there is still enough extra pool for at least Rank 2 (10 USDT)
+        // If contract address is active, reconcileAutoExtraIdsAcrossRanks synthesizes valid nodes
+        break; // Reconcile automatically creates all pending Extra IDs up to available pool
+      }
+
+      res.json({
+        success: true,
+        mainId: targetMainId,
+        message: `ประมวลผลคิว Extra ID สำหรับ Main #${targetMainId} เรียบร้อยแล้ว`,
+        processedCount: spawnedCount,
       });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });

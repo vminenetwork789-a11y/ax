@@ -1,5 +1,5 @@
 export const DEFAULT_CONTRACT_ADDRESS =
-  import.meta.env?.VITE_CONTRACT_ADDRESS || '0x36932dCA76922f8f05513710dB89238258E61378';
+  import.meta.env?.VITE_CONTRACT_ADDRESS || '0x0742E9581217Cc8Cd6De2Aa80b7Ce9aD881DEEe3';
 export const DEFAULT_USDT_ADDRESS =
   import.meta.env?.VITE_USDT_ADDRESS || '0x05f24E1F598DF1aE8d0B424ce978f8ea33bB752b';
 
@@ -33,6 +33,7 @@ const LEGACY_CONTRACT_ADDRESSES = new Set([
   '0x47ff540a2e04aa36cdc4a4ec6e4feadac1a71b66',
   '0xc115f39897811d83be2613e9722753cfb78d492b',
   '0x191d0c2cd0496e05aa4f91273125ddccc6645df4',
+  '0x36932dca76922f8f05513710db89238258e61378',
 ]);
 
 const LEGACY_USDT_ADDRESSES = new Set([
@@ -271,6 +272,7 @@ export const MATRIX_ABI = [
   'function checkAndProcessAutoNewMainIdForNode(uint256 _mainNodeId) external',
   'function checkAndProcessAutoExtraId(address _user, uint8 _currentRank) external',
   'function checkAndProcessAutoExtraIdForNode(address _user, uint8 _currentRank, uint256 _sponsorNodeId) external',
+  'function processPendingExtraIdQueue(uint256 _r1MainId, uint8 _maxBatch) external returns (uint8 processed)',
   'function adminUpgradeRank(address _user, uint8 _targetRank) external',
   'function adminUpgradeRankForMainId(uint256 _r1MainId, uint8 _targetRank) external',
   'function setSystemWallets(address _allSell, address _bot, address _familyPool) external',

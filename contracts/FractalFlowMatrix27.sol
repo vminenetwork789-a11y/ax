@@ -445,17 +445,31 @@ contract FractalFlowMatrix27 is Ownable, ReentrancyGuard {
         uint8 mainMaxRank = getMainIdCurrentRank(r1MainId);
         (uint8 window5Start, ) = getFiveRankWindow(mainMaxRank);
 
-        for (uint8 pass = 0; pass < 10; pass++) {
+        processPendingExtraIdQueue(r1MainId, 1);
+    }
+
+    function processPendingExtraIdQueue(uint256 _r1MainId, uint8 _maxBatch) public returns (uint8 processed) {
+        if (_r1MainId == 0 || _r1MainId > totalNodesInRank[1]) return 0;
+        address nodeOwner = rankNodes[1][_r1MainId].owner;
+        if (nodeOwner == address(0)) return 0;
+
+        uint8 mainMaxRank = getMainIdCurrentRank(_r1MainId);
+        (uint8 window5Start, ) = getFiveRankWindow(mainMaxRank);
+        uint8 limit = _maxBatch == 0 || _maxBatch > 2 ? 2 : _maxBatch;
+
+        for (uint8 pass = 0; pass < limit; pass++) {
             bool spawned = false;
             for (uint8 targetRank = MAX_RANK; targetRank >= 2; targetRank--) {
-                uint256 pool = _calcExtraPool(r1MainId, mainMaxRank, window5Start);
+                uint256 pool = _calcExtraPool(_r1MainId, mainMaxRank, window5Start);
                 uint256 price = rankPrice[targetRank];
                 if (price == 0 || pool < price) continue;
-                if (getMainIdNodeInRank(r1MainId, targetRank) == 0) continue;
+                if (getMainIdNodeInRank(_r1MainId, targetRank) == 0) continue;
 
-                _deductExtraPool(r1MainId, nodeOwner, price, mainMaxRank, window5Start);
-                _spawnExtraNode(r1MainId, nodeOwner, targetRank);
+                _deductExtraPool(_r1MainId, nodeOwner, price, mainMaxRank, window5Start);
+                _spawnExtraNode(_r1MainId, nodeOwner, targetRank);
                 spawned = true;
+                processed++;
+                break;
             }
             if (!spawned) break;
         }
@@ -520,6 +534,7 @@ contract FractalFlowMatrix27 is Ownable, ReentrancyGuard {
         uint256 rank1Price = rankPrice[1];
         if (rank1Price > 0 && autoIdPool >= rank1Price) {
             uint256 count = autoIdPool / rank1Price;
+            if (count > 2) count = 2; // ป้องกัน Gas Limit เกิน โดยจำกัดออกรอบละไม่เกิน 2 รหัส ที่เหลือรอคิวถัดไป
             if (count > 0) {
                 uint256 totalDeduct = count * rank1Price;
                 uint8 endR = window5Start > 3 ? 3 : (window5Start > 1 ? window5Start - 1 : 1);

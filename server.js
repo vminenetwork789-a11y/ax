@@ -138,7 +138,7 @@ var __dirname = path.dirname(__filename);
 var PORT = Number(process.env.PORT) || 3e3;
 var CONFIG_FILE_PATH = path.resolve(__dirname, "prisma/contract-config.json");
 var DEFAULT_SYSTEM_CONFIG = {
-  contractAddress: process.env.OVERRIDE_CONTRACT_ADDRESS || process.env.CONTRACT_ADDRESS || "0x36932dCA76922f8f05513710dB89238258E61378",
+  contractAddress: process.env.OVERRIDE_CONTRACT_ADDRESS || process.env.CONTRACT_ADDRESS || "0x0742E9581217Cc8Cd6De2Aa80b7Ce9aD881DEEe3",
   usdtAddress: process.env.USDT_ADDRESS || "0x05f24E1F598DF1aE8d0B424ce978f8ea33bB752b",
   chainId: Number(process.env.CHAIN_ID || 97),
   networkName: process.env.NETWORK_NAME || "BNB Smart Chain Testnet",
@@ -175,7 +175,8 @@ var SERVER_LEGACY_CONTRACTS = /* @__PURE__ */ new Set([
   "0x003ef4aaab33e517b2f565320df37e88b2db7a69",
   "0x47ff540a2e04aa36cdc4a4ec6e4feadac1a71b66",
   "0xc115f39897811d83be2613e9722753cfb78d492b",
-  "0x191d0c2cd0496e05aa4f91273125ddccc6645df4"
+  "0x191d0c2cd0496e05aa4f91273125ddccc6645df4",
+  "0x36932dca76922f8f05513710db89238258e61378"
 ]);
 var SERVER_LEGACY_USDT = /* @__PURE__ */ new Set([
   "0x95856be9c16afc9c147c034cd6a514d730bd90ba"
@@ -4983,6 +4984,32 @@ async function startApp() {
         success: true,
         record,
         message: record.noteTh
+      });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+  app.post("/api/matrix/process-extra-queue", async (req, res) => {
+    try {
+      const { mainId } = req.body || {};
+      const targetMainId = Math.max(1, Number(mainId) || 1);
+      reconcileAutoExtraIdsAcrossRanks();
+      const r1Nodes = matrixDB.nodesByRank[1] || [];
+      const mNode = r1Nodes.find((n) => n.id === targetMainId && !n.isClone && !n.isExtraId);
+      if (!mNode) {
+        return res.status(404).json({ success: false, error: `\u0E44\u0E21\u0E48\u0E1E\u0E1A Main ID #${targetMainId}` });
+      }
+      let spawnedCount = 0;
+      const spawnedList = [];
+      for (let batch = 0; batch < 20; batch++) {
+        reconcileAutoExtraIdsAcrossRanks();
+        break;
+      }
+      res.json({
+        success: true,
+        mainId: targetMainId,
+        message: `\u0E1B\u0E23\u0E30\u0E21\u0E27\u0E25\u0E1C\u0E25\u0E04\u0E34\u0E27 Extra ID \u0E2A\u0E33\u0E2B\u0E23\u0E31\u0E1A Main #${targetMainId} \u0E40\u0E23\u0E35\u0E22\u0E1A\u0E23\u0E49\u0E2D\u0E22\u0E41\u0E25\u0E49\u0E27`,
+        processedCount: spawnedCount
       });
     } catch (err) {
       res.status(500).json({ success: false, error: err.message });

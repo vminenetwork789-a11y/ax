@@ -42,9 +42,11 @@ import {
   CheckCircle2,
   Bell,
   Clock,
+  Calculator,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { emitTransactionToast } from './TransactionToast';
+import { ExtraIdPathCalculator, SimRawNode } from './ExtraIdPathCalculator';
 
 export interface EnrichedBinaryNode {
   id: number;
@@ -985,6 +987,10 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
   const [hasInitialTreeLoaded, setHasInitialTreeLoaded] = useState<boolean>(false);
   const [totalNodesInRank, setTotalNodesInRank] = useState<number>(1);
   const [onChainNodesMap, setOnChainNodesMap] = useState<Map<number, EnrichedBinaryNode>>(new Map());
+  const [multiRankSnapshotsState, setMultiRankSnapshotsState] = useState<Map<number, Map<number, SimRawNode>>>(
+    new Map()
+  );
+  const [isPathCalculatorOpen, setIsPathCalculatorOpen] = useState<boolean>(false);
   const [copiedText, setCopiedText] = useState<string | null>(null);
   const [activeLocks, setActiveLocks] = useState<
     Array<{ parentId: string; isLeft: boolean; owner: string }>
@@ -4097,6 +4103,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         }
 
         knownNodeIdsByRankRef.current.set(activeRank, currentIdsSet);
+        setMultiRankSnapshotsState(new Map(multiRankSnapshots as unknown as Map<number, Map<number, SimRawNode>>));
         setOnChainNodesMap(enrichedMap);
         setLastSyncTime(
           new Date().toLocaleTimeString('th-TH', {
@@ -6068,6 +6075,43 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             </div>
           </div>
         )}
+
+        {/* เครื่องคำนวณเส้นทางอัพเกรดและการเกิด Extra ID ล่วงหน้า (Matrix Path & Extra ID Calculator) */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between bg-slate-900/90 border border-slate-800 rounded-xl px-3.5 py-2.5">
+            <div className="flex items-center gap-2 text-xs sm:text-sm font-bold text-amber-300">
+              <Calculator className="w-4 h-4 text-amber-400 shrink-0" />
+              <span>🧮 เครื่องคำนวณเส้นทางอัพเกรด & ตารางพยากรณ์การเกิด Extra ID (R2–R27)</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsPathCalculatorOpen((prev) => !prev)}
+              className="px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold text-slate-200 flex items-center gap-1 cursor-pointer transition"
+            >
+              <span>{isPathCalculatorOpen ? 'ซ่อนตารางคำนวณ' : 'เปิดตารางคำนวณ'}</span>
+              {isPathCalculatorOpen ? (
+                <ChevronUp className="w-3.5 h-3.5" />
+              ) : (
+                <ChevronDown className="w-3.5 h-3.5" />
+              )}
+            </button>
+          </div>
+
+          {isPathCalculatorOpen && multiRankSnapshotsState.size > 0 && (
+            <ExtraIdPathCalculator
+              multiRankSnapshots={multiRankSnapshotsState}
+              defaultMainId={2}
+              defaultProspectiveRank={10}
+              onSelectRankAndNode={(r, nId) => {
+                if (selectedRank !== r) {
+                  setSelectedRank(r);
+                  loadOnChainTree(r);
+                }
+                navigateToNode(nId);
+              }}
+            />
+          )}
+        </div>
 
         {/* แถบแจ้งเตือนการต่อสาย (Node Line Connection Notification Banner - สีกรอบตามประเภทโหนดล่าสุด) */}
         {latestNodeInRank && (
