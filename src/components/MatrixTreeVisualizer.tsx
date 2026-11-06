@@ -2880,10 +2880,12 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           let spawnedCount = 0;
           if (r1Id === 1) {
             spawnedCount = maxPossibleSpawns;
+          } else if (perIdReportsMap.has(r1Id)) {
+            // Strictly honor authentic backend/on-chain autoId reports for Main IDs > 1 (e.g. ID #2 where vaults were spent on upgrades)
+            const rep = perIdReportsMap.get(r1Id);
+            spawnedCount = Array.isArray(rep?.autoIdsSpawned) ? rep.autoIdsSpawned.length : (rep?.totalAutoIdCount || 0);
           } else if (maxPossibleSpawns > 0) {
-            // สำหรับ Main ID > 1 (เช่น ID #2 ที่อัพขึ้น Rank 6..8):
-            // ยอด Vault ใน Rank 1..3 ที่ถูกหักไปใช้เป็นส่วนลดตอนอัพเกรด Rank (_clearVaultsForMainId) จะทำให้ nodeVault เหลือ 0
-            // ส่วนการหักออก Auto ID จริงบนสัญญา (checkAndProcessAutoNewMainIdForNode) จะหักทีละ 5.00 USDT จากยอดสะสมที่เป็นพหุคูณของ 1.75 USDT เท่านั้น
+            // สำหรับ Main ID > 1 ที่ไม่ได้ใช้ยอดอัปเกรด
             for (let c = maxPossibleSpawns; c >= 1; c--) {
               const pool2GrossNeeded = Number((totalRem1To3 + c * 5).toFixed(4));
               const units175 = pool2GrossNeeded / 1.75;
