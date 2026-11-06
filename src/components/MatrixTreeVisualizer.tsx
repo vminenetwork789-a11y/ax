@@ -2835,15 +2835,18 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
               if (isSnSameMain && sn.leftChild > 0) {
                 leftCountInR++;
                 if (r > 1) {
-                  for (const rn of snapR.values()) {
-                    if (rn.id <= sn.leftChild) {
-                      const r1Orig =
-                        rn.originMainId > 0 && rn.originMainId < 1_000_000
-                          ? rn.originMainId
-                          : getCorrespondingMainIdInRank(r, rn.id, rn.owner, 1);
-                      if (r1Orig > extraMinR1Id && r1Orig < 1_000_000) {
-                        extraMinR1Id = r1Orig;
-                      }
+                  const lcNode = snapR.get(sn.leftChild);
+                  if (lcNode && !lcNode.isClone && !lcNode.isExtraId) {
+                    const r1Orig =
+                      lcNode.originMainId > 0 && lcNode.originMainId < 1_000_000
+                        ? lcNode.originMainId
+                        : getCorrespondingMainIdInRank(r, lcNode.id, lcNode.owner, 1);
+                    if (
+                      r1Orig > r1Id &&
+                      r1Orig < 1_000_000 &&
+                      (extraMinR1Id === r1Id || r1Orig < extraMinR1Id)
+                    ) {
+                      extraMinR1Id = r1Orig;
                     }
                   }
                 }
@@ -2890,10 +2893,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
 
           crossRankGrossVault1To4.set(r1Id, totalGross1To3);
           crossRankRemVault1To4.set(r1Id, totalRem1To3);
-          const effectiveExtraR2To3 =
-            r1Id === 1
-              ? Math.max(0, Number((extraR2To3 - extraR2To3Rem).toFixed(4)))
-              : extraR2To3;
+          const effectiveExtraR2To3 = Math.max(0, Number((extraR2To3 - extraR2To3Rem).toFixed(4)));
           extraVaultFromRanks2To4.set(r1Id, spawnedCount > 0 ? effectiveExtraR2To3 : 0);
           extraVaultMinR1IdFromRanks2To4.set(r1Id, extraMinR1Id);
           crossRankAutoIdCount.set(r1Id, spawnedCount);
@@ -5442,6 +5442,19 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                     <span>🤖 Auto ID: {node.totalAutoIdCount} รหัส</span>
                   </button>
                 )}
+                {!node.isExtraId && node.totalExtraIdCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBenefitModalTab('auto_extra');
+                      setExpandedBenefitNodeId(node.id);
+                    }}
+                    className="px-1 py-0.2 rounded bg-fuchsia-500/20 border border-fuchsia-400/60 text-fuchsia-300 hover:bg-fuchsia-500/35 font-extrabold flex items-center gap-0.5 cursor-pointer text-[8px]"
+                    title={`รหัสหลักนี้สร้าง Extra ID แล้ว ${node.totalExtraIdCount} รหัส (คลิกเพื่อดูรายละเอียด)`}
+                  >
+                    <span>⚡ Extra ID: {node.totalExtraIdCount} รหัส</span>
+                  </button>
+                )}
                 {(
                   node.isExtraId
                     ? node.spawnedCloneIds.length > 0
@@ -5474,7 +5487,8 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                     </span>
                   </button>
                 ) : (
-                  node.totalAutoIdCount === 0 && (
+                  node.totalAutoIdCount === 0 &&
+                  node.totalExtraIdCount === 0 && (
                     <span className="text-slate-500 font-medium text-[8px]">ปกติ</span>
                   )
                 )}

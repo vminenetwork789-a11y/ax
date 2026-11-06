@@ -424,14 +424,17 @@ contract FractalFlowMatrix27 is Ownable, ReentrancyGuard {
     function checkAndProcessAutoExtraIdForNode(address _user, uint8 _currentRank, uint256 _sponsorNodeId) public {
         if (_currentRank < 2 || _currentRank > MAX_RANK) return;
 
-        uint256 originInR = nodeOriginMainId[_currentRank][_sponsorNodeId];
-        if (originInR == 0) originInR = _sponsorNodeId;
-        uint256 r1MainId = nodeToR1MainId[_currentRank][originInR];
-        if (r1MainId == 0 && _sponsorNodeId <= totalNodesInRank[1]) {
+        uint256 r1MainId = 0;
+        if (_sponsorNodeId > 0 && _sponsorNodeId <= totalNodesInRank[1]) {
             MatrixNode storage r1Cand = rankNodes[1][_sponsorNodeId];
             if (r1Cand.owner == _user && !r1Cand.isClone && !r1Cand.isExtraId) {
                 r1MainId = _sponsorNodeId;
             }
+        }
+        if (r1MainId == 0) {
+            uint256 originInR = nodeOriginMainId[_currentRank][_sponsorNodeId];
+            if (originInR == 0) originInR = _sponsorNodeId;
+            r1MainId = nodeToR1MainId[_currentRank][originInR];
         }
         if (r1MainId == 0) r1MainId = users[_user].firstNodeId[1];
         if (r1MainId == 0) r1MainId = 1;
@@ -647,7 +650,7 @@ contract FractalFlowMatrix27 is Ownable, ReentrancyGuard {
         if (_r1MainId < 1_000_000) {
             checkAndProcessAutoNewMainIdForNode(_r1MainId);
         }
-        checkAndProcessAutoExtraIdForNode(_user, _targetRank, newNodeId);
+        checkAndProcessAutoExtraIdForNode(_user, _targetRank, _r1MainId);
 
         emit RankUpgraded(_user, _targetRank - 1, _targetRank, newNodeId, _isAuto);
     }
@@ -671,9 +674,7 @@ contract FractalFlowMatrix27 is Ownable, ReentrancyGuard {
             uint256 remainder = savedInVault - targetPrice;
             if (remainder > 0) usdt.safeTransfer(msg.sender, remainder);
         } else {
-            uint256 amountToPay = targetPrice - savedInVault;
-            _clearVaultsForMainId(_r1MainId, currentRank, savedInVault);
-            usdt.safeTransferFrom(msg.sender, address(this), amountToPay);
+            usdt.safeTransferFrom(msg.sender, address(this), targetPrice);
         }
 
         _applyRankUpgrade(_r1MainId, msg.sender, _targetRank, false);

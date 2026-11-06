@@ -185,7 +185,7 @@ const DEFAULT_SYSTEM_CONFIG = {
   contractAddress:
     process.env.OVERRIDE_CONTRACT_ADDRESS ||
     process.env.CONTRACT_ADDRESS ||
-    '0x191D0C2Cd0496E05aA4f91273125DDcCc6645DF4',
+    '0x36932dCA76922f8f05513710dB89238258E61378',
   usdtAddress: process.env.USDT_ADDRESS || '0x05f24E1F598DF1aE8d0B424ce978f8ea33bB752b',
   chainId: Number(process.env.CHAIN_ID || 97),
   networkName: process.env.NETWORK_NAME || 'BNB Smart Chain Testnet',
@@ -223,6 +223,7 @@ const SERVER_LEGACY_CONTRACTS = new Set([
   '0x003ef4aaab33e517b2f565320df37e88b2db7a69',
   '0x47ff540a2e04aa36cdc4a4ec6e4feadac1a71b66',
   '0xc115f39897811d83be2613e9722753cfb78d492b',
+  '0x191d0c2cd0496e05aa4f91273125ddccc6645df4',
 ]);
 
 const SERVER_LEGACY_USDT = new Set([
@@ -497,7 +498,7 @@ const MATRIX_READ_ABI = [
   'function nodeUpgradeVault(uint8, uint256) external view returns (uint256)',
   'function getMainIdCurrentRank(uint256) external view returns (uint8)',
   'function getMainIdNodeInRank(uint256, uint8) external view returns (uint256)',
-  'function getMainIdThreePools(uint256) external view returns (uint256 upgradeRankPool, uint256 newAutoIdPool, uint256 newExtraIdPool, uint8 currentRank, uint8 window5Start, uint8 window5End)',
+  'function getMainIdThreePools(address, uint256) external view returns (uint8 currentRank, uint8 window5Start, uint8 window5End, uint256 upgradeRankPool, uint256 newAutoIdPool, uint256 newExtraIdPool)',
   'function getUserProfile(address) external view returns (tuple(bool isRegistered, address sponsor, uint256 sponsorMainNodeId, uint8 currentMaxRank, uint256 mainNodeIdRank1, uint256 latestCloneIdRank1))',
   'function getUserRankInfo(address, uint8) external view returns (uint256 firstNodeId, uint256 latestNodeId, uint256 upgradeVaultBalance, uint256 nextRankPrice)',
   'function checkValidSponsorId(uint256) external view returns (bool isValid, string reason, address sponsorAddress)',
@@ -2179,10 +2180,11 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
         if (isSameMain && sn.leftChild > 0) {
           leftCount++;
           if (r > 1) {
-            for (const rn of rList) {
-              if (rn.id <= sn.leftChild) {
-                const r1Orig = rn.originMainId || 0;
-                if (r1Orig > extraMinR1Id && r1Orig < 1_000_000) {
+            const lcNode = rList.find((rn) => rn.id === sn.leftChild);
+            if (lcNode && !lcNode.isClone && !lcNode.isExtraId) {
+              const r1Orig = lcNode.originMainId || 0;
+              if (r1Orig > mNode.id && r1Orig < 1_000_000) {
+                if (extraMinR1Id === mNode.id || r1Orig < extraMinR1Id) {
                   extraMinR1Id = r1Orig;
                 }
               }
@@ -2207,9 +2209,6 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
     if (mNode.id === 1) {
       expectedSpawns = maxPossibleSpawns;
     } else if (maxPossibleSpawns > 0) {
-      // สำหรับ Main ID > 1 (เช่น ID #2 ที่อัพขึ้น Rank 6..8):
-      // ยอด Vault ใน Rank 1..3 ที่ถูกหักไปตอนอัพเกรด Rank (_clearVaultsForMainId) จะทำให้ nodeVault เหลือ 0
-      // ส่วนการหักออก Auto ID จริงบนสัญญา (checkAndProcessAutoNewMainIdForNode) จะหักทีละ 5.00 USDT จากยอดสะสมที่เป็นพหุคูณของ 1.75 USDT เท่านั้น
       for (let c = maxPossibleSpawns; c >= 1; c--) {
         const pool2GrossNeeded = Number((totalRem1To3 + c * 5).toFixed(4));
         const units175 = pool2GrossNeeded / 1.75;
@@ -2223,10 +2222,7 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
       }
     }
     expectedAutoSpawnsByMain.set(mNode.id, expectedSpawns);
-    const effectiveExtraR2To3 =
-      mNode.id === 1
-        ? Math.max(0, Number((extraR2To3 - extraR2To3Rem).toFixed(4)))
-        : extraR2To3;
+    const effectiveExtraR2To3 = Math.max(0, Number((extraR2To3 - extraR2To3Rem).toFixed(4)));
     extraR2To3VaultByMain.set(mNode.id, expectedSpawns > 0 ? effectiveExtraR2To3 : 0);
     extraR2To3MinR1IdByMain.set(mNode.id, extraMinR1Id);
   }
@@ -2239,7 +2235,7 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
 
   for (const n of sortedR1) {
     if (!n.isClone && !n.isExtraId) {
-      n.originType = 'MANUAL_REGISTER';
+      n.originType = n.isSyntheticExtra ? 'AUTO_NEW_MAIN' : 'MANUAL_REGISTER';
     }
   }
 
@@ -2251,7 +2247,12 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
       }
       const firstMain = ownerPrimaryMap.get(oKey) || n.id;
 
-      if (n.id > firstMain) {
+      if (n.isSyntheticExtra) {
+        const synSource = n.directSponsorNodeId > 0 ? n.directSponsorNodeId : firstMain;
+        n.originType = 'AUTO_NEW_MAIN';
+        autoMainSourceMap.set(n.id, synSource);
+        spawnedCountByMain.set(synSource, (spawnedCountByMain.get(synSource) || 0) + 1);
+      } else if (n.id > firstMain) {
         const explicitSpId = n.directSponsorNodeId || 0;
         const priorMains = (ownerAllMainsMap.get(oKey) || []).filter((mId) => {
           if (mId >= n.id) return false;
@@ -2260,7 +2261,6 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
           const curSpawns = spawnedCountByMain.get(mId) || 0;
           if (curSpawns >= maxSpawns) return false;
           // กฎเหล็กการจัดวางบนสัญญา (_findPlacementSpot): Auto ID ที่เกิดจาก mId จะต้องวางอยู่ใต้สายงาน/โคลนของ mId เท่านั้น
-          // ดังนั้น R1-#3 (ซึ่งวางอยู่ใต้ #1 ฝั่งขวา ไม่ได้อยู่ใต้ #2) จะไม่มีวันถูกมองเป็น Auto ID ของ #2 เด็ดขาด
           if (!isPlacedUnderMainOrClonesR1(mId, n.id)) return false;
           const mNode = byIdR1.get(mId);
           const mSpId = mNode?.directSponsorNodeId || 1;
@@ -2307,7 +2307,7 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
       ownerAllMainsMap.set(oKey, list);
     }
 
-    if (n.parentId > 0) {
+    if (n.parentId > 0 && !n.isSyntheticExtra) {
       const p = byIdR1.get(n.parentId);
       if (p && p.leftChild === n.id) {
         const pMain = p.isClone ? (p.originMainId || p.id) : p.id;
@@ -2342,15 +2342,11 @@ function reconcileAutoExtraIdsAcrossRanks(): Array<{
     deductedUsdt: number;
   }> = [];
 
-  // 1. Strip any previously synthesized Auto Extra IDs / Clones and restore base vaults on Rank 1..27 nodes
-  let hasRealOnChainExtraIds = false;
+  // 1. Strip any previously synthesized Auto IDs / Extra IDs / Clones and restore base vaults on Rank 1..27 nodes
   for (let r = 1; r <= 27; r++) {
     const rList = matrixDB.nodesByRank[r];
     if (!Array.isArray(rList) || rList.length === 0) continue;
     const realNodes = rList.filter((n) => !n.isSyntheticExtra);
-    if (r >= 2 && realNodes.some((n) => n.isExtraId && !n.isClone)) {
-      hasRealOnChainExtraIds = true;
-    }
     const realIds = new Set(realNodes.map((n) => n.id));
     for (const n of realNodes) {
       if (n.leftChild > 0 && !realIds.has(n.leftChild)) n.leftChild = 0;
@@ -2365,18 +2361,187 @@ function reconcileAutoExtraIdsAcrossRanks(): Array<{
     matrixDB.rankCounts[r] = Math.max(1, matrixDB.nodesByRank[r].length);
   }
 
-  // Always reconcile Rank 1 Auto Main IDs (Pool 2) so originType === 'AUTO_NEW_MAIN' is up to date
-  reconcileRank1AutoMainIds();
-
-  // If the deployed contract natively spawns Auto Extra IDs on-chain, do not synthesize duplicate off-chain Extra IDs
-  if (hasRealOnChainExtraIds) {
-    return createdExtraNodes;
-  }
+  // Reconcile real on-chain Rank 1 Auto Main IDs first
+  const realAutoMainSourceMap = reconcileRank1AutoMainIds();
 
   const r1Nodes = matrixDB.nodesByRank[1] || [];
   if (r1Nodes.length === 0) return createdExtraNodes;
 
   const r1Mains = r1Nodes.filter((n) => !n.isClone && !n.isExtraId).sort((a, b) => a.id - b.id);
+
+  // Restore partial vaults (< nextRankPrice) for Main IDs > 1 that were cleared prematurely by manual wallet upgrades
+  // and synthesize Pool 2 -> Auto New Main IDs in Rank 1 when New Auto ID Pool >= 5 USDT
+  for (const r1Main of r1Mains) {
+    if (r1Main.id <= 1) continue;
+    const getCorrespMain = (targetRank: number): IndexedTreeNode | undefined => {
+      const rList = matrixDB.nodesByRank[targetRank] || [];
+      if (targetRank === 1) return rList.find((n) => n.id === r1Main.id);
+      return rList.find((n) => !n.isClone && !n.isExtraId && n.originMainId === r1Main.id);
+    };
+
+    let currentRank = 1;
+    for (let r = 27; r >= 1; r--) {
+      if (getCorrespMain(r)) {
+        currentRank = r;
+        break;
+      }
+    }
+    if (currentRank <= 1) continue;
+
+    const hasRealOnChainAuto = Array.from(realAutoMainSourceMap.values()).includes(r1Main.id);
+    let hasRealOnChainExtra = false;
+    let totalOnChainRemVault = 0;
+    for (let r = 1; r <= currentRank; r++) {
+      const rList = matrixDB.nodesByRank[r] || [];
+      if (r >= 2 && rList.some((n) => !n.isSyntheticExtra && n.isExtraId && !n.isClone && (n.owner || '').toLowerCase() === (r1Main.owner || '').toLowerCase())) {
+        hasRealOnChainExtra = true;
+      }
+      const mInR = getCorrespMain(r);
+      if (mInR) totalOnChainRemVault += Number(mInR.reconciledBaseVault ?? mInR.nodeVault ?? 0);
+    }
+
+    if (!hasRealOnChainAuto && !hasRealOnChainExtra && totalOnChainRemVault <= 1e-6) {
+      for (let r = 1; r <= currentRank; r++) {
+        const rList = matrixDB.nodesByRank[r] || [];
+        const mInR = getCorrespMain(r);
+        if (!mInR) continue;
+        const rUnitVault = Number(((RANK_PRICES_USDT[r - 1] || 5) * 0.35).toFixed(4));
+        const nextRankPrice = RANK_PRICES_USDT[r] || 10;
+        let leftCount = 0;
+        for (const sn of rList) {
+          if (sn.isSyntheticExtra) continue;
+          const snOrig = sn.originMainId || sn.id;
+          const isSameMain =
+            sn.id === mInR.id || (sn.isClone && (snOrig === mInR.id || snOrig === r1Main.id));
+          if (isSameMain && sn.leftChild > 0) {
+            leftCount++;
+          }
+        }
+        const grossR = Number((leftCount * rUnitVault).toFixed(4));
+        if (grossR > 0 && grossR < nextRankPrice) {
+          mInR.nodeVault = grossR;
+        }
+      }
+    }
+
+    const window5Start = Math.max(1, currentRank - 4);
+    if (window5Start > 1) {
+      const eligiblePool2Nodes: IndexedTreeNode[] = [];
+      for (let r = 1; r <= 3; r++) {
+        if (r < window5Start) {
+          const mNode = getCorrespMain(r);
+          if (mNode) eligiblePool2Nodes.push(mNode);
+        }
+      }
+      const r1EntryPrice = RANK_PRICES_USDT[0] || 5;
+      const r1UnitVault = Number((r1EntryPrice * 0.35).toFixed(4));
+      let autoGuard = 0;
+      while (autoGuard < 25) {
+        autoGuard++;
+        const availAutoPool = Number(
+          eligiblePool2Nodes.reduce((sum, n) => sum + Number(n.nodeVault || 0), 0).toFixed(4)
+        );
+        if (availAutoPool + 1e-6 < r1EntryPrice) break;
+
+        let remDeduct = r1EntryPrice;
+        for (const pNode of eligiblePool2Nodes) {
+          if (remDeduct <= 1e-6) break;
+          const v = Number(pNode.nodeVault || 0);
+          if (v <= 1e-6) continue;
+          const d = Math.min(v, remDeduct);
+          pNode.nodeVault = Number(Math.max(0, v - d).toFixed(4));
+          remDeduct = Number(Math.max(0, remDeduct - d).toFixed(4));
+        }
+
+        const r1TargetNodes = matrixDB.nodesByRank[1] || [];
+        const placement = findExtraIdPlacementInRankNodes(r1TargetNodes, r1Main.id);
+        const newAutoId = r1TargetNodes.reduce((m, n) => Math.max(m, n.id), 0) + 1;
+        const newAutoNode: IndexedTreeNode = {
+          id: newAutoId,
+          rank: 1,
+          owner: r1Main.owner,
+          directSponsor: r1Main.owner,
+          parentId: placement.parentId,
+          leftChild: 0,
+          rightChild: 0,
+          isClone: false,
+          isExtraId: false,
+          isSyntheticExtra: true,
+          originMainId: newAutoId,
+          cloneRound: 0,
+          directSponsorNodeId: r1Main.id,
+          nodeVault: 0,
+          rawNodeVault: 0,
+          originType: 'AUTO_NEW_MAIN',
+        };
+        r1TargetNodes.push(newAutoNode);
+
+        const parentNode = r1TargetNodes.find((n) => n.id === placement.parentId);
+        const rightTriggerQueue: IndexedTreeNode[] = [];
+        if (parentNode) {
+          if (placement.isLeft) {
+            parentNode.leftChild = newAutoId;
+            const pMainNode = !parentNode.isClone
+              ? parentNode
+              : r1TargetNodes.find((x) => !x.isClone && x.id === (parentNode.originMainId || parentNode.id)) ||
+                parentNode;
+            pMainNode.nodeVault = Number(((pMainNode.nodeVault || 0) + r1UnitVault).toFixed(4));
+          } else {
+            parentNode.rightChild = newAutoId;
+            rightTriggerQueue.push(parentNode);
+          }
+        }
+
+        let cloneSafety = 0;
+        while (rightTriggerQueue.length > 0 && cloneSafety < 25) {
+          cloneSafety++;
+          const trigParent = rightTriggerQueue.shift()!;
+          const clonePlace = findClonePlacementInRankNodes(r1TargetNodes, trigParent);
+          const nextCloneId = r1TargetNodes.reduce((m, n) => Math.max(m, n.id), 0) + 1;
+          const origNode = r1TargetNodes.find((n) => n.id === clonePlace.cloneOriginMainId) || trigParent;
+          const newCloneNode: IndexedTreeNode = {
+            id: nextCloneId,
+            rank: 1,
+            owner: trigParent.owner,
+            directSponsor: origNode.directSponsor || trigParent.directSponsor || trigParent.owner,
+            parentId: clonePlace.parentId,
+            leftChild: 0,
+            rightChild: 0,
+            isClone: true,
+            isExtraId: false,
+            isSyntheticExtra: true,
+            originMainId: clonePlace.cloneOriginMainId,
+            cloneRound: clonePlace.cloneRound,
+            directSponsorNodeId: clonePlace.targetSponsorNodeId,
+            nodeVault: 0,
+            rawNodeVault: 0,
+            originType: 'CLONE',
+          };
+          r1TargetNodes.push(newCloneNode);
+          const cParent = r1TargetNodes.find((n) => n.id === clonePlace.parentId);
+          if (cParent) {
+            if (clonePlace.isLeft) {
+              cParent.leftChild = nextCloneId;
+              const cpMain = !cParent.isClone
+                ? cParent
+                : r1TargetNodes.find((x) => !x.isClone && x.id === (cParent.originMainId || cParent.id)) ||
+                  cParent;
+              cpMain.nodeVault = Number(((cpMain.nodeVault || 0) + r1UnitVault).toFixed(4));
+            } else {
+              cParent.rightChild = nextCloneId;
+              rightTriggerQueue.push(cParent);
+            }
+          }
+        }
+
+        matrixDB.nodesByRank[1] = reconcileRankTreeLinks(r1TargetNodes);
+        matrixDB.rankCounts[1] = Math.max(matrixDB.rankCounts[1] || 1, r1TargetNodes.length);
+      }
+    }
+  }
+
+  // Always reconcile Rank 1 Auto Main IDs (Pool 2) so originType === 'AUTO_NEW_MAIN' is up to date
+  reconcileRank1AutoMainIds();
 
   for (const r1Main of r1Mains) {
     const ownerKey = (r1Main.owner || '').toLowerCase();
@@ -6546,10 +6711,22 @@ async function startApp() {
 
         const rankPrice = RANK_PRICES_USDT[r - 1] || 10;
 
-        // Deduct available vault from this Main ID's 5-rank window (window5Start..r-1)
+        // Deduct available vault from this Main ID's 5-rank window (window5Start..r-1) ONLY when savedInVault >= rankPrice
         const prevRank = r - 1;
         const winStart = Math.max(1, prevRank - 4);
-        let remDeduct = rankPrice;
+        let windowVaultAvail = 0;
+        for (let wr = winStart; wr <= prevRank; wr++) {
+          const wrList = matrixDB.nodesByRank[wr] || [];
+          const wrNode =
+            wr === 1
+              ? wrList.find((n) => n.id === mainIdNum && !n.isClone && !n.isExtraId)
+              : wrList.find((n) => !n.isClone && !n.isExtraId && n.originMainId === mainIdNum);
+          if (wrNode && Number(wrNode.nodeVault || 0) > 0) {
+            windowVaultAvail = Number((windowVaultAvail + Number(wrNode.nodeVault || 0)).toFixed(4));
+          }
+        }
+
+        let remDeduct = windowVaultAvail + 1e-6 >= rankPrice ? rankPrice : 0;
         let totalVaultDeducted = 0;
 
         for (let wr = winStart; wr <= prevRank; wr++) {
@@ -7366,7 +7543,8 @@ async function startApp() {
       if (Date.now() - lastTs > 12000 || dbNodes.length < expectedCount) {
         syncRankIntoDatabase(rank, targetContract, false).catch(() => {});
       }
-      const reconciled = reconcileRankTreeLinks(dbNodes);
+      reconcileAutoExtraIdsAcrossRanks();
+      const reconciled = reconcileRankTreeLinks(matrixDB.nodesByRank[rank] || dbNodes);
       const latestNodeId = reconciled.length > 0 ? reconciled[reconciled.length - 1].id : 1;
       return res.json({
         success: true,
