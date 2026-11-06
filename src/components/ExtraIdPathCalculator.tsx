@@ -78,6 +78,9 @@ export interface UpgradePathCalculationResult {
   allExtraIdEvents: ExtraIdGenerationEvent[];
   sponsorExtraIdEvents: ExtraIdGenerationEvent[];
   targetExtraIdEvents: ExtraIdGenerationEvent[];
+  allAutoIdEvents: ChainReactionEvent[];
+  sponsorAutoIdEvents: ChainReactionEvent[];
+  targetAutoIdEvents: ChainReactionEvent[];
   finalSponsorAutoPoolUsdt: number;
   finalSponsorExtraPoolUsdt: number;
   finalTargetAutoPoolUsdt: number;
@@ -453,6 +456,7 @@ export function calculateMatrixUpgradePath(
 
   const steps: UpgradePathStepResult[] = [];
   const allExtraIdEvents: ExtraIdGenerationEvent[] = [];
+  const allAutoIdEvents: ChainReactionEvent[] = [];
 
   // Recursive helper for processing left-child rewards, right-child clones, Auto IDs, and Extra IDs
   const processNodePlacementCascade = (
@@ -624,7 +628,7 @@ export function calculateMatrixUpgradePath(
         r1Main,
         'AUTO_NEW_MAIN'
       );
-      stepChainEvents.push({
+      const autoEv: ChainReactionEvent = {
         type: 'AUTO_ID',
         rank: 1,
         nodeId: autoNode.id,
@@ -632,7 +636,9 @@ export function calculateMatrixUpgradePath(
         parentId: spot.parentId,
         side: spot.isLeft ? 'LEFT' : 'RIGHT',
         descriptionTh: `กระปุก Auto ID ของ Main #${r1Main} ครบ 5.00 U → แตก Auto ID R1-#${autoNode.id} วางใต้ R1-#${spot.parentId} (${spot.isLeft ? 'ซ้าย' : 'ขวา'})`,
-      });
+      };
+      stepChainEvents.push(autoEv);
+      allAutoIdEvents.push(autoEv);
       processNodePlacementCascade(
         stepUpgradeRank,
         1,
@@ -797,6 +803,9 @@ export function calculateMatrixUpgradePath(
     allExtraIdEvents,
     sponsorExtraIdEvents: allExtraIdEvents.filter((e) => e.ownerMainId === sponsorMainId),
     targetExtraIdEvents: allExtraIdEvents.filter((e) => e.ownerMainId === targetMainId),
+    allAutoIdEvents,
+    sponsorAutoIdEvents: allAutoIdEvents.filter((e) => e.ownerMainId === sponsorMainId),
+    targetAutoIdEvents: allAutoIdEvents.filter((e) => e.ownerMainId === targetMainId),
     finalSponsorAutoPoolUsdt: calcAutoIdPool(sponsorMainId),
     finalSponsorExtraPoolUsdt: calcExtraIdPool(sponsorMainId),
     finalTargetAutoPoolUsdt: calcAutoIdPool(targetMainId),
@@ -1032,6 +1041,81 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
         </div>
       ) : (
         <>
+          {/* Quick Pool Summary Cards (Auto ID Pool & Extra ID Pool) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 rounded-xl bg-slate-900/60 border border-slate-800 text-xs">
+            {/* Auto ID Pool Summary */}
+            <div className="rounded-lg bg-slate-950 border border-amber-500/30 p-2.5 space-y-1">
+              <div className="flex items-center justify-between text-amber-300 font-bold">
+                <span>🤖 สรุปยอด Auto ID Pool (Rank 1-3)</span>
+                <span className="text-[10px] text-slate-400 font-normal">เกณฑ์: ครบ 5.00 U แตก 1 Auto ID</span>
+              </div>
+              <div className="space-y-1 font-mono text-[11px] pt-1 border-t border-slate-800/80">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-300">Main #{calculation.sponsorMainId} (Sponsor):</span>
+                  <span className="text-amber-300 font-bold">
+                    สะสม {calculation.finalSponsorAutoPoolUsdt.toFixed(2)} / 5.00 U
+                    {calculation.sponsorAutoIdEvents.length > 0 ? (
+                      <span className="text-emerald-400 ml-1">(แตกใหม่ +{calculation.sponsorAutoIdEvents.length} รหัส)</span>
+                    ) : (
+                      <span className="text-slate-400 font-normal text-[10px] ml-1">
+                        {calculation.finalSponsorAutoPoolUsdt >= 5
+                          ? ''
+                          : `(ขาดอีก ${(5.0 - calculation.finalSponsorAutoPoolUsdt).toFixed(2)} U)`}
+                      </span>
+                    )}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-300">Main #{calculation.targetMainId} (Target):</span>
+                  <span className="text-amber-300 font-bold">
+                    สะสม {calculation.finalTargetAutoPoolUsdt.toFixed(2)} / 5.00 U
+                    {calculation.targetAutoIdEvents.length > 0 ? (
+                      <span className="text-emerald-400 ml-1">(แตกใหม่ +{calculation.targetAutoIdEvents.length} รหัส)</span>
+                    ) : (
+                      <span className="text-slate-400 font-normal text-[10px] ml-1">
+                        {calculation.finalTargetAutoPoolUsdt >= 5
+                          ? ''
+                          : `(ขาดอีก ${(5.0 - calculation.finalTargetAutoPoolUsdt).toFixed(2)} U)`}
+                      </span>
+                    )}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Extra ID Pool Summary */}
+            <div className="rounded-lg bg-slate-950 border border-fuchsia-500/30 p-2.5 space-y-1">
+              <div className="flex items-center justify-between text-fuchsia-300 font-bold">
+                <span>⚡ สรุปยอด Extra ID Pool (Rank 4-27)</span>
+                <span className="text-[10px] text-slate-400 font-normal">เกณฑ์: ลูป R27→R2 แตก Extra ID</span>
+              </div>
+              <div className="space-y-1 font-mono text-[11px] pt-1 border-t border-slate-800/80">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-300">Main #{calculation.sponsorMainId} (Sponsor):</span>
+                  <span className="text-fuchsia-300 font-bold">
+                    คงเหลือ {calculation.finalSponsorExtraPoolUsdt.toFixed(2)} U
+                    {calculation.sponsorExtraIdEvents.length > 0 && (
+                      <span className="text-emerald-400 ml-1">
+                        (แตก +{calculation.sponsorExtraIdEvents.length} รหัส: {calculation.sponsorExtraIdEvents.map((e) => `R${e.spawnedInRank}`).join(', ')})
+                      </span>
+                    )}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-300">Main #{calculation.targetMainId} (Target):</span>
+                  <span className="text-fuchsia-300 font-bold">
+                    คงเหลือ {calculation.finalTargetExtraPoolUsdt.toFixed(2)} U
+                    {calculation.targetExtraIdEvents.length > 0 && (
+                      <span className="text-emerald-400 ml-1">
+                        (แตก +{calculation.targetExtraIdEvents.length} รหัส: {calculation.targetExtraIdEvents.map((e) => `R${e.spawnedInRank}`).join(', ')})
+                      </span>
+                    )}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
           {/* Table 1: Step-by-Step Upgrade Path & Resulting Extra ID / Clone Cascade */}
           <div className="space-y-2">
             <div className="flex items-center justify-between flex-wrap gap-2">
@@ -1055,7 +1139,7 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
                     <th className="py-2.5 px-3 whitespace-nowrap">35% Vault ที่เกิดขึ้น</th>
                     <th className="py-2.5 px-3">Extra ID ที่เกิดในขั้นนี้ (R27→R2)</th>
                     <th className="py-2.5 px-3">โคลน / ปฏิกิริยาลูกโซ่ต่อเนื่อง</th>
-                    <th className="py-2.5 px-3 whitespace-nowrap">คงเหลือ Extra Pool</th>
+                    <th className="py-2.5 px-3 whitespace-nowrap">คงเหลือ Pool (Auto / Extra)</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/80 font-mono">
@@ -1197,14 +1281,22 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
                       </td>
 
                       {/* Col 6: Remaining Pool Balances */}
-                      <td className="py-3 px-3 whitespace-nowrap text-[11px] space-y-1">
-                        <div>
-                          <span className="text-slate-400">Main #{calculation.sponsorMainId}:</span>{' '}
-                          <strong className="text-fuchsia-300">{step.sponsorExtraPoolFinalUsdt.toFixed(2)} U</strong>
+                      <td className="py-3 px-3 whitespace-nowrap text-[11px] space-y-1.5">
+                        <div className="rounded bg-slate-950/80 border border-slate-800/80 p-1.5 space-y-0.5">
+                          <div className="text-[10px] text-slate-400 font-bold">Main #{calculation.sponsorMainId} (Sponsor)</div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-amber-300 font-bold">Auto: {step.sponsorAutoPoolFinalUsdt.toFixed(2)} U</span>
+                            <span className="text-slate-600">·</span>
+                            <span className="text-fuchsia-300 font-bold">Extra: {step.sponsorExtraPoolFinalUsdt.toFixed(2)} U</span>
+                          </div>
                         </div>
-                        <div>
-                          <span className="text-slate-400">Main #{calculation.targetMainId}:</span>{' '}
-                          <strong className="text-amber-300">{step.targetExtraPoolFinalUsdt.toFixed(2)} U</strong>
+                        <div className="rounded bg-slate-950/80 border border-slate-800/80 p-1.5 space-y-0.5">
+                          <div className="text-[10px] text-slate-400 font-bold">Main #{calculation.targetMainId} (Target)</div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-amber-300 font-bold">Auto: {step.targetAutoPoolFinalUsdt.toFixed(2)} U</span>
+                            <span className="text-slate-600">·</span>
+                            <span className="text-fuchsia-300 font-bold">Extra: {step.targetExtraPoolFinalUsdt.toFixed(2)} U</span>
+                          </div>
                         </div>
                       </td>
                     </tr>
