@@ -2959,12 +2959,21 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
 
           const extraLeftVaultBonusGross = crossRankExtraLeftVaultGrossMap.get(r1Id) || 0;
           const totalExtraCostForMain = crossRankExtraCostMap.get(r1Id) || 0;
-          // ใน Smart Contract (_deductExtraPool): จะหักจาก bonus เม็ดซ้าย Extra ID ก่อนเป็นอันดับแรก
-          const deductedFromExtraLeftBonus = Math.min(extraLeftVaultBonusGross, totalExtraCostForMain);
-          const remainingExtraLeftBonus = Math.max(
-            0,
-            Number((extraLeftVaultBonusGross - deductedFromExtraLeftBonus).toFixed(4))
-          );
+          const repExtraBonus = perIdReportsMap.get(r1Id)?.extraLeftVaultBonus;
+
+          let remainingExtraLeftBonus = 0;
+          if (typeof repExtraBonus === 'number') {
+            remainingExtraLeftBonus = repExtraBonus;
+          } else {
+            // Smart Contract & Database rules: Extra ID costs are absorbed by R4..27 vaults first
+            const deductedFromR4To27 = Math.max(0, Number((totalGross4To27 - totalRem4To27).toFixed(4)));
+            const remainingCostForBonus = Math.max(0, Number((totalExtraCostForMain - deductedFromR4To27).toFixed(4)));
+            const deductedFromExtraLeftBonus = Math.min(extraLeftVaultBonusGross, remainingCostForBonus);
+            remainingExtraLeftBonus = Math.max(
+              0,
+              Number((extraLeftVaultBonusGross - deductedFromExtraLeftBonus).toFixed(4))
+            );
+          }
           crossRankExtraLeftVaultMap.set(r1Id, remainingExtraLeftBonus);
 
           if (extraLeftVaultBonusGross > 0) {
@@ -6104,6 +6113,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
               multiRankSnapshots={multiRankSnapshotsState}
               defaultMainId={2}
               defaultProspectiveRank={10}
+              perIdReportsMap={perIdReportsMap}
               onSelectRankAndNode={(r, nId) => {
                 if (selectedRank !== r) {
                   setSelectedRank(r);

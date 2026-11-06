@@ -99,7 +99,8 @@ function getFiveRankWindow(currentRank: number): [number, number] {
 export function calculateMatrixUpgradePath(
   multiRankSnapshots: Map<number, Map<number, SimRawNode>>,
   targetMainIdInput: number,
-  prospectiveRankInput: number
+  prospectiveRankInput: number,
+  perIdReportsMap?: Map<number, any>
 ): UpgradePathCalculationResult {
   const targetMainId = Math.max(1, Math.floor(targetMainIdInput || 2));
   const prospectiveRank = Math.min(27, Math.max(2, Math.floor(prospectiveRankInput || 10)));
@@ -241,11 +242,20 @@ export function calculateMatrixUpgradePath(
     }
   }
   // Subtract already-deducted Extra ID left-child bonus on-chain
+  // กฎเหล็ก Smart Contract: ต้นทุน Extra ID (totalExtraCost) จะถูกหักออกจากยอดสะสม R4..27 ก่อนเสมอ (deductedFromR4To27)
+  // ส่วนที่เกินจาก R4..27 เท่านั้นจึงจะนำมาหักออกจาก grossBonus (เม็ดซ้าย Extra ID)
   for (const r1Node of r1Map.values()) {
     if (r1Node.isClone || r1Node.isExtraId) continue;
     const mId = r1Node.id;
+
+    // หากมีรายงานสถิติจาก Backend (perIdReportsMap) ให้ใช้ค่า authentic ที่ตรวจสอบตรงกับเชน/DB ทันที
+    const rep = perIdReportsMap?.get(mId);
+    if (rep && typeof rep.extraLeftVaultBonus === 'number') {
+      extraLeftBonusByMain.set(mId, Number(rep.extraLeftVaultBonus.toFixed(4)));
+      continue;
+    }
+
     const grossBonus = extraLeftBonusByMain.get(mId) || 0;
-    if (grossBonus <= 0) continue;
     let totalExtraCost = 0;
     for (let r = 2; r <= 27; r++) {
       const snapR = simRanks.get(r)!;
@@ -257,7 +267,34 @@ export function calculateMatrixUpgradePath(
         }
       }
     }
-    const deductedFromBonus = Math.min(grossBonus, totalExtraCost);
+
+    const curRank = getMainCurrentRank(mId);
+    const [w5Start] = getFiveRankWindow(curRank);
+    let grossR4To27 = 0;
+    let remR4To27 = 0;
+    for (let r = 4; r <= 27; r++) {
+      if (curRank === 27 || r < w5Start) {
+        const snapR = simRanks.get(r)!;
+        const nId = getCorrespondingNodeInRank(mId, r);
+        if (nId > 0) {
+          const n = snapR.get(nId);
+          remR4To27 = Number((remR4To27 + (n?.nodeVault || 0)).toFixed(4));
+          const rUnitVault = Number(((RANK_PRICES_USDT[r - 1] || 30) * 0.35).toFixed(4));
+          for (const sn of snapR.values()) {
+            const isSameMain =
+              sn.id === nId ||
+              (sn.isClone && (sn.originMainId === nId || sn.originMainId === mId));
+            if (isSameMain && sn.leftChild > 0) {
+              grossR4To27 = Number((grossR4To27 + rUnitVault).toFixed(4));
+            }
+          }
+        }
+      }
+    }
+
+    const deductedFromR4To27 = Math.max(0, Number((grossR4To27 - remR4To27).toFixed(4)));
+    const remainingCostForBonus = Math.max(0, Number((totalExtraCost - deductedFromR4To27).toFixed(4)));
+    const deductedFromBonus = Math.min(grossBonus, remainingCostForBonus);
     extraLeftBonusByMain.set(mId, Math.max(0, Number((grossBonus - deductedFromBonus).toFixed(4))));
   }
 
@@ -772,6 +809,7 @@ interface ExtraIdPathCalculatorProps {
   defaultMainId?: number;
   defaultProspectiveRank?: number;
   onSelectRankAndNode?: (rank: number, nodeId: number) => void;
+  perIdReportsMap?: Map<number, any>;
 }
 
 export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
@@ -779,6 +817,7 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
   defaultMainId = 2,
   defaultProspectiveRank = 10,
   onSelectRankAndNode,
+  perIdReportsMap,
 }) => {
   const availableMainIds = useMemo(() => {
     const r1 = multiRankSnapshots.get(1);
@@ -795,8 +834,8 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
   const [ownerFilter, setOwnerFilter] = useState<'ALL' | 'SPONSOR' | 'TARGET'>('ALL');
 
   const calculation = useMemo(
-    () => calculateMatrixUpgradePath(multiRankSnapshots, targetMainId, prospectiveRank),
-    [multiRankSnapshots, targetMainId, prospectiveRank]
+    () => calculateMatrixUpgradePath(multiRankSnapshots, targetMainId, prospectiveRank, perIdReportsMap),
+    [multiRankSnapshots, targetMainId, prospectiveRank, perIdReportsMap]
   );
 
   const handleSelectMainId = (newId: number) => {
