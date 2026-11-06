@@ -273,21 +273,24 @@ export function calculateMatrixUpgradePath(
     }
 
     const curRank = getMainCurrentRank(mId);
+    const [w5Start] = getFiveRankWindow(curRank);
     let grossR4To27 = 0;
     let remR4To27 = 0;
     for (let r = 4; r <= 27; r++) {
-      const snapR = simRanks.get(r)!;
-      const nId = getCorrespondingNodeInRank(mId, r);
-      if (nId > 0) {
-        const n = snapR.get(nId);
-        remR4To27 = Number((remR4To27 + (n?.nodeVault || 0)).toFixed(4));
-        const rUnitVault = Number(((RANK_PRICES_USDT[r - 1] || 30) * 0.35).toFixed(4));
-        for (const sn of snapR.values()) {
-          const isSameMain =
-            sn.id === nId ||
-            (sn.isClone && (sn.originMainId === nId || sn.originMainId === mId));
-          if (isSameMain && sn.leftChild > 0) {
-            grossR4To27 = Number((grossR4To27 + rUnitVault).toFixed(4));
+      if (curRank === 27 || r < w5Start) {
+        const snapR = simRanks.get(r)!;
+        const nId = getCorrespondingNodeInRank(mId, r);
+        if (nId > 0) {
+          const n = snapR.get(nId);
+          remR4To27 = Number((remR4To27 + (n?.nodeVault || 0)).toFixed(4));
+          const rUnitVault = Number(((RANK_PRICES_USDT[r - 1] || 30) * 0.35).toFixed(4));
+          for (const sn of snapR.values()) {
+            const isSameMain =
+              sn.id === nId ||
+              (sn.isClone && (sn.originMainId === nId || sn.originMainId === mId));
+            if (isSameMain && sn.leftChild > 0) {
+              grossR4To27 = Number((grossR4To27 + rUnitVault).toFixed(4));
+            }
           }
         }
       }
@@ -316,12 +319,16 @@ export function calculateMatrixUpgradePath(
   };
 
   const calcExtraIdPool = (r1Main: number): number => {
+    const curRank = getMainCurrentRank(r1Main);
+    const [w5Start] = getFiveRankWindow(curRank);
     let total = extraLeftBonusByMain.get(r1Main) || 0;
     for (let r = 4; r <= 27; r++) {
-      const nId = getCorrespondingNodeInRank(r1Main, r);
-      if (nId > 0) {
-        const n = simRanks.get(r)?.get(nId);
-        total = Number((total + (n?.nodeVault || 0)).toFixed(4));
+      if (curRank === 27 || r < w5Start) {
+        const nId = getCorrespondingNodeInRank(r1Main, r);
+        if (nId > 0) {
+          const n = simRanks.get(r)?.get(nId);
+          total = Number((total + (n?.nodeVault || 0)).toFixed(4));
+        }
       }
     }
     return total;
@@ -349,7 +356,10 @@ export function calculateMatrixUpgradePath(
       rem = Number((rem - bDeduct).toFixed(4));
     }
     if (rem > 1e-6) {
-      deductVaultRange(r1Main, 4, 27, rem);
+      const curRank = getMainCurrentRank(r1Main);
+      const [w5Start] = getFiveRankWindow(curRank);
+      const endR = curRank === 27 ? 27 : w5Start > 4 ? w5Start - 1 : 4;
+      deductVaultRange(r1Main, 4, endR, rem);
     }
   };
 
@@ -660,10 +670,8 @@ export function calculateMatrixUpgradePath(
         const poolBefore = calcExtraIdPool(r1Main);
         const price = RANK_PRICES_USDT[targetRank - 1] || 10;
         if (poolBefore + 1e-6 < price) continue;
-        const sponsorNodeInTarget =
-          getCorrespondingNodeInRank(r1Main, targetRank) ||
-          getCorrespondingNodeInRank(1, targetRank) ||
-          1;
+        const sponsorNodeInTarget = getCorrespondingNodeInRank(r1Main, targetRank);
+        if (sponsorNodeInTarget <= 0) continue;
 
         deductExtraPool(r1Main, price);
         const poolAfter = calcExtraIdPool(r1Main);
@@ -1198,15 +1206,6 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
                                 {step.vaultAddedToParentUsdt.toFixed(2)} ={' '}
                                 <strong className="text-amber-300">
                                   {step.sponsorExtraPoolAfterGainUsdt.toFixed(2)} U
-                                </strong>
-                              </div>
-                            )}
-                            {step.recipientMainId === calculation.targetMainId && step.upgradeRank >= 4 && (
-                              <div className="text-[10.5px] text-slate-300">
-                                Extra Pool #{calculation.targetMainId}: {step.targetExtraPoolBeforeUsdt.toFixed(2)} +{' '}
-                                {step.vaultAddedToParentUsdt.toFixed(2)} ={' '}
-                                <strong className="text-amber-300">
-                                  {step.targetExtraPoolAfterGainUsdt.toFixed(2)} U
                                 </strong>
                               </div>
                             )}
