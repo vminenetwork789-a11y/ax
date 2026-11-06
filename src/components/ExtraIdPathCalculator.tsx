@@ -57,10 +57,12 @@ export interface UpgradePathStepResult {
   recipientMainId: number;
   window5RangeTarget: [number, number];
   window5RangeSponsor: [number, number];
+  sponsorUpgradePoolFinalUsdt: number;
   sponsorExtraPoolBeforeUsdt: number;
   sponsorExtraPoolAfterGainUsdt: number;
   sponsorExtraPoolFinalUsdt: number;
   sponsorAutoPoolFinalUsdt: number;
+  targetUpgradePoolFinalUsdt: number;
   targetExtraPoolBeforeUsdt: number;
   targetExtraPoolAfterGainUsdt: number;
   targetExtraPoolFinalUsdt: number;
@@ -82,6 +84,14 @@ export interface UpgradePathCalculationResult {
   allAutoIdEvents: ChainReactionEvent[];
   sponsorAutoIdEvents: ChainReactionEvent[];
   targetAutoIdEvents: ChainReactionEvent[];
+  finalSponsorUpgradePoolUsdt: number;
+  finalTargetUpgradePoolUsdt: number;
+  targetFinalRank: number;
+  sponsorFinalRank: number;
+  targetWindow5Range: [number, number];
+  sponsorWindow5Range: [number, number];
+  targetNextRankPriceUsdt: number;
+  sponsorNextRankPriceUsdt: number;
   finalSponsorAutoPoolUsdt: number;
   finalSponsorExtraPoolUsdt: number;
   finalTargetAutoPoolUsdt: number;
@@ -313,6 +323,21 @@ export function calculateMatrixUpgradePath(
           const n = simRanks.get(r)?.get(nId);
           total = Number((total + (n?.nodeVault || 0)).toFixed(4));
         }
+      }
+    }
+    return total;
+  };
+
+  const calcUpgradeRankPool = (r1Main: number): number => {
+    const curRank = getMainCurrentRank(r1Main);
+    if (curRank >= 27) return 0;
+    const [w5Start, w5End] = getFiveRankWindow(curRank);
+    let total = 0;
+    for (let r = w5Start; r <= w5End; r++) {
+      const nId = getCorrespondingNodeInRank(r1Main, r);
+      if (nId > 0) {
+        const n = simRanks.get(r)?.get(nId);
+        total = Number((total + (n?.nodeVault || 0)).toFixed(4));
       }
     }
     return total;
@@ -786,10 +811,12 @@ export function calculateMatrixUpgradePath(
       recipientMainId: parentR1Main,
       window5RangeTarget: getFiveRankWindow(getMainCurrentRank(targetMainId)),
       window5RangeSponsor: getFiveRankWindow(getMainCurrentRank(sponsorMainId)),
+      sponsorUpgradePoolFinalUsdt: calcUpgradeRankPool(sponsorMainId),
       sponsorExtraPoolBeforeUsdt: sponsorExtraBefore,
       sponsorExtraPoolAfterGainUsdt: sponsorExtraAfterGain,
       sponsorExtraPoolFinalUsdt: calcExtraIdPool(sponsorMainId),
       sponsorAutoPoolFinalUsdt: calcAutoIdPool(sponsorMainId),
+      targetUpgradePoolFinalUsdt: calcUpgradeRankPool(targetMainId),
       targetExtraPoolBeforeUsdt: targetExtraBefore,
       targetExtraPoolAfterGainUsdt: targetExtraAfterGain,
       targetExtraPoolFinalUsdt: calcExtraIdPool(targetMainId),
@@ -798,6 +825,9 @@ export function calculateMatrixUpgradePath(
       chainReactions: stepChainEvents,
     });
   }
+
+  const targetFinalRank = getMainCurrentRank(targetMainId);
+  const sponsorFinalRank = getMainCurrentRank(sponsorMainId);
 
   return {
     targetMainId,
@@ -812,6 +842,14 @@ export function calculateMatrixUpgradePath(
     allAutoIdEvents,
     sponsorAutoIdEvents: allAutoIdEvents.filter((e) => e.ownerMainId === sponsorMainId),
     targetAutoIdEvents: allAutoIdEvents.filter((e) => e.ownerMainId === targetMainId),
+    finalSponsorUpgradePoolUsdt: calcUpgradeRankPool(sponsorMainId),
+    finalTargetUpgradePoolUsdt: calcUpgradeRankPool(targetMainId),
+    targetFinalRank,
+    sponsorFinalRank,
+    targetWindow5Range: getFiveRankWindow(targetFinalRank),
+    sponsorWindow5Range: getFiveRankWindow(sponsorFinalRank),
+    targetNextRankPriceUsdt: targetFinalRank < 27 ? (RANK_PRICES_USDT[targetFinalRank] || 0) : 0,
+    sponsorNextRankPriceUsdt: sponsorFinalRank < 27 ? (RANK_PRICES_USDT[sponsorFinalRank] || 0) : 0,
     finalSponsorAutoPoolUsdt: calcAutoIdPool(sponsorMainId),
     finalSponsorExtraPoolUsdt: calcExtraIdPool(sponsorMainId),
     finalTargetAutoPoolUsdt: calcAutoIdPool(targetMainId),
@@ -1047,8 +1085,63 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
         </div>
       ) : (
         <>
-          {/* Quick Pool Summary Cards (Auto ID Pool & Extra ID Pool) */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 rounded-xl bg-slate-900/60 border border-slate-800 text-xs">
+          {/* Quick Pool Summary Cards (35% Upgrade Pool, Auto ID Pool, Extra ID Pool) */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 p-3 rounded-xl bg-slate-900/60 border border-slate-800 text-xs">
+            {/* 35% Upgrade Rank Pool Summary */}
+            <div className="rounded-lg bg-slate-950 border border-cyan-500/30 p-2.5 space-y-1">
+              <div className="flex items-center justify-between text-cyan-300 font-bold">
+                <span>🏆 สรุปยอด 35% อัพ rank (Upgrade Pool)</span>
+                <span className="text-[10px] text-slate-400 font-normal">กรอบ 5 Rank สไลด์</span>
+              </div>
+              <div className="space-y-1.5 font-mono text-[11px] pt-1 border-t border-slate-800/80">
+                <div className="space-y-0.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-300">Main #{calculation.sponsorMainId} (Sponsor):</span>
+                    {calculation.sponsorFinalRank >= 27 ? (
+                      <span className="text-amber-300 font-bold">0.00 U (Max Rank R27 👑)</span>
+                    ) : (
+                      <span className="text-cyan-300 font-bold">
+                        สะสม {calculation.finalSponsorUpgradePoolUsdt.toFixed(2)} / {calculation.sponsorNextRankPriceUsdt.toLocaleString()} U
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center justify-between text-[10px] text-slate-500">
+                    <span>กรอบ 5 Rank: R{calculation.sponsorWindow5Range[0]}–R{calculation.sponsorWindow5Range[1]}</span>
+                    {calculation.sponsorFinalRank < 27 && (
+                      <span className={calculation.finalSponsorUpgradePoolUsdt >= calculation.sponsorNextRankPriceUsdt ? 'text-emerald-400 font-bold' : 'text-slate-400'}>
+                        {calculation.finalSponsorUpgradePoolUsdt >= calculation.sponsorNextRankPriceUsdt
+                          ? `(พร้อมอัพ R${calculation.sponsorFinalRank + 1}! 🚀)`
+                          : `(ขาดอีก ${(calculation.sponsorNextRankPriceUsdt - calculation.finalSponsorUpgradePoolUsdt).toFixed(2)} U)`}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-0.5 pt-1 border-t border-slate-800/60">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-300">Main #{calculation.targetMainId} (Target):</span>
+                    {calculation.targetFinalRank >= 27 ? (
+                      <span className="text-amber-300 font-bold">0.00 U (Max Rank R27 👑)</span>
+                    ) : (
+                      <span className="text-cyan-300 font-bold">
+                        สะสม {calculation.finalTargetUpgradePoolUsdt.toFixed(2)} / {calculation.targetNextRankPriceUsdt.toLocaleString()} U
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center justify-between text-[10px] text-slate-500">
+                    <span>กรอบ 5 Rank: R{calculation.targetWindow5Range[0]}–R{calculation.targetWindow5Range[1]}</span>
+                    {calculation.targetFinalRank < 27 && (
+                      <span className={calculation.finalTargetUpgradePoolUsdt >= calculation.targetNextRankPriceUsdt ? 'text-emerald-400 font-bold' : 'text-slate-400'}>
+                        {calculation.finalTargetUpgradePoolUsdt >= calculation.targetNextRankPriceUsdt
+                          ? `(พร้อมอัพ R${calculation.targetFinalRank + 1}! 🚀)`
+                          : `(ขาดอีก ${(calculation.targetNextRankPriceUsdt - calculation.finalTargetUpgradePoolUsdt).toFixed(2)} U)`}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
             {/* Auto ID Pool Summary */}
             <div className="rounded-lg bg-slate-950 border border-amber-500/30 p-2.5 space-y-1">
               <div className="flex items-center justify-between text-amber-300 font-bold">
@@ -1145,7 +1238,7 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
                     <th className="py-2.5 px-3 whitespace-nowrap">35% Vault ที่เกิดขึ้น</th>
                     <th className="py-2.5 px-3">Extra ID ที่เกิดในขั้นนี้ (R27→R2)</th>
                     <th className="py-2.5 px-3">โคลน / ปฏิกิริยาลูกโซ่ต่อเนื่อง</th>
-                    <th className="py-2.5 px-3 whitespace-nowrap">คงเหลือ Pool (Auto / Extra)</th>
+                    <th className="py-2.5 px-3 whitespace-nowrap">คงเหลือ 3 กระปุก (Up / Auto / Extra)</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/80 font-mono">
@@ -1286,19 +1379,25 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
                         )}
                       </td>
 
-                      {/* Col 6: Remaining Pool Balances */}
+                      {/* Col 6: Remaining 3 Pool Balances (Up / Auto / Extra) */}
                       <td className="py-3 px-3 whitespace-nowrap text-[11px] space-y-1.5">
-                        <div className="rounded bg-slate-950/80 border border-slate-800/80 p-1.5 space-y-0.5">
+                        <div className="rounded bg-slate-950/80 border border-slate-800/80 p-1.5 space-y-1">
                           <div className="text-[10px] text-slate-400 font-bold">Main #{calculation.sponsorMainId} (Sponsor)</div>
-                          <div className="flex items-center gap-1.5">
+                          <div className="text-cyan-300 font-bold">
+                            Up: {step.sponsorUpgradePoolFinalUsdt.toFixed(2)} U
+                          </div>
+                          <div className="flex items-center gap-1.5 text-[10px]">
                             <span className="text-amber-300 font-bold">Auto: {step.sponsorAutoPoolFinalUsdt.toFixed(2)} U</span>
                             <span className="text-slate-600">·</span>
                             <span className="text-fuchsia-300 font-bold">Extra: {step.sponsorExtraPoolFinalUsdt.toFixed(2)} U</span>
                           </div>
                         </div>
-                        <div className="rounded bg-slate-950/80 border border-slate-800/80 p-1.5 space-y-0.5">
+                        <div className="rounded bg-slate-950/80 border border-slate-800/80 p-1.5 space-y-1">
                           <div className="text-[10px] text-slate-400 font-bold">Main #{calculation.targetMainId} (Target)</div>
-                          <div className="flex items-center gap-1.5">
+                          <div className="text-cyan-300 font-bold">
+                            Up: {step.targetUpgradePoolFinalUsdt.toFixed(2)} U
+                          </div>
+                          <div className="flex items-center gap-1.5 text-[10px]">
                             <span className="text-amber-300 font-bold">Auto: {step.targetAutoPoolFinalUsdt.toFixed(2)} U</span>
                             <span className="text-slate-600">·</span>
                             <span className="text-fuchsia-300 font-bold">Extra: {step.targetExtraPoolFinalUsdt.toFixed(2)} U</span>
