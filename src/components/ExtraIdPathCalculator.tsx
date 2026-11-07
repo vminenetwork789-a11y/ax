@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { RANK_PRICES_USDT } from '../contracts/config';
-import { Calculator, Sparkles, ArrowRight, Layers, CheckCircle2, RotateCcw } from 'lucide-react';
+import { Calculator, Sparkles, ArrowRight, Layers, CheckCircle2, RotateCcw, Zap, Bot } from 'lucide-react';
 
 export interface SimRawNode {
   id: number;
@@ -41,6 +41,24 @@ export interface ChainReactionEvent {
   ownerMainId: number;
   parentId: number;
   side: 'LEFT' | 'RIGHT';
+  descriptionTh: string;
+}
+
+export type GeneratedItemCategory = 'EXTRA_ID' | 'AUTO_ID' | 'CLONE';
+
+export interface UnifiedGeneratedItem {
+  id: string;
+  category: GeneratedItemCategory;
+  categoryLabel: string;
+  stepRank: number;
+  ownerMainId: number;
+  spawnedInRank: number;
+  newNodeId: number;
+  nodeCode: string;
+  parentId: number;
+  side: 'LEFT' | 'RIGHT';
+  rankPriceUsdt: number;
+  costOrDeduction: string;
   descriptionTh: string;
 }
 
@@ -923,6 +941,7 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
 
   const [targetMainId, setTargetMainId] = useState<number>(defaultMainId);
   const [prospectiveRank, setProspectiveRank] = useState<number>(defaultProspectiveRank);
+  const [typeFilter, setTypeFilter] = useState<'ALL' | 'EXTRA_ID' | 'AUTO_ID' | 'CLONE'>('ALL');
   const [ownerFilter, setOwnerFilter] = useState<'ALL' | 'SPONSOR' | 'TARGET'>('ALL');
 
   const calculation = useMemo(
@@ -946,11 +965,104 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
     }
   };
 
-  const filteredExtraEvents = useMemo(() => {
-    if (ownerFilter === 'SPONSOR') return calculation.sponsorExtraIdEvents;
-    if (ownerFilter === 'TARGET') return calculation.targetExtraIdEvents;
-    return calculation.allExtraIdEvents;
-  }, [calculation, ownerFilter]);
+  // Compile all generated identities (Extra ID, Auto ID, Clone) across simulated steps
+  const allGeneratedItems = useMemo<UnifiedGeneratedItem[]>(() => {
+    const items: UnifiedGeneratedItem[] = [];
+
+    calculation.steps.forEach((step) => {
+      // 1. Extra IDs in this step
+      step.extraIdsGenerated.forEach((ex, idx) => {
+        items.push({
+          id: `step-${step.upgradeRank}-extra-${idx}-${ex.newNodeId}`,
+          category: 'EXTRA_ID',
+          categoryLabel: 'Extra ID',
+          stepRank: step.upgradeRank,
+          ownerMainId: ex.ownerMainId,
+          spawnedInRank: ex.spawnedInRank,
+          newNodeId: ex.newNodeId,
+          nodeCode: `Extra R${ex.spawnedInRank}-#${ex.newNodeId}`,
+          parentId: ex.parentId,
+          side: ex.side,
+          rankPriceUsdt: ex.rankPriceUsdt,
+          costOrDeduction: `หัก ${ex.deductedUsdt.toFixed(2)} U จาก Extra Pool (เหลือ ${ex.poolAfterUsdt.toFixed(2)} U)`,
+          descriptionTh: ex.triggeredByNote,
+        });
+      });
+
+      // 2. Auto IDs and Clones from chain reactions
+      step.chainReactions.forEach((cr, idx) => {
+        if (cr.type === 'AUTO_ID') {
+          items.push({
+            id: `step-${step.upgradeRank}-auto-${idx}-${cr.nodeId}`,
+            category: 'AUTO_ID',
+            categoryLabel: 'Auto ID',
+            stepRank: step.upgradeRank,
+            ownerMainId: cr.ownerMainId,
+            spawnedInRank: 1,
+            newNodeId: cr.nodeId,
+            nodeCode: `Auto R1-#${cr.nodeId}`,
+            parentId: cr.parentId,
+            side: cr.side,
+            rankPriceUsdt: 5,
+            costOrDeduction: 'หัก 5.00 U จาก Auto Pool (R1-3)',
+            descriptionTh: cr.descriptionTh,
+          });
+        } else if (cr.type === 'CLONE') {
+          const clonePrice = RANK_PRICES_USDT[cr.rank - 1] || 0;
+          items.push({
+            id: `step-${step.upgradeRank}-clone-${idx}-${cr.nodeId}`,
+            category: 'CLONE',
+            categoryLabel: 'โคลนนิ่ง',
+            stepRank: step.upgradeRank,
+            ownerMainId: cr.ownerMainId,
+            spawnedInRank: cr.rank,
+            newNodeId: cr.nodeId,
+            nodeCode: `Clone R${cr.rank}-#${cr.nodeId}`,
+            parentId: cr.parentId,
+            side: cr.side,
+            rankPriceUsdt: clonePrice,
+            costOrDeduction: 'ฟรี (เด้งโคลน 100% Rebirth ขาขวา)',
+            descriptionTh: cr.descriptionTh,
+          });
+        }
+      });
+    });
+
+    return items;
+  }, [calculation.steps]);
+
+  const extraCount = useMemo(
+    () => allGeneratedItems.filter((i) => i.category === 'EXTRA_ID').length,
+    [allGeneratedItems]
+  );
+  const autoCount = useMemo(
+    () => allGeneratedItems.filter((i) => i.category === 'AUTO_ID').length,
+    [allGeneratedItems]
+  );
+  const cloneCount = useMemo(
+    () => allGeneratedItems.filter((i) => i.category === 'CLONE').length,
+    [allGeneratedItems]
+  );
+
+  const sponsorTotalCount = useMemo(
+    () => allGeneratedItems.filter((i) => i.ownerMainId === calculation.sponsorMainId).length,
+    [allGeneratedItems, calculation.sponsorMainId]
+  );
+  const targetTotalCount = useMemo(
+    () => allGeneratedItems.filter((i) => i.ownerMainId === calculation.targetMainId).length,
+    [allGeneratedItems, calculation.targetMainId]
+  );
+
+  const filteredItems = useMemo(() => {
+    return allGeneratedItems.filter((item) => {
+      const matchType = typeFilter === 'ALL' || item.category === typeFilter;
+      const matchOwner =
+        ownerFilter === 'ALL' ||
+        (ownerFilter === 'SPONSOR' && item.ownerMainId === calculation.sponsorMainId) ||
+        (ownerFilter === 'TARGET' && item.ownerMainId === calculation.targetMainId);
+      return matchType && matchOwner;
+    });
+  }, [allGeneratedItems, typeFilter, ownerFilter, calculation.sponsorMainId, calculation.targetMainId]);
 
   return (
     <div className="rounded-xl bg-slate-950/95 border border-slate-800 p-4 sm:p-5 space-y-4 text-slate-100 shadow-xl">
@@ -973,6 +1085,7 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
           onClick={() => {
             setTargetMainId(2);
             setProspectiveRank(10);
+            setTypeFilter('ALL');
             setOwnerFilter('ALL');
           }}
           className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-medium text-slate-300 flex items-center gap-1.5 self-start sm:self-auto cursor-pointer transition"
@@ -1557,92 +1670,202 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
             </div>
           </div>
 
-          {/* Table 2: Filtered Summary of All Generated Extra IDs */}
-          <div className="space-y-2 pt-2 border-t border-slate-800/80">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <div className="flex items-center gap-2 text-xs sm:text-sm font-bold text-slate-200">
-                <Sparkles className="w-4 h-4 text-fuchsia-400" />
-                <span>
-                  ตารางที่ 2: สรุปรายการ Extra ID ที่จะเกิดทั้งหมด ({filteredExtraEvents.length} รหัส)
-                </span>
+          {/* Table 2: Filtered Summary of All Generated Sub-Identities (Extra ID, Auto ID, Clone) */}
+          <div className="space-y-3 pt-3 border-t border-slate-800/80">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-2.5">
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2 text-xs sm:text-sm font-bold text-slate-200">
+                  <Sparkles className="w-4 h-4 text-fuchsia-400" />
+                  <span>
+                    ตารางที่ 2: สรุปรายการ Extra ID, Auto ID และโคลนนิ่ง ที่จะเกิดทั้งหมด ({filteredItems.length} จาก {allGeneratedItems.length} รหัส)
+                  </span>
+                </div>
+                <div className="text-[11px] text-slate-400">
+                  รวบรวมรหัสใหม่ทุกประเภทที่เกิดขึ้นตามปฏิกิริยาลูกโซ่: ⚡ Extra ID (R27→R2), 🤖 Auto ID (R1), ✨ โคลนนิ่ง (R1→R27)
+                </div>
               </div>
 
-              {/* Interactive Filter Controls */}
-              <div className="flex items-center gap-1 p-1 bg-slate-900 rounded-lg border border-slate-800 self-start sm:self-auto">
-                {[
-                  { key: 'ALL', label: `ทั้งหมด (${calculation.allExtraIdEvents.length})` },
-                  {
-                    key: 'SPONSOR',
-                    label: `ของ Main #${calculation.sponsorMainId} (${calculation.sponsorExtraIdEvents.length})`,
-                  },
-                  {
-                    key: 'TARGET',
-                    label: `ของ Main #${calculation.targetMainId} (${calculation.targetExtraIdEvents.length})`,
-                  },
-                ].map((tab) => (
-                  <button
-                    key={`filter-${tab.key}`}
-                    type="button"
-                    onClick={() => setOwnerFilter(tab.key as any)}
-                    className={`px-2.5 py-1 rounded-md text-xs font-medium transition cursor-pointer ${
-                      ownerFilter === tab.key
-                        ? 'bg-fuchsia-600 text-white shadow-sm'
-                        : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
+              {/* Interactive Filter Controls: Category & Owner */}
+              <div className="flex flex-wrap items-center gap-2">
+                {/* 1. Category Filter */}
+                <div className="flex items-center gap-1 p-1 bg-slate-900 rounded-lg border border-slate-800">
+                  {[
+                    { key: 'ALL', label: `ทั้งหมด (${allGeneratedItems.length})` },
+                    { key: 'EXTRA_ID', label: `⚡ Extra (${extraCount})` },
+                    { key: 'AUTO_ID', label: `🤖 Auto (${autoCount})` },
+                    { key: 'CLONE', label: `✨ โคลน (${cloneCount})` },
+                  ].map((tab) => (
+                    <button
+                      key={`filter-cat-${tab.key}`}
+                      type="button"
+                      onClick={() => setTypeFilter(tab.key as any)}
+                      className={`px-2.5 py-1 rounded-md text-xs font-medium transition cursor-pointer ${
+                        typeFilter === tab.key
+                          ? 'bg-fuchsia-600 text-white shadow-sm'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* 2. Owner Filter */}
+                <div className="flex items-center gap-1 p-1 bg-slate-900 rounded-lg border border-slate-800">
+                  {[
+                    { key: 'ALL', label: `ทุกคน (${allGeneratedItems.length})` },
+                    {
+                      key: 'SPONSOR',
+                      label: `Main #${calculation.sponsorMainId} (${sponsorTotalCount})`,
+                    },
+                    {
+                      key: 'TARGET',
+                      label: `Main #${calculation.targetMainId} (${targetTotalCount})`,
+                    },
+                  ].map((tab) => (
+                    <button
+                      key={`filter-owner-${tab.key}`}
+                      type="button"
+                      onClick={() => setOwnerFilter(tab.key as any)}
+                      className={`px-2.5 py-1 rounded-md text-xs font-medium transition cursor-pointer ${
+                        ownerFilter === tab.key
+                          ? 'bg-indigo-600 text-white shadow-sm'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
-            {filteredExtraEvents.length === 0 ? (
-              <div className="rounded-lg bg-slate-900/50 border border-slate-800 p-3 text-center text-xs text-slate-400">
-                ไม่มีรายการ Extra ID ที่เกิดสำหรับตัวกรองนี้ในช่วง Rank {calculation.startSimulatedRank} → {calculation.prospectiveRank}
+            {filteredItems.length === 0 ? (
+              <div className="rounded-lg bg-slate-900/50 border border-slate-800 p-4 text-center text-xs text-slate-400">
+                ไม่มีรายการรหัสใหม่ (Extra ID / Auto ID / โคลนนิ่ง) ที่เกิดสำหรับตัวกรองนี้ในช่วง Rank {calculation.startSimulatedRank} → {calculation.prospectiveRank}
               </div>
             ) : (
               <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-900/40">
                 <table className="w-full text-left border-collapse text-xs font-mono">
                   <thead>
                     <tr className="border-b border-slate-800 bg-slate-900/90 text-slate-300 font-sans font-semibold">
-                      <th className="py-2 px-3">ลำดับ</th>
-                      <th className="py-2 px-3">เกิดเมื่ออัพถึง</th>
-                      <th className="py-2 px-3">เจ้าของ Extra ID</th>
-                      <th className="py-2 px-3">เกิดที่ Rank (ราคา)</th>
-                      <th className="py-2 px-3">รหัสโหนด Extra ID</th>
-                      <th className="py-2 px-3">วางต่อใต้อัพไลน์</th>
-                      <th className="py-2 px-3">ยอดก่อนหัก → หลังหัก</th>
+                      <th className="py-2.5 px-3 whitespace-nowrap">ลำดับ</th>
+                      <th className="py-2.5 px-3 whitespace-nowrap">ประเภท</th>
+                      <th className="py-2.5 px-3 whitespace-nowrap">เกิดเมื่ออัพถึง</th>
+                      <th className="py-2.5 px-3 whitespace-nowrap">เจ้าของรหัส</th>
+                      <th className="py-2.5 px-3 whitespace-nowrap">เกิดที่ Rank (ราคา)</th>
+                      <th className="py-2.5 px-3 whitespace-nowrap">รหัสโหนดใหม่</th>
+                      <th className="py-2.5 px-3 whitespace-nowrap">วางต่อใต้อัพไลน์</th>
+                      <th className="py-2.5 px-3">รายละเอียด / ยอดหัก / ที่มา</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/70">
-                    {filteredExtraEvents.map((ev, i) => (
-                      <tr key={`summary-extra-${i}`} className="hover:bg-slate-900/60">
-                        <td className="py-2 px-3 text-slate-400">#{i + 1}</td>
-                        <td className="py-2 px-3 text-amber-300 font-bold">
-                          เมื่อ Main #{calculation.targetMainId} ขึ้น R{ev.stepRank}
+                    {filteredItems.map((item, i) => (
+                      <tr key={`summary-item-${item.id}`} className="hover:bg-slate-900/60 transition-colors">
+                        {/* 1. ลำดับ */}
+                        <td className="py-2.5 px-3 text-slate-400">#{i + 1}</td>
+
+                        {/* 2. ประเภท (Badge) */}
+                        <td className="py-2.5 px-3 whitespace-nowrap">
+                          {item.category === 'EXTRA_ID' && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-bold bg-fuchsia-950/80 border border-fuchsia-500/50 text-fuchsia-300">
+                              <Zap className="w-3 h-3 text-fuchsia-400" />
+                              Extra ID
+                            </span>
+                          )}
+                          {item.category === 'AUTO_ID' && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-bold bg-amber-950/80 border border-amber-500/50 text-amber-300">
+                              <Bot className="w-3 h-3 text-amber-400" />
+                              Auto ID
+                            </span>
+                          )}
+                          {item.category === 'CLONE' && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-bold bg-cyan-950/80 border border-cyan-500/50 text-cyan-300">
+                              <Sparkles className="w-3 h-3 text-cyan-400" />
+                              โคลนนิ่ง
+                            </span>
+                          )}
                         </td>
-                        <td className="py-2 px-3">
+
+                        {/* 3. เกิดเมื่ออัพถึง */}
+                        <td className="py-2.5 px-3 text-amber-300 font-bold whitespace-nowrap">
+                          เมื่อ Main #{calculation.targetMainId} ขึ้น R{item.stepRank}
+                        </td>
+
+                        {/* 4. เจ้าของรหัส */}
+                        <td className="py-2.5 px-3 whitespace-nowrap">
                           <span
                             className={`font-bold ${
-                              ev.ownerMainId === calculation.sponsorMainId ? 'text-fuchsia-300' : 'text-cyan-300'
+                              item.ownerMainId === calculation.sponsorMainId ? 'text-fuchsia-300' : 'text-cyan-300'
                             }`}
                           >
-                            Main ID #{ev.ownerMainId}
+                            Main ID #{item.ownerMainId}
+                          </span>
+                          <span className="text-[10px] text-slate-400 font-normal ml-1">
+                            ({item.ownerMainId === calculation.sponsorMainId ? 'Sponsor' : 'Target'})
                           </span>
                         </td>
-                        <td className="py-2 px-3 font-bold text-white">
-                          Rank {ev.spawnedInRank} ({ev.rankPriceUsdt.toLocaleString()} U)
+
+                        {/* 5. เกิดที่ Rank (ราคา) */}
+                        <td className="py-2.5 px-3 font-bold text-white whitespace-nowrap">
+                          Rank {item.spawnedInRank}{' '}
+                          <span className="text-slate-400 font-normal">
+                            ({item.rankPriceUsdt.toLocaleString()} U)
+                          </span>
                         </td>
-                        <td className="py-2 px-3 font-bold text-fuchsia-300">
-                          Extra R{ev.spawnedInRank}-#{ev.newNodeId}
+
+                        {/* 6. รหัสโหนดใหม่ */}
+                        <td className="py-2.5 px-3 whitespace-nowrap">
+                          <button
+                            type="button"
+                            onClick={() => onSelectRankAndNode?.(item.spawnedInRank, item.newNodeId)}
+                            className={`font-bold hover:underline cursor-pointer ${
+                              item.category === 'EXTRA_ID'
+                                ? 'text-fuchsia-300'
+                                : item.category === 'AUTO_ID'
+                                ? 'text-amber-300'
+                                : 'text-cyan-300'
+                            }`}
+                            title={`คลิกเพื่อดูผัง Rank ${item.spawnedInRank} ที่โหนด #${item.newNodeId}`}
+                          >
+                            {item.nodeCode}
+                          </button>
                         </td>
-                        <td className="py-2 px-3 text-slate-200">
-                          ใต้ R{ev.spawnedInRank}-#{ev.parentId} ({ev.side === 'LEFT' ? '↙ซ้าย' : '↘ขวา'})
+
+                        {/* 7. วางต่อใต้อัพไลน์ */}
+                        <td className="py-2.5 px-3 whitespace-nowrap">
+                          <div className="space-y-0.5">
+                            <div>
+                              <span className="text-slate-400 mr-1">ใต้</span>
+                              <button
+                                type="button"
+                                onClick={() => onSelectRankAndNode?.(item.spawnedInRank, item.parentId)}
+                                className="text-indigo-300 hover:underline font-bold cursor-pointer"
+                                title={`คลิกเพื่อดูผัง Rank ${item.spawnedInRank} ที่โหนด #${item.parentId}`}
+                              >
+                                R{item.spawnedInRank}-#{item.parentId}
+                              </button>
+                            </div>
+                            <div
+                              className={`text-[10.5px] font-bold ${
+                                item.side === 'LEFT' ? 'text-emerald-400' : 'text-purple-400'
+                              }`}
+                            >
+                              {item.side === 'LEFT' ? '↙ ฝั่งซ้าย' : '↘ ฝั่งขวา'}
+                            </div>
+                          </div>
                         </td>
-                        <td className="py-2 px-3">
-                          <span className="text-slate-300">{ev.poolBeforeUsdt.toFixed(2)} U</span>
-                          <ArrowRight className="w-3 h-3 inline mx-1 text-slate-500" />
-                          <span className="text-emerald-400 font-bold">{ev.poolAfterUsdt.toFixed(2)} U</span>
+
+                        {/* 8. รายละเอียด / ยอดหัก / ที่มา */}
+                        <td className="py-2.5 px-3">
+                          <div className="space-y-0.5 min-w-[200px] max-w-sm">
+                            <div className="text-[11px] font-bold text-slate-200">
+                              {item.costOrDeduction}
+                            </div>
+                            <div className="text-[10.5px] text-slate-400 font-sans leading-relaxed">
+                              {item.descriptionTh}
+                            </div>
+                          </div>
                         </td>
                       </tr>
                     ))}
