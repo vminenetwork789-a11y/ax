@@ -57,6 +57,9 @@ export interface UpgradePathStepResult {
   recipientMainId: number;
   window5RangeTarget: [number, number];
   window5RangeSponsor: [number, number];
+  targetPaidFromVaultUsdt: number;
+  targetPaidFromWalletUsdt: number;
+  targetUpgradePoolBeforeUsdt: number;
   sponsorUpgradePoolFinalUsdt: number;
   sponsorExtraPoolBeforeUsdt: number;
   sponsorExtraPoolAfterGainUsdt: number;
@@ -84,6 +87,12 @@ export interface UpgradePathCalculationResult {
   allAutoIdEvents: ChainReactionEvent[];
   sponsorAutoIdEvents: ChainReactionEvent[];
   targetAutoIdEvents: ChainReactionEvent[];
+  targetInitialUpgradePoolUsdt: number;
+  sponsorInitialUpgradePoolUsdt: number;
+  targetTotalRankCostUsdt: number;
+  targetPaidFromVaultUsdt: number;
+  targetPaidFromWalletUsdt: number;
+  targetProspectiveRankPriceUsdt: number;
   finalSponsorUpgradePoolUsdt: number;
   finalTargetUpgradePoolUsdt: number;
   targetFinalRank: number;
@@ -747,8 +756,29 @@ export function calculateMatrixUpgradePath(
     }
   };
 
+  const initialTargetUpgradePool = calcUpgradeRankPool(targetMainId);
+  const initialSponsorUpgradePool = calcUpgradeRankPool(sponsorMainId);
+  let totalTargetCost = 0;
+  let totalTargetPaidFromVault = 0;
+  let totalTargetPaidFromWallet = 0;
+
   for (let r = startSimulatedRank; r <= prospectiveRank; r++) {
     const rankPrice = RANK_PRICES_USDT[r - 1] || 5;
+    totalTargetCost = Number((totalTargetCost + rankPrice).toFixed(4));
+
+    // Smart Contract rule: Check accumulated vault in 5-rank window BEFORE upgrade
+    const targetUpgradePoolBefore = calcUpgradeRankPool(targetMainId);
+    let paidFromVault = 0;
+    let paidFromWallet = rankPrice;
+    if (targetUpgradePoolBefore >= rankPrice) {
+      paidFromVault = rankPrice;
+      paidFromWallet = 0;
+      const [wStart, wEnd] = getFiveRankWindow(getMainCurrentRank(targetMainId));
+      deductVaultRange(targetMainId, wStart, wEnd, rankPrice);
+    }
+    totalTargetPaidFromVault = Number((totalTargetPaidFromVault + paidFromVault).toFixed(4));
+    totalTargetPaidFromWallet = Number((totalTargetPaidFromWallet + paidFromWallet).toFixed(4));
+
     const sponsorExtraBefore = calcExtraIdPool(sponsorMainId);
     const targetExtraBefore = calcExtraIdPool(targetMainId);
 
@@ -811,6 +841,9 @@ export function calculateMatrixUpgradePath(
       recipientMainId: parentR1Main,
       window5RangeTarget: getFiveRankWindow(getMainCurrentRank(targetMainId)),
       window5RangeSponsor: getFiveRankWindow(getMainCurrentRank(sponsorMainId)),
+      targetPaidFromVaultUsdt: paidFromVault,
+      targetPaidFromWalletUsdt: paidFromWallet,
+      targetUpgradePoolBeforeUsdt: targetUpgradePoolBefore,
       sponsorUpgradePoolFinalUsdt: calcUpgradeRankPool(sponsorMainId),
       sponsorExtraPoolBeforeUsdt: sponsorExtraBefore,
       sponsorExtraPoolAfterGainUsdt: sponsorExtraAfterGain,
@@ -842,6 +875,12 @@ export function calculateMatrixUpgradePath(
     allAutoIdEvents,
     sponsorAutoIdEvents: allAutoIdEvents.filter((e) => e.ownerMainId === sponsorMainId),
     targetAutoIdEvents: allAutoIdEvents.filter((e) => e.ownerMainId === targetMainId),
+    targetInitialUpgradePoolUsdt: initialTargetUpgradePool,
+    sponsorInitialUpgradePoolUsdt: initialSponsorUpgradePool,
+    targetTotalRankCostUsdt: totalTargetCost,
+    targetPaidFromVaultUsdt: totalTargetPaidFromVault,
+    targetPaidFromWalletUsdt: totalTargetPaidFromWallet,
+    targetProspectiveRankPriceUsdt: RANK_PRICES_USDT[prospectiveRank - 1] || 0,
     finalSponsorUpgradePoolUsdt: calcUpgradeRankPool(sponsorMainId),
     finalTargetUpgradePoolUsdt: calcUpgradeRankPool(targetMainId),
     targetFinalRank,
@@ -1088,12 +1127,13 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
           {/* Quick Pool Summary Cards (35% Upgrade Pool, Auto ID Pool, Extra ID Pool) */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 p-3 rounded-xl bg-slate-900/60 border border-slate-800 text-xs">
             {/* 35% Upgrade Rank Pool Summary */}
-            <div className="rounded-lg bg-slate-950 border border-cyan-500/30 p-2.5 space-y-1">
+            <div className="rounded-lg bg-slate-950 border border-cyan-500/30 p-2.5 space-y-1.5">
               <div className="flex items-center justify-between text-cyan-300 font-bold">
                 <span>🏆 สรุปยอด 35% อัพ rank (Upgrade Pool)</span>
                 <span className="text-[10px] text-slate-400 font-normal">กรอบ 5 Rank สไลด์</span>
               </div>
-              <div className="space-y-1.5 font-mono text-[11px] pt-1 border-t border-slate-800/80">
+              <div className="space-y-2 font-mono text-[11px] pt-1.5 border-t border-slate-800/80">
+                {/* Sponsor Main ID */}
                 <div className="space-y-0.5">
                   <div className="flex items-center justify-between">
                     <span className="text-slate-300">Main #{calculation.sponsorMainId} (Sponsor):</span>
@@ -1107,37 +1147,62 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
                   </div>
                   <div className="flex items-center justify-between text-[10px] text-slate-500">
                     <span>กรอบ 5 Rank: R{calculation.sponsorWindow5Range[0]}–R{calculation.sponsorWindow5Range[1]}</span>
-                    {calculation.sponsorFinalRank < 27 && (
-                      <span className={calculation.finalSponsorUpgradePoolUsdt >= calculation.sponsorNextRankPriceUsdt ? 'text-emerald-400 font-bold' : 'text-slate-400'}>
-                        {calculation.finalSponsorUpgradePoolUsdt >= calculation.sponsorNextRankPriceUsdt
-                          ? `(พร้อมอัพ R${calculation.sponsorFinalRank + 1}! 🚀)`
-                          : `(ขาดอีก ${(calculation.sponsorNextRankPriceUsdt - calculation.finalSponsorUpgradePoolUsdt).toFixed(2)} U)`}
-                      </span>
-                    )}
+                    <span className="text-slate-400">
+                      {calculation.sponsorFinalRank >= 27 ? 'ยอด 35% เข้า Extra ID Pool ทั้งหมด' : ''}
+                    </span>
                   </div>
                 </div>
 
-                <div className="space-y-0.5 pt-1 border-t border-slate-800/60">
+                {/* Target Main ID */}
+                <div className="space-y-1 pt-1.5 border-t border-slate-800/60">
                   <div className="flex items-center justify-between">
-                    <span className="text-slate-300">Main #{calculation.targetMainId} (Target):</span>
-                    {calculation.targetFinalRank >= 27 ? (
-                      <span className="text-amber-300 font-bold">0.00 U (Max Rank R27 👑)</span>
-                    ) : (
-                      <span className="text-cyan-300 font-bold">
-                        สะสม {calculation.finalTargetUpgradePoolUsdt.toFixed(2)} / {calculation.targetNextRankPriceUsdt.toLocaleString()} U
-                      </span>
-                    )}
+                    <span className="text-slate-200 font-bold">Main #{calculation.targetMainId} (Target):</span>
+                    <span className="text-cyan-300 font-bold">
+                      {calculation.targetFinalRank >= 27
+                        ? '0.00 U (Max Rank R27 👑)'
+                        : `สะสมคงเหลือ ${calculation.finalTargetUpgradePoolUsdt.toFixed(2)} U`}
+                    </span>
                   </div>
-                  <div className="flex items-center justify-between text-[10px] text-slate-500">
-                    <span>กรอบ 5 Rank: R{calculation.targetWindow5Range[0]}–R{calculation.targetWindow5Range[1]}</span>
-                    {calculation.targetFinalRank < 27 && (
-                      <span className={calculation.finalTargetUpgradePoolUsdt >= calculation.targetNextRankPriceUsdt ? 'text-emerald-400 font-bold' : 'text-slate-400'}>
-                        {calculation.finalTargetUpgradePoolUsdt >= calculation.targetNextRankPriceUsdt
-                          ? `(พร้อมอัพ R${calculation.targetFinalRank + 1}! 🚀)`
-                          : `(ขาดอีก ${(calculation.targetNextRankPriceUsdt - calculation.finalTargetUpgradePoolUsdt).toFixed(2)} U)`}
+
+                  {/* Target Rank Cost & Source Breakdown */}
+                  <div className="bg-slate-900/80 rounded p-1.5 space-y-1 text-[10.5px]">
+                    <div className="flex items-center justify-between text-slate-300">
+                      <span>ค่าอัพเกรด (R{calculation.startSimulatedRank}{calculation.startSimulatedRank !== calculation.prospectiveRank ? `–R${calculation.prospectiveRank}` : ''}):</span>
+                      <span className="text-amber-300 font-bold">{calculation.targetTotalRankCostUsdt.toLocaleString()} U</span>
+                    </div>
+                    <div className="flex items-center justify-between text-slate-400 text-[10px]">
+                      <span>• หักจากกระปุก 35%:</span>
+                      <span className={calculation.targetPaidFromVaultUsdt > 0 ? 'text-emerald-400 font-bold' : 'text-slate-500'}>
+                        {calculation.targetPaidFromVaultUsdt.toFixed(2)} U
                       </span>
-                    )}
+                    </div>
+                    <div className="flex items-center justify-between text-slate-400 text-[10px]">
+                      <span>• จ่ายจากกระเป๋า (Wallet):</span>
+                      <span className={calculation.targetPaidFromWalletUsdt > 0 ? 'text-rose-300 font-bold' : 'text-emerald-400'}>
+                        {calculation.targetPaidFromWalletUsdt.toLocaleString()} U
+                      </span>
+                    </div>
                   </div>
+
+                  {/* Next Rank progress after simulation */}
+                  {calculation.targetFinalRank < 27 && (
+                    <div className="pt-0.5 space-y-0.5 text-[10px]">
+                      <div className="flex items-center justify-between text-slate-400">
+                        <span>สะสมสำหรับ Rank {calculation.targetFinalRank + 1} ต่อไป:</span>
+                        <span className="text-cyan-300 font-bold">
+                          {calculation.finalTargetUpgradePoolUsdt.toFixed(2)} / {calculation.targetNextRankPriceUsdt.toLocaleString()} U
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-slate-500">
+                        <span>กรอบ 5 Rank ใหม่: R{calculation.targetWindow5Range[0]}–R{calculation.targetWindow5Range[1]}</span>
+                        <span className={calculation.finalTargetUpgradePoolUsdt >= calculation.targetNextRankPriceUsdt ? 'text-emerald-400 font-bold' : 'text-slate-400'}>
+                          {calculation.finalTargetUpgradePoolUsdt >= calculation.targetNextRankPriceUsdt
+                            ? `(พร้อมอัพ R${calculation.targetFinalRank + 1}! 🚀)`
+                            : `(ขาดอีก ${(calculation.targetNextRankPriceUsdt - calculation.finalTargetUpgradePoolUsdt).toFixed(2)} U)`}
+                        </span>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -1250,6 +1315,17 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
                           <span>Rank {step.upgradeRank}</span>
                           <span className="text-slate-400">·</span>
                           <span className="text-amber-300">{step.rankPriceUsdt.toLocaleString()} U</span>
+                        </div>
+                        <div className="text-[10px] mt-0.5">
+                          {step.targetPaidFromVaultUsdt > 0 ? (
+                            <span className="text-emerald-400 font-bold">
+                              หักกระปุก 35%: {step.targetPaidFromVaultUsdt.toFixed(2)} U
+                            </span>
+                          ) : (
+                            <span className="text-slate-400">
+                              จ่ายจากกระเป๋า: <strong className="text-rose-300">{step.targetPaidFromWalletUsdt.toLocaleString()} U</strong>
+                            </span>
+                          )}
                         </div>
                         <div className="text-[10.5px] text-slate-400 mt-0.5">
                           Main #{step.upgradingMainId} → โหนดใหม่{' '}
