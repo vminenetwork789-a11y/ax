@@ -1301,187 +1301,257 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
                     <th className="py-2.5 px-3 whitespace-nowrap">ขั้นที่ / Rank</th>
                     <th className="py-2.5 px-3 whitespace-nowrap">ตำแหน่งต่อสาย (Path)</th>
                     <th className="py-2.5 px-3 whitespace-nowrap">35% Vault ที่เกิดขึ้น</th>
-                    <th className="py-2.5 px-3">Extra ID ที่เกิดในขั้นนี้ (R27→R2)</th>
-                    <th className="py-2.5 px-3">โคลน / ปฏิกิริยาลูกโซ่ต่อเนื่อง</th>
-                    <th className="py-2.5 px-3 whitespace-nowrap">คงเหลือ 3 กระปุก (Up / Auto / Extra)</th>
+                    <th className="py-2.5 px-3 min-w-[190px]">Extra ID ที่เกิดในขั้นนี้ (R27→R2)</th>
+                    <th className="py-2.5 px-3 min-w-[190px]">Auto ID ที่เกิดในขั้นนี้ (R1)</th>
+                    <th className="py-2.5 px-3 min-w-[230px]">โคลนนิ่ง ที่เกิดในขั้นนี้ (R1 → R27)</th>
+                    <th className="py-2.5 px-3 whitespace-nowrap min-w-[160px]">คงเหลือ 3 กระปุก (Up / Auto / Extra)</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/80 font-mono">
-                  {calculation.steps.map((step) => (
-                    <tr key={`sim-step-${step.upgradeRank}`} className="hover:bg-slate-900/60 align-top transition-colors">
-                      {/* Col 1: Rank & Price */}
-                      <td className="py-3 px-3 whitespace-nowrap">
-                        <div className="font-bold text-white flex items-center gap-1.5">
-                          <span>Rank {step.upgradeRank}</span>
-                          <span className="text-slate-400">·</span>
-                          <span className="text-amber-300">{step.rankPriceUsdt.toLocaleString()} U</span>
-                        </div>
-                        <div className="text-[10px] mt-0.5">
-                          {step.targetPaidFromVaultUsdt > 0 ? (
-                            <span className="text-emerald-400 font-bold">
-                              หักกระปุก 35%: {step.targetPaidFromVaultUsdt.toFixed(2)} U
-                            </span>
-                          ) : (
-                            <span className="text-slate-400">
-                              จ่ายจากกระเป๋า: <strong className="text-rose-300">{step.targetPaidFromWalletUsdt.toLocaleString()} U</strong>
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-[10.5px] text-slate-400 mt-0.5">
-                          Main #{step.upgradingMainId} → โหนดใหม่{' '}
-                          <strong className="text-cyan-300">
-                            R{step.upgradeRank}-#{step.newNodeIdInRank}
-                          </strong>
-                        </div>
-                        <div className="text-[10px] text-slate-500 mt-0.5">
-                          กรอบ 5 Rank ของ #{step.upgradingMainId}: R{step.window5RangeTarget[0]}–R{step.window5RangeTarget[1]}
-                        </div>
-                      </td>
+                  {calculation.steps.map((step) => {
+                    const autoEvents = step.chainReactions.filter((cr) => cr.type === 'AUTO_ID');
+                    const cloneEvents = step.chainReactions.filter((cr) => cr.type === 'CLONE');
+                    const vaultGainEvents = step.chainReactions.filter(
+                      (cr) => cr.type === 'VAULT_GAIN' || cr.type === 'EXTRA_LEFT_BONUS'
+                    );
 
-                      {/* Col 2: Placement Path */}
-                      <td className="py-3 px-3 whitespace-nowrap">
-                        <div className="flex items-center gap-1 text-slate-200">
-                          <span>ต่อใต้</span>
-                          <button
-                            type="button"
-                            onClick={() => onSelectRankAndNode?.(step.upgradeRank, step.placedUnderParentId)}
-                            className="font-bold text-indigo-300 hover:text-indigo-200 underline cursor-pointer"
-                          >
-                            R{step.upgradeRank}-#{step.placedUnderParentId}
-                          </button>
-                          <span className="text-slate-400">(Main #{step.placedUnderParentMainId})</span>
-                        </div>
-                        <div className="mt-1">
-                          <span
-                            className={`text-[11px] font-bold ${
-                              step.placedSide === 'LEFT' ? 'text-emerald-400' : 'text-purple-400'
-                            }`}
-                          >
-                            {step.placedSide === 'LEFT' ? '↙ ฝั่งซ้าย (Left • คำนวณ 35% Vault)' : '↘ ฝั่งขวา (Right • เด้งโคลน 100%)'}
-                          </span>
-                        </div>
-                      </td>
-
-                      {/* Col 3: Vault Flow */}
-                      <td className="py-3 px-3 whitespace-nowrap">
-                        {step.vaultAddedToParentUsdt > 0 ? (
-                          <div className="space-y-0.5">
-                            <div className="text-emerald-400 font-bold">
-                              +{step.vaultAddedToParentUsdt.toFixed(2)} USDT → Main #{step.recipientMainId}
-                            </div>
-                            {step.recipientMainId === calculation.sponsorMainId && step.upgradeRank >= 4 && (
-                              <div className="text-[10.5px] text-slate-300">
-                                Extra Pool #{calculation.sponsorMainId}: {step.sponsorExtraPoolBeforeUsdt.toFixed(2)} +{' '}
-                                {step.vaultAddedToParentUsdt.toFixed(2)} ={' '}
-                                <strong className="text-amber-300">
-                                  {step.sponsorExtraPoolAfterGainUsdt.toFixed(2)} U
-                                </strong>
-                              </div>
+                    return (
+                      <tr key={`sim-step-${step.upgradeRank}`} className="hover:bg-slate-900/60 align-top transition-colors">
+                        {/* Col 1: Rank & Price */}
+                        <td className="py-3 px-3 whitespace-nowrap">
+                          <div className="font-bold text-white flex items-center gap-1.5">
+                            <span>Rank {step.upgradeRank}</span>
+                            <span className="text-slate-400">·</span>
+                            <span className="text-amber-300">{step.rankPriceUsdt.toLocaleString()} U</span>
+                          </div>
+                          <div className="text-[10px] mt-0.5">
+                            {step.targetPaidFromVaultUsdt > 0 ? (
+                              <span className="text-emerald-400 font-bold">
+                                หักกระปุก 35%: {step.targetPaidFromVaultUsdt.toFixed(2)} U
+                              </span>
+                            ) : (
+                              <span className="text-slate-400">
+                                จ่ายจากกระเป๋า: <strong className="text-rose-300">{step.targetPaidFromWalletUsdt.toLocaleString()} U</strong>
+                              </span>
                             )}
                           </div>
-                        ) : (
-                          <span className="text-slate-500">0.00 U (ฝั่งขวาเด้งโคลน)</span>
-                        )}
-                      </td>
-
-                      {/* Col 4: Extra IDs Spawned */}
-                      <td className="py-3 px-3">
-                        {step.extraIdsGenerated.length === 0 ? (
-                          <span className="text-slate-500 text-[11px]">ไม่เกิด Extra ID ในขั้นนี้</span>
-                        ) : (
-                          <div className="space-y-1.5">
-                            {step.extraIdsGenerated.map((ex, idx) => (
-                              <div
-                                key={`step-${step.upgradeRank}-extra-${idx}`}
-                                className="rounded-lg bg-slate-950/90 border border-fuchsia-500/40 p-2 space-y-0.5"
-                              >
-                                <div className="flex items-center justify-between gap-2">
-                                  <span className="font-bold text-fuchsia-300">
-                                    ⚡ Main #{ex.ownerMainId} เกิด Extra ID ที่ Rank {ex.spawnedInRank}
-                                  </span>
-                                  <span className="text-rose-300 font-bold">-{ex.deductedUsdt.toFixed(2)} U</span>
-                                </div>
-                                <div className="text-[11px] text-slate-300">
-                                  โหนดใหม่:{' '}
-                                  <strong className="text-white">
-                                    R{ex.spawnedInRank}-#{ex.newNodeId}
-                                  </strong>{' '}
-                                  วางใต้{' '}
-                                  <button
-                                    type="button"
-                                    onClick={() => onSelectRankAndNode?.(ex.spawnedInRank, ex.parentId)}
-                                    className="text-indigo-300 hover:underline font-bold cursor-pointer"
-                                  >
-                                    R{ex.spawnedInRank}-#{ex.parentId}
-                                  </button>{' '}
-                                  ({ex.side === 'LEFT' ? '↙ซ้าย' : '↘ขวา'})
-                                </div>
-                                <div className="text-[10px] text-slate-400">
-                                  {ex.triggeredByNote} → คงเหลือ {ex.poolAfterUsdt.toFixed(2)} U
-                                </div>
-                              </div>
-                            ))}
+                          <div className="text-[10.5px] text-slate-400 mt-0.5">
+                            Main #{step.upgradingMainId} → โหนดใหม่{' '}
+                            <strong className="text-cyan-300">
+                              R{step.upgradeRank}-#{step.newNodeIdInRank}
+                            </strong>
                           </div>
-                        )}
-                      </td>
+                          <div className="text-[10px] text-slate-500 mt-0.5">
+                            กรอบ 5 Rank ของ #{step.upgradingMainId}: R{step.window5RangeTarget[0]}–R{step.window5RangeTarget[1]}
+                          </div>
+                        </td>
 
-                      {/* Col 5: Chain Reactions (Clones / Auto IDs / Cascading Vault) */}
-                      <td className="py-3 px-3">
-                        {step.chainReactions.length === 0 ? (
-                          <span className="text-slate-500 text-[11px]">—</span>
-                        ) : (
-                          <div className="space-y-1 text-[11px]">
-                            {step.chainReactions.map((cr, idx) => (
-                              <div key={`step-${step.upgradeRank}-cr-${idx}`} className="text-slate-300 leading-relaxed">
-                                <span
-                                  className={
-                                    cr.type === 'CLONE'
-                                      ? 'text-emerald-400 font-bold'
-                                      : cr.type === 'AUTO_ID'
-                                      ? 'text-amber-300 font-bold'
-                                      : 'text-cyan-300 font-bold'
-                                  }
+                        {/* Col 2: Placement Path */}
+                        <td className="py-3 px-3 whitespace-nowrap">
+                          <div className="flex items-center gap-1 text-slate-200">
+                            <span>ต่อใต้</span>
+                            <button
+                              type="button"
+                              onClick={() => onSelectRankAndNode?.(step.upgradeRank, step.placedUnderParentId)}
+                              className="font-bold text-indigo-300 hover:text-indigo-200 underline cursor-pointer"
+                            >
+                              R{step.upgradeRank}-#{step.placedUnderParentId}
+                            </button>
+                            <span className="text-slate-400">(Main #{step.placedUnderParentMainId})</span>
+                          </div>
+                          <div className="mt-1">
+                            <span
+                              className={`text-[11px] font-bold ${
+                                step.placedSide === 'LEFT' ? 'text-emerald-400' : 'text-purple-400'
+                              }`}
+                            >
+                              {step.placedSide === 'LEFT' ? '↙ ฝั่งซ้าย (Left • คำนวณ 35% Vault)' : '↘ ฝั่งขวา (Right • เด้งโคลน 100%)'}
+                            </span>
+                          </div>
+                        </td>
+
+                        {/* Col 3: Vault Flow */}
+                        <td className="py-3 px-3 whitespace-nowrap">
+                          {step.vaultAddedToParentUsdt > 0 ? (
+                            <div className="space-y-0.5">
+                              <div className="text-emerald-400 font-bold">
+                                +{step.vaultAddedToParentUsdt.toFixed(2)} USDT → Main #{step.recipientMainId}
+                              </div>
+                              {step.recipientMainId === calculation.sponsorMainId && step.upgradeRank >= 4 && (
+                                <div className="text-[10.5px] text-slate-300">
+                                  Extra Pool #{calculation.sponsorMainId}: {step.sponsorExtraPoolBeforeUsdt.toFixed(2)} +{' '}
+                                  {step.vaultAddedToParentUsdt.toFixed(2)} ={' '}
+                                  <strong className="text-amber-300">
+                                    {step.sponsorExtraPoolAfterGainUsdt.toFixed(2)} U
+                                  </strong>
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-slate-500">0.00 U (ฝั่งขวาเด้งโคลน)</span>
+                          )}
+                        </td>
+
+                        {/* Col 4: Extra IDs Spawned (R27 → R2) */}
+                        <td className="py-3 px-3">
+                          {step.extraIdsGenerated.length === 0 ? (
+                            <span className="text-slate-500 text-[11px]">ไม่เกิด Extra ID ในขั้นนี้</span>
+                          ) : (
+                            <div className="space-y-1.5">
+                              {step.extraIdsGenerated.map((ex, idx) => (
+                                <div
+                                  key={`step-${step.upgradeRank}-extra-${idx}`}
+                                  className="rounded-lg bg-slate-950/90 border border-fuchsia-500/40 p-2 space-y-0.5"
                                 >
-                                  {cr.type === 'CLONE'
-                                    ? '✨ โคลน:'
-                                    : cr.type === 'AUTO_ID'
-                                    ? '🤖 Auto ID:'
-                                    : '💰 กระปุก:'}
-                                </span>{' '}
-                                {cr.descriptionTh}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </td>
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="font-bold text-fuchsia-300">
+                                      ⚡ Main #{ex.ownerMainId} เกิด Extra ID ที่ Rank {ex.spawnedInRank}
+                                    </span>
+                                    <span className="text-rose-300 font-bold">-{ex.deductedUsdt.toFixed(2)} U</span>
+                                  </div>
+                                  <div className="text-[11px] text-slate-300">
+                                    โหนดใหม่:{' '}
+                                    <strong className="text-white">
+                                      R{ex.spawnedInRank}-#{ex.newNodeId}
+                                    </strong>{' '}
+                                    วางใต้{' '}
+                                    <button
+                                      type="button"
+                                      onClick={() => onSelectRankAndNode?.(ex.spawnedInRank, ex.parentId)}
+                                      className="text-indigo-300 hover:underline font-bold cursor-pointer"
+                                    >
+                                      R{ex.spawnedInRank}-#{ex.parentId}
+                                    </button>{' '}
+                                    ({ex.side === 'LEFT' ? '↙ซ้าย' : '↘ขวา'})
+                                  </div>
+                                  <div className="text-[10px] text-slate-400">
+                                    {ex.triggeredByNote} → คงเหลือ {ex.poolAfterUsdt.toFixed(2)} U
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </td>
 
-                      {/* Col 6: Remaining 3 Pool Balances (Up / Auto / Extra) */}
-                      <td className="py-3 px-3 whitespace-nowrap text-[11px] space-y-1.5">
-                        <div className="rounded bg-slate-950/80 border border-slate-800/80 p-1.5 space-y-1">
-                          <div className="text-[10px] text-slate-400 font-bold">Main #{calculation.sponsorMainId} (Sponsor)</div>
-                          <div className="text-cyan-300 font-bold">
-                            Up: {step.sponsorUpgradePoolFinalUsdt.toFixed(2)} U
+                        {/* Col 5: Auto ID ที่เกิดในขั้นนี้ (R1) */}
+                        <td className="py-3 px-3">
+                          {autoEvents.length === 0 ? (
+                            <span className="text-slate-500 text-[11px]">ไม่เกิด Auto ID ในขั้นนี้</span>
+                          ) : (
+                            <div className="space-y-1.5">
+                              {autoEvents.map((ae, idx) => (
+                                <div
+                                  key={`step-${step.upgradeRank}-auto-${idx}`}
+                                  className="rounded-lg bg-slate-950/90 border border-amber-500/40 p-2 space-y-0.5"
+                                >
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="font-bold text-amber-300">
+                                      🤖 Main #{ae.ownerMainId} เกิด Auto ID ที่ Rank 1
+                                    </span>
+                                    <span className="text-rose-300 font-bold">-5.00 U</span>
+                                  </div>
+                                  <div className="text-[11px] text-slate-300">
+                                    โหนดใหม่:{' '}
+                                    <strong className="text-white">
+                                      R1-#{ae.nodeId}
+                                    </strong>{' '}
+                                    วางใต้{' '}
+                                    <button
+                                      type="button"
+                                      onClick={() => onSelectRankAndNode?.(1, ae.parentId)}
+                                      className="text-indigo-300 hover:underline font-bold cursor-pointer"
+                                    >
+                                      R1-#{ae.parentId}
+                                    </button>{' '}
+                                    ({ae.side === 'LEFT' ? '↙ซ้าย' : '↘ขวา'})
+                                  </div>
+                                  <div className="text-[10px] text-slate-400 leading-relaxed">
+                                    {ae.descriptionTh}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </td>
+
+                        {/* Col 6: โคลนนิ่ง ที่เกิดในขั้นนี้ (R1 → R27) */}
+                        <td className="py-3 px-3">
+                          {cloneEvents.length === 0 && vaultGainEvents.length === 0 ? (
+                            <span className="text-slate-500 text-[11px]">ไม่เกิดโคลนในขั้นนี้</span>
+                          ) : (
+                            <div className="space-y-1.5">
+                              {cloneEvents.map((ce, idx) => (
+                                <div
+                                  key={`step-${step.upgradeRank}-clone-${idx}`}
+                                  className="rounded-lg bg-slate-950/90 border border-emerald-500/40 p-2 space-y-0.5"
+                                >
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="font-bold text-emerald-400">
+                                      ✨ โคลน Rank {ce.rank}: R{ce.rank}-#{ce.nodeId}
+                                    </span>
+                                    <span className="text-slate-400 text-[10px] font-bold">
+                                      (Main #{ce.ownerMainId})
+                                    </span>
+                                  </div>
+                                  <div className="text-[11px] text-slate-300">
+                                    วางใต้{' '}
+                                    <button
+                                      type="button"
+                                      onClick={() => onSelectRankAndNode?.(ce.rank, ce.parentId)}
+                                      className="text-indigo-300 hover:underline font-bold cursor-pointer"
+                                    >
+                                      R{ce.rank}-#{ce.parentId}
+                                    </button>{' '}
+                                    ({ce.side === 'LEFT' ? '↙ซ้าย' : '↘ขวา'})
+                                  </div>
+                                  <div className="text-[10px] text-slate-400 leading-relaxed">
+                                    {ce.descriptionTh}
+                                  </div>
+                                </div>
+                              ))}
+
+                              {/* Cascading Vault Gains from these Clones / Auto IDs */}
+                              {vaultGainEvents.length > 0 && (
+                                <div className="space-y-1 pt-1 border-t border-slate-800/60 text-[10.5px]">
+                                  {vaultGainEvents.map((vg, vIdx) => (
+                                    <div key={`step-${step.upgradeRank}-vg-${vIdx}`} className="text-cyan-300 leading-relaxed">
+                                      <span className="font-bold text-amber-300">💰 ปฏิกิริยากระปุก:</span> {vg.descriptionTh}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </td>
+
+                        {/* Col 7: Remaining 3 Pool Balances (Up / Auto / Extra) */}
+                        <td className="py-3 px-3 whitespace-nowrap text-[11px] space-y-1.5">
+                          <div className="rounded bg-slate-950/80 border border-slate-800/80 p-1.5 space-y-1">
+                            <div className="text-[10px] text-slate-400 font-bold">Main #{calculation.sponsorMainId} (Sponsor)</div>
+                            <div className="text-cyan-300 font-bold">
+                              Up: {step.sponsorUpgradePoolFinalUsdt.toFixed(2)} U
+                            </div>
+                            <div className="flex items-center gap-1.5 text-[10px]">
+                              <span className="text-amber-300 font-bold">Auto: {step.sponsorAutoPoolFinalUsdt.toFixed(2)} U</span>
+                              <span className="text-slate-600">·</span>
+                              <span className="text-fuchsia-300 font-bold">Extra: {step.sponsorExtraPoolFinalUsdt.toFixed(2)} U</span>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-1.5 text-[10px]">
-                            <span className="text-amber-300 font-bold">Auto: {step.sponsorAutoPoolFinalUsdt.toFixed(2)} U</span>
-                            <span className="text-slate-600">·</span>
-                            <span className="text-fuchsia-300 font-bold">Extra: {step.sponsorExtraPoolFinalUsdt.toFixed(2)} U</span>
+                          <div className="rounded bg-slate-950/80 border border-slate-800/80 p-1.5 space-y-1">
+                            <div className="text-[10px] text-slate-400 font-bold">Main #{calculation.targetMainId} (Target)</div>
+                            <div className="text-cyan-300 font-bold">
+                              Up: {step.targetUpgradePoolFinalUsdt.toFixed(2)} U
+                            </div>
+                            <div className="flex items-center gap-1.5 text-[10px]">
+                              <span className="text-amber-300 font-bold">Auto: {step.targetAutoPoolFinalUsdt.toFixed(2)} U</span>
+                              <span className="text-slate-600">·</span>
+                              <span className="text-fuchsia-300 font-bold">Extra: {step.targetExtraPoolFinalUsdt.toFixed(2)} U</span>
+                            </div>
                           </div>
-                        </div>
-                        <div className="rounded bg-slate-950/80 border border-slate-800/80 p-1.5 space-y-1">
-                          <div className="text-[10px] text-slate-400 font-bold">Main #{calculation.targetMainId} (Target)</div>
-                          <div className="text-cyan-300 font-bold">
-                            Up: {step.targetUpgradePoolFinalUsdt.toFixed(2)} U
-                          </div>
-                          <div className="flex items-center gap-1.5 text-[10px]">
-                            <span className="text-amber-300 font-bold">Auto: {step.targetAutoPoolFinalUsdt.toFixed(2)} U</span>
-                            <span className="text-slate-600">·</span>
-                            <span className="text-fuchsia-300 font-bold">Extra: {step.targetExtraPoolFinalUsdt.toFixed(2)} U</span>
-                          </div>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

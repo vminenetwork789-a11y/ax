@@ -185,7 +185,7 @@ const DEFAULT_SYSTEM_CONFIG = {
   contractAddress:
     process.env.OVERRIDE_CONTRACT_ADDRESS ||
     process.env.CONTRACT_ADDRESS ||
-    '0x104D65034B00F0Db59497036208f3b798b4C10cC',
+    '0x982a87F726Cc1044A546FA853A425e6F445bCA3d',
   usdtAddress: process.env.USDT_ADDRESS || '0x05f24E1F598DF1aE8d0B424ce978f8ea33bB752b',
   chainId: Number(process.env.CHAIN_ID || 97),
   networkName: process.env.NETWORK_NAME || 'BNB Smart Chain Testnet',
@@ -195,6 +195,7 @@ const DEFAULT_SYSTEM_CONFIG = {
 };
 
 const SERVER_LEGACY_CONTRACTS = new Set([
+  '0x104d65034b00f0db59497036208f3b798b4c10cc',
   '0x0742e9581217cc8cd6de2aa80b7ce9ad881deee3',
   '0xc5cf23d0cead13a08b3b3d968a052b956a64fbc6',
   '0xe231fe72e1c2ab2617d8972c4ea15bc9122e514f',
@@ -4318,6 +4319,12 @@ async function startApp() {
       try {
         const provider = getProvider();
         const contract = new ethers.Contract(targetContract, MATRIX_READ_ABI, provider);
+
+        if (targetContract.toLowerCase() !== (matrixDB.contractAddress || '').toLowerCase()) {
+          console.log(`[MatrixDB] Contract address changed from ${matrixDB.contractAddress} to ${targetContract}. Re-initializing database.`);
+          Object.assign(matrixDB, createEmptyMatrixDB(targetContract, USDT_ADDRESS));
+          rankSyncTimestamps.clear();
+        }
 
         const [blockNum, allSellAddr, botAddr, familyAddr] = await Promise.all([
           provider.getBlockNumber().catch(() => matrixDB.lastSyncedBlock),
