@@ -6756,7 +6756,7 @@ async function startApp() {
 
         const rankPrice = RANK_PRICES_USDT[r - 1] || 10;
 
-        // Deduct available vault from this Main ID's 5-rank window (window5Start..r-1) ONLY when savedInVault >= rankPrice
+        // Deduct available vault from this Main ID's 5-rank window (window5Start..r-1) towards rankPrice
         const prevRank = r - 1;
         const winStart = Math.max(1, prevRank - 4);
         let windowVaultAvail = 0;
@@ -6771,7 +6771,7 @@ async function startApp() {
           }
         }
 
-        let remDeduct = windowVaultAvail + 1e-6 >= rankPrice ? rankPrice : 0;
+        let remDeduct = Math.min(windowVaultAvail, rankPrice);
         let totalVaultDeducted = 0;
 
         for (let wr = winStart; wr <= prevRank; wr++) {

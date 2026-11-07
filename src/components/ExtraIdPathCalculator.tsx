@@ -791,15 +791,13 @@ export function calculateMatrixUpgradePath(
     const rankPrice = RANK_PRICES_USDT[r - 1] || 5;
     totalTargetCost = Number((totalTargetCost + rankPrice).toFixed(4));
 
-    // Smart Contract rule: Check accumulated vault in 5-rank window BEFORE upgrade
+    // Smart Contract rule: Deduct available vault in 5-rank window BEFORE upgrade towards rankPrice
     const targetUpgradePoolBefore = calcUpgradeRankPool(targetMainId);
-    let paidFromVault = 0;
-    let paidFromWallet = rankPrice;
-    if (targetUpgradePoolBefore >= rankPrice) {
-      paidFromVault = rankPrice;
-      paidFromWallet = 0;
+    const paidFromVault = Number(Math.min(targetUpgradePoolBefore, rankPrice).toFixed(4));
+    const paidFromWallet = Number(Math.max(0, rankPrice - paidFromVault).toFixed(4));
+    if (targetUpgradePoolBefore > 0) {
       const [wStart, wEnd] = getFiveRankWindow(getMainCurrentRank(targetMainId));
-      deductVaultRange(targetMainId, wStart, wEnd, rankPrice);
+      deductVaultRange(targetMainId, wStart, wEnd, targetUpgradePoolBefore);
     }
     totalTargetPaidFromVault = Number((totalTargetPaidFromVault + paidFromVault).toFixed(4));
     totalTargetPaidFromWallet = Number((totalTargetPaidFromWallet + paidFromWallet).toFixed(4));
@@ -1444,16 +1442,22 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
                             <span className="text-slate-400">·</span>
                             <span className="text-amber-300">{step.rankPriceUsdt.toLocaleString()} U</span>
                           </div>
-                          <div className="text-[10px] mt-0.5">
-                            {step.targetPaidFromVaultUsdt > 0 ? (
-                              <span className="text-emerald-400 font-bold">
-                                หักกระปุก 35%: {step.targetPaidFromVaultUsdt.toFixed(2)} U
-                              </span>
-                            ) : (
-                              <span className="text-slate-400">
-                                จ่ายจากกระเป๋า: <strong className="text-rose-300">{step.targetPaidFromWalletUsdt.toLocaleString()} U</strong>
-                              </span>
+                          <div className="text-[10px] mt-0.5 space-y-0.5">
+                            {step.targetPaidFromVaultUsdt > 0 && (
+                              <div className="text-emerald-400 font-bold">
+                                หักกระปุก 35%: -{step.targetPaidFromVaultUsdt.toFixed(2)} U
+                              </div>
                             )}
+                            <div className="text-slate-400">
+                              จ่ายจากกระเป๋า:{' '}
+                              <strong className={step.targetPaidFromWalletUsdt > 0 ? 'text-rose-300' : 'text-emerald-400'}>
+                                {step.targetPaidFromWalletUsdt.toLocaleString(undefined, {
+                                  minimumFractionDigits: step.targetPaidFromWalletUsdt % 1 !== 0 ? 2 : 0,
+                                  maximumFractionDigits: 2,
+                                })}{' '}
+                                U
+                              </strong>
+                            </div>
                           </div>
                           <div className="text-[10.5px] text-slate-400 mt-0.5">
                             Main #{step.upgradingMainId} → โหนดใหม่{' '}

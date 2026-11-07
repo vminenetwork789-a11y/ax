@@ -700,7 +700,10 @@ contract FractalFlowMatrix27 is Ownable, ReentrancyGuard {
             uint256 remainder = savedInVault - targetPrice;
             if (remainder > 0) usdt.safeTransfer(msg.sender, remainder);
         } else {
-            usdt.safeTransferFrom(msg.sender, address(this), targetPrice);
+            if (savedInVault > 0) {
+                _clearVaultsForMainId(_r1MainId, currentRank, savedInVault);
+            }
+            usdt.safeTransferFrom(msg.sender, address(this), targetPrice - savedInVault);
         }
 
         _applyRankUpgrade(_r1MainId, msg.sender, _targetRank, false);
