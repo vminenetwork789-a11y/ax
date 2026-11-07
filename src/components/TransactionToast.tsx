@@ -89,6 +89,8 @@ export const TransactionToast: React.FC<TransactionToastProps> = ({
         const d = new Date(iso);
         if (isNaN(d.getTime())) return iso;
         return d.toLocaleString(isTh ? 'th-TH' : 'en-US', {
+          timeZone: 'Asia/Bangkok',
+          hour12: false,
           day: '2-digit',
           month: 'short',
           year: 'numeric',

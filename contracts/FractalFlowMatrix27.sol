@@ -652,15 +652,26 @@ contract FractalFlowMatrix27 is Ownable, ReentrancyGuard {
             r1SponsorNodeId = users[_user].sponsorMainNodeId;
         }
         if (r1SponsorNodeId == 0) r1SponsorNodeId = 1;
+        if (sponsor == address(0) && r1SponsorNodeId > 0 && rankNodes[1][r1SponsorNodeId].owner != address(0)) {
+            sponsor = rankNodes[1][r1SponsorNodeId].owner;
+        }
         if (sponsor == address(0)) sponsor = users[_user].sponsor;
         if (sponsor == address(0)) sponsor = rankNodes[_targetRank][1].owner;
 
-        newNodeId = _placeStandardNode(_targetRank, _user, sponsor, getMainIdNodeInRank(r1SponsorNodeId, _targetRank), true);
+        uint256 sponsorInTarget = getMainIdNodeInRank(r1SponsorNodeId, _targetRank);
+        (uint256 parentId, bool isLeft) = _findPlacementSpot(_targetRank, sponsor, sponsorInTarget, false);
+        newNodeId = _insertRawNode(_targetRank, _user, sponsor, parentId, isLeft, false, false);
 
         nodeOriginMainId[_targetRank][newNodeId] = _r1MainId;
         nodeDirectSponsorNodeId[_targetRank][newNodeId] = r1SponsorNodeId;
         mainIdNodeInRank[_r1MainId][_targetRank] = newNodeId;
         nodeToR1MainId[_targetRank][newNodeId] = _r1MainId;
+
+        if (isLeft) {
+            _distributeLeftChildRewards(_targetRank, newNodeId, parentId, _user);
+        } else {
+            _triggerRightChildClone(_targetRank, parentId, false);
+        }
 
         if (_r1MainId < 1_000_000) {
             checkAndProcessAutoNewMainIdForNode(_r1MainId);
@@ -1008,28 +1019,58 @@ contract FractalFlowMatrix27 is Ownable, ReentrancyGuard {
         if (parentOriginMainId == 0) parentOriginMainId = _parentId;
         bool isParentExtraLineage = rankNodes[_rank][_parentId].isExtraId || rankNodes[_rank][parentOriginMainId].isExtraId;
 
+        uint256 directReward = (totalAmount * 30) / 100;
+        uint256 fromR1MainId = _rank == 1 ? nodeOriginMainId[1][_fromNodeId] : nodeToR1MainId[_rank][_fromNodeId];
+        if (fromR1MainId == 0) fromR1MainId = nodeOriginMainId[_rank][_fromNodeId];
+        bool isId1Clone = rankNodes[_rank][_fromNodeId].isClone && (fromR1MainId == 1 || nodeOriginMainId[_rank][_fromNodeId] == 1);
+
+        address sponsor = rankNodes[_rank][_fromNodeId].directSponsor;
+        uint256 sponsorNodeId = nodeDirectSponsorNodeId[_rank][_fromNodeId];
+        if (_rank > 1 && fromR1MainId > 1 && fromR1MainId < 1_000_000) {
+            uint256 r1SpId = nodeDirectSponsorNodeId[1][fromR1MainId];
+            if (r1SpId > 0) {
+                sponsorNodeId = r1SpId;
+                if (rankNodes[1][r1SpId].owner != address(0)) {
+                    sponsor = rankNodes[1][r1SpId].owner;
+                }
+            }
+        }
+        if (sponsor == address(0) && sponsorNodeId > 0 && rankNodes[1][sponsorNodeId].owner != address(0)) {
+            sponsor = rankNodes[1][sponsorNodeId].owner;
+        }
+        if (sponsorNodeId == 0 && sponsor != address(0)) {
+            sponsorNodeId = users[sponsor].firstNodeId[1];
+            if (sponsorNodeId == 0) sponsorNodeId = users[sponsor].firstNodeId[_rank];
+            if (sponsorNodeId == 0) sponsorNodeId = 1;
+        }
+
         if (isParentExtraLineage) {
             uint256 extraSponsorNodeId = nodeDirectSponsorNodeId[_rank][parentOriginMainId];
             if (extraSponsorNodeId == 0) extraSponsorNodeId = nodeDirectSponsorNodeId[_rank][_parentId];
             address extraSponsor = rankNodes[_rank][parentOriginMainId].directSponsor;
             if (extraSponsor == address(0)) extraSponsor = rankNodes[_rank][_parentId].directSponsor;
-            if (extraSponsorNodeId > 0 && rankNodes[_rank][extraSponsorNodeId].owner != address(0)) {
+            if (extraSponsorNodeId > 0 && rankNodes[1][extraSponsorNodeId].owner != address(0)) {
+                extraSponsor = rankNodes[1][extraSponsorNodeId].owner;
+            } else if (extraSponsorNodeId > 0 && rankNodes[_rank][extraSponsorNodeId].owner != address(0)) {
                 extraSponsor = rankNodes[_rank][extraSponsorNodeId].owner;
             }
             if (extraSponsor == address(0)) extraSponsor = rankNodes[_rank][1].owner;
             if (extraSponsorNodeId == 0) {
-                extraSponsorNodeId = users[extraSponsor].firstNodeId[_rank];
+                extraSponsorNodeId = users[extraSponsor].firstNodeId[1];
                 if (extraSponsorNodeId == 0) extraSponsorNodeId = 1;
             }
 
-            uint256 extraDirectReward = (totalAmount * 30) / 100;
-            _payAndEmit(_fromNodeId, extraSponsorNodeId, extraSponsor, _rank, "DIRECT", extraDirectReward);
-            _payAndEmit(_fromNodeId, extraSponsorNodeId, extraSponsor, _rank, "LEVEL", extraDirectReward);
+            if (isId1Clone || sponsor == address(0)) {
+                _payAndEmit(_fromNodeId, 0, familyPool, _rank, "DIRECT_ID1_CLONE_FAMILY_POOL", directReward);
+            } else {
+                _payAndEmit(_fromNodeId, sponsorNodeId, sponsor, _rank, "DIRECT", directReward);
+            }
+            _payAndEmit(_fromNodeId, extraSponsorNodeId, extraSponsor, _rank, "LEVEL", directReward);
 
             uint256 extraVaultAmount = (totalAmount * 35) / 100;
             uint256 sponsorOriginInR = nodeOriginMainId[_rank][extraSponsorNodeId];
             if (sponsorOriginInR == 0) sponsorOriginInR = extraSponsorNodeId;
-            uint256 sponsorR1MainId = nodeToR1MainId[_rank][sponsorOriginInR];
+            uint256 sponsorR1MainId = _rank == 1 ? sponsorOriginInR : (extraSponsorNodeId <= totalNodesInRank[1] ? extraSponsorNodeId : nodeToR1MainId[_rank][sponsorOriginInR]);
             if (sponsorR1MainId == 0) sponsorR1MainId = sponsorOriginInR;
             mainIdExtraPoolBonus[sponsorR1MainId] += extraVaultAmount;
             emit RewardDistributed(_fromNodeId, extraSponsorNodeId, extraSponsor, _rank, "UPGRADE_VAULT", extraVaultAmount);
@@ -1039,16 +1080,9 @@ contract FractalFlowMatrix27 is Ownable, ReentrancyGuard {
             return;
         }
 
-        uint256 directReward = (totalAmount * 30) / 100;
-        address sponsor = rankNodes[_rank][_fromNodeId].directSponsor;
-        bool isId1Clone = rankNodes[_rank][_fromNodeId].isClone && (rankNodes[_rank][_fromNodeId].owner == rankNodes[_rank][1].owner);
-
         if (isId1Clone || sponsor == address(0)) {
             _payAndEmit(_fromNodeId, 0, familyPool, _rank, "DIRECT_ID1_CLONE_FAMILY_POOL", directReward);
         } else {
-            uint256 sponsorNodeId = nodeDirectSponsorNodeId[_rank][_fromNodeId];
-            if (sponsorNodeId == 0) sponsorNodeId = users[sponsor].firstNodeId[_rank];
-            if (sponsorNodeId == 0) sponsorNodeId = users[sponsor].latestNodeId[_rank];
             _payAndEmit(_fromNodeId, sponsorNodeId, sponsor, _rank, "DIRECT", directReward);
         }
 

@@ -585,24 +585,31 @@ export function calculateMatrixUpgradePath(
       }
     } else {
       // Right child triggers 100% Rebirth Clone of parent's origin node
-      const originNodeId =
-        parentNode.originMainId > 0 && snapR.has(parentNode.originMainId)
-          ? parentNode.originMainId
-          : parentNode.id;
-      const originNode = snapR.get(originNodeId) || parentNode;
-      const originR1Main = resolveR1MainForNode(rank, originNode.id);
+      const originR1Main = resolveR1MainForNode(rank, parentNode.id);
+      const localCorrespId =
+        !parentNode.isClone
+          ? parentNode.id
+          : getCorrespondingNodeInRank(originR1Main, rank) || parentNode.originMainId || parentNode.id;
+      const originNode = snapR.get(localCorrespId) || parentNode;
 
       const curClonesCount = originNode.totalClonesSpawned || 0;
       const roundIdx = curClonesCount % 2; // 0 => Round 1 (Sponsor), 1 => Round 2 (Global BFS under Root #1)
       originNode.totalClonesSpawned = curClonesCount + 1;
 
       let sponsorTargetInRank = 1;
+      let lockedR1SponsorId = originNode.directSponsorNodeId || 1;
+      let lockedR1SponsorAddr = originNode.directSponsor;
       if (originNode.isExtraId) {
         const spMain = originNode.directSponsorNodeId > 0 ? originNode.directSponsorNodeId : 1;
+        lockedR1SponsorId = spMain;
         sponsorTargetInRank = getCorrespondingNodeInRank(spMain, rank) || 1;
       } else {
         const r1OrigNode = r1Map.get(originR1Main);
         const r1SpId = r1OrigNode?.directSponsorNodeId || 1;
+        lockedR1SponsorId = originR1Main === 1 ? 0 : r1SpId;
+        if (r1OrigNode?.directSponsor) {
+          lockedR1SponsorAddr = r1OrigNode.directSponsor;
+        }
         sponsorTargetInRank = getCorrespondingNodeInRank(r1SpId, rank) || 1;
       }
 
@@ -614,13 +621,13 @@ export function calculateMatrixUpgradePath(
       const cloneNode = insertSimNode(
         rank,
         originNode.owner,
-        originNode.directSponsor,
+        lockedR1SponsorAddr,
         cloneSpot.parentId,
         cloneSpot.isLeft,
         true,
         false,
-        originNode.id,
-        originNode.directSponsorNodeId || 1,
+        rank === 1 || originNode.isExtraId ? originNode.id : originR1Main,
+        lockedR1SponsorId,
         'CLONE'
       );
 

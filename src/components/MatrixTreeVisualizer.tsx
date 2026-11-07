@@ -680,6 +680,8 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         const d = new Date(isoOrTime);
         if (isNaN(d.getTime())) return isoOrTime;
         return d.toLocaleString(language === 'th' ? 'th-TH' : 'en-US', {
+          timeZone: 'Asia/Bangkok',
+          hour12: false,
           day: '2-digit',
           month: 'short',
           hour: '2-digit',
@@ -2787,10 +2789,27 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             : Boolean(sn.isExtraId || snOrigin.isExtraId);
           if (isSnExtraLineage && sn.leftChild > 0) {
             const r1SponsorMain = resolveExtraSpawnerInR1(r, snOrigin);
-            crossRankExtraLeftDirectBonusMap.set(
-              r1SponsorMain,
-              Number(((crossRankExtraLeftDirectBonusMap.get(r1SponsorMain) || 0) + rPrice * 0.3).toFixed(4))
-            );
+            const lcNode = snapR.get(sn.leftChild);
+            const lcOrigMain = lcNode
+              ? lcNode.originMainId > 0 && lcNode.originMainId < 1_000_000
+                ? lcNode.originMainId
+                : getCorrespondingMainIdInRank(r, lcNode.id, lcNode.owner, 1)
+              : 0;
+            const isLcRoot1Clone = Boolean(lcNode?.isClone && (lcOrigMain === 1 || sn.id === 1));
+            if (!isLcRoot1Clone) {
+              const snap1Lookup = multiRankSnapshots.get(1);
+              let lcR1DirectSponsor = r1SponsorMain;
+              if (lcNode && !lcNode.isExtraId && lcOrigMain > 1 && snap1Lookup) {
+                const origR1Node = snap1Lookup.get(lcOrigMain);
+                if (origR1Node && origR1Node.directSponsorNodeId > 0) {
+                  lcR1DirectSponsor = origR1Node.directSponsorNodeId;
+                }
+              }
+              crossRankExtraLeftDirectBonusMap.set(
+                lcR1DirectSponsor,
+                Number(((crossRankExtraLeftDirectBonusMap.get(lcR1DirectSponsor) || 0) + rPrice * 0.3).toFixed(4))
+              );
+            }
             crossRankExtraLeftLevelBonusMap.set(
               r1SponsorMain,
               Number(((crossRankExtraLeftLevelBonusMap.get(r1SponsorMain) || 0) + rPrice * 0.3).toFixed(4))
@@ -3283,12 +3302,37 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
               ? Boolean(parent.isExtraId)
               : Boolean(parent.isExtraId || parentMainNode?.isExtraId);
 
-            // กรณี EXTRA ID: รายได้ที่เกิดจากเม็ดซ้าย:
-            // - 30% ค่าแนะนำ จะถูกส่งกลับไปให้ directSponsor
-            // - 30% ค่าชั้น จะถูกส่งกลับไปให้ directSponsor
-            // - Vault (35%) จะถูกส่งกลับที่ New Extra ID Pool ของ directSponsor
-            // - 4% all sell
-            // - 1% bot
+            // กฎหลัก Rank 2-27: ห้ามเปลี่ยนข้อมูล ผู้แนะนำตรง (Direct Sponsor)
+            // 30% ค่าแนะนำตรง (Direct Sponsor) ต้องจ่ายให้ ผู้แนะนำตรงของโหนดที่วาง (อ้างอิงที่ Rank 1 เสมอ)
+            const isId1Clone =
+              n.isClone &&
+              (originMainIdMap.get(n.id) === 1 || onChainOriginMap.get(n.id) === 1);
+            const hasSponsor = Boolean(
+              n.directSponsor && n.directSponsor !== ethers.ZeroAddress
+            );
+
+            if (isId1Clone || !hasSponsor) {
+              const targetLineage = originMainIdMap.get(n.id) || 1;
+              lineageFamilyPoolDirectMap.set(
+                targetLineage,
+                Number(((lineageFamilyPoolDirectMap.get(targetLineage) || 0) + directBonusUnit).toFixed(4))
+              );
+            } else {
+              const sponsorNodeId = resolveSponsorNodeIdForNode(n.id, n.directSponsor);
+              const targetSponsorNodeInActiveRank =
+                activeRank === 1
+                  ? sponsorNodeId
+                  : getCorrespondingMainIdInRank(1, sponsorNodeId, n.directSponsor, activeRank);
+              if (targetSponsorNodeInActiveRank > 0) {
+                nodeDirectBonusMap.set(
+                  targetSponsorNodeInActiveRank,
+                  Number(
+                    ((nodeDirectBonusMap.get(targetSponsorNodeInActiveRank) || 0) + directBonusUnit).toFixed(4)
+                  )
+                );
+              }
+            }
+
             if (isParentExtraLineage) {
               const extraSponsorR1MainId =
                 extraIdSourceMainMap.get(parentMainId) ||
@@ -3306,19 +3350,13 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
               const fullLevelBonusUnit = Number((unitPrice * 0.3).toFixed(4));
 
               if (extraSponsorLocalMainId > 0) {
-                // 1. 30% ค่าแนะนำ -> ส่งกลับไปให้ directSponsor
-                nodeDirectBonusMap.set(
-                  extraSponsorLocalMainId,
-                  Number(((nodeDirectBonusMap.get(extraSponsorLocalMainId) || 0) + directBonusUnit).toFixed(4))
-                );
-
-                // 2. 30% ค่าชั้น -> ส่งกลับไปให้ directSponsor
+                // 2. 30% ค่าชั้น -> ส่งกลับไปให้เจ้าของรหัสหลักที่สร้าง Extra ID
                 nodeUnilevelBonusMap.set(
                   extraSponsorLocalMainId,
                   Number(((nodeUnilevelBonusMap.get(extraSponsorLocalMainId) || 0) + fullLevelBonusUnit).toFixed(4))
                 );
 
-                // 3. Vault (35%) -> ส่งกลับที่ New Extra ID Pool ของ directSponsor
+                // 3. Vault (35%) -> ส่งกลับที่ New Extra ID Pool ของเจ้าของรหัสหลักที่สร้าง Extra ID
                 lineageExtraIdVault.set(
                   extraSponsorLocalMainId,
                   Number(((lineageExtraIdVault.get(extraSponsorLocalMainId) || 0) + vaultUnit).toFixed(4))
@@ -3329,33 +3367,6 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                 );
               }
             } else {
-              // A. 30% Direct Referral
-              const isId1Clone = n.isClone && originMainIdMap.get(n.id) === 1;
-              const hasSponsor = Boolean(
-                n.directSponsor && n.directSponsor !== ethers.ZeroAddress
-              );
-
-              if (isId1Clone || !hasSponsor) {
-                const targetLineage = originMainIdMap.get(n.id) || 1;
-                lineageFamilyPoolDirectMap.set(
-                  targetLineage,
-                  Number(((lineageFamilyPoolDirectMap.get(targetLineage) || 0) + directBonusUnit).toFixed(4))
-                );
-              } else {
-                const sponsorNodeId = resolveSponsorNodeIdForNode(n.id, n.directSponsor);
-                const targetSponsorNodeInActiveRank =
-                  activeRank === 1
-                    ? sponsorNodeId
-                    : getCorrespondingMainIdInRank(1, sponsorNodeId, n.directSponsor, activeRank);
-                if (targetSponsorNodeInActiveRank > 0) {
-                  nodeDirectBonusMap.set(
-                    targetSponsorNodeInActiveRank,
-                    Number(
-                      ((nodeDirectBonusMap.get(targetSponsorNodeInActiveRank) || 0) + directBonusUnit).toFixed(4)
-                    )
-                  );
-                }
-              }
 
               // B. 15-Level Unilevel (2% per tier)
               let currUplineId = n.parentId;
@@ -3703,15 +3714,25 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           const extraLeftDirect = crossRankExtraLeftDirectBonusMap.get(id1) || 0;
           const extraLeftLevel = crossRankExtraLeftLevelBonusMap.get(id1) || 0;
           const extraLeftVault = crossRankExtraLeftVaultGrossMap.get(id1) || 0;
+          const repForMain = perIdReportsMap.get(id1);
 
           unifiedSummaryByR1Main.set(id1, {
-            directRewardAllNodes: Number((sumDir + extraLeftDirect).toFixed(4)),
-            unilevelRewardAllNodes: Number((sumUni + extraLeftLevel).toFixed(4)),
+            directRewardAllNodes:
+              typeof repForMain?.direct30TotalUsdt === 'number'
+                ? repForMain.direct30TotalUsdt
+                : Number((sumDir + extraLeftDirect).toFixed(4)),
+            unilevelRewardAllNodes:
+              typeof repForMain?.level30TotalUsdt === 'number'
+                ? repForMain.level30TotalUsdt
+                : Number((sumUni + extraLeftLevel).toFixed(4)),
             totalClonesCount: s1CloneCountByMain.get(id1) || 0,
             totalAutoIdCount: autoCount,
             totalExtraIdCount: extraCount,
             familyPoolDirectFromLineage: s1FamilyDirectMap.get(id1) || 0,
-            grossVaultFromLineage: Number(((s1GrossVaultMap.get(id1) || 0) + extraLeftVault).toFixed(4)),
+            grossVaultFromLineage:
+              typeof repForMain?.vault35GrossTotalUsdt === 'number'
+                ? repForMain.vault35GrossTotalUsdt
+                : Number(((s1GrossVaultMap.get(id1) || 0) + extraLeftVault).toFixed(4)),
           });
         }
       }
@@ -3776,6 +3797,42 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
 
         if (isRootMainItself || isRootClone) {
           directUplineNodeId = 0;
+        } else if (activeRank > 1 && !isExtraOrigin) {
+          // กฎหลัก Rank 2-27: ห้ามเปลี่ยนข้อมูล ผู้แนะนำตรง (Direct Sponsor) ต้องอ้างอิงที่ Rank 1 เสมอ (ทั้ง Main ID และ Clone)
+          let r1FoundSponsor = 0;
+          if (snap1) {
+            const userR1 =
+              (r1MainId ? snap1.get(r1MainId) : undefined) ||
+              Array.from(snap1.values()).find(
+                (sn) =>
+                  sn.owner.toLowerCase() === n.owner.toLowerCase() &&
+                  !sn.isClone &&
+                  !sn.isExtraId &&
+                  (n.id === 1 || sn.id > 1)
+              );
+            if (userR1) {
+              if (userR1.directSponsorNodeId && userR1.directSponsorNodeId > 0) {
+                const spNodeR1 = snap1.get(userR1.directSponsorNodeId);
+                r1FoundSponsor =
+                  spNodeR1 && spNodeR1.isClone && spNodeR1.originMainId > 0
+                    ? spNodeR1.originMainId
+                    : userR1.directSponsorNodeId;
+              } else if (userR1.directSponsor && userR1.directSponsor !== ethers.ZeroAddress) {
+                const spR1 = Array.from(snap1.values()).find(
+                  (sn) =>
+                    sn.owner.toLowerCase() === userR1.directSponsor.toLowerCase() &&
+                    !sn.isClone &&
+                    !sn.isExtraId
+                );
+                if (spR1) r1FoundSponsor = spR1.id;
+              }
+            }
+          }
+          if (r1FoundSponsor > 0) {
+            directUplineNodeId = r1FoundSponsor;
+          } else {
+            directUplineNodeId = resolveSponsorNodeIdForNode(n.id, n.directSponsor);
+          }
         } else if (autoIdSourceMainMap.has(n.id)) {
           directUplineNodeId = autoIdSourceMainMap.get(n.id)!;
         } else if (n.isExtraId || extraIdSourceMainMap.has(n.id)) {
@@ -3793,38 +3850,6 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           } else if (extraIdSourceMainMap.has(originMainId)) {
             const extraSpR1 = extraIdSourceMainMap.get(originMainId)!;
             directUplineNodeId = extraSpR1 > 0 ? extraSpR1 : 1;
-          } else {
-            directUplineNodeId = resolveSponsorNodeIdForNode(n.id, n.directSponsor);
-          }
-        } else if (activeRank > 1 && !n.isExtraId) {
-          // ผู้แนะนำใน Rank 2-27 ยึดตามผู้แนะนำเดิมของรหัสหลักนั้นจาก Rank 1 เสมอ
-          let r1FoundSponsor = 0;
-          if (snap1) {
-            const userR1 =
-              (r1MainId ? snap1.get(r1MainId) : undefined) ||
-              Array.from(snap1.values()).find(
-                (sn) =>
-                  sn.owner.toLowerCase() === n.owner.toLowerCase() &&
-                  !sn.isClone &&
-                  !sn.isExtraId &&
-                  (n.id === 1 || sn.id > 1)
-              );
-            if (userR1) {
-              if (userR1.directSponsorNodeId && userR1.directSponsorNodeId > 0) {
-                r1FoundSponsor = userR1.directSponsorNodeId;
-              } else if (userR1.directSponsor && userR1.directSponsor !== ethers.ZeroAddress) {
-                const spR1 = Array.from(snap1.values()).find(
-                  (sn) =>
-                    sn.owner.toLowerCase() === userR1.directSponsor.toLowerCase() &&
-                    !sn.isClone &&
-                    !sn.isExtraId
-                );
-                if (spR1) r1FoundSponsor = spR1.id;
-              }
-            }
-          }
-          if (r1FoundSponsor > 0) {
-            directUplineNodeId = r1FoundSponsor;
           } else {
             directUplineNodeId = resolveSponsorNodeIdForNode(n.id, n.directSponsor);
           }
@@ -7996,10 +8021,16 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                             -{(mainReport?.vault35DeductedTotalUsdt ?? 0).toFixed(2)} USDT
                           </span>
                           <div className="space-y-0.5 text-[10px] text-slate-300">
-                            <div>• สร้าง Extra ID: <strong className="text-rose-300">-{mainReport?.vaultDeductedBreakdown?.extraIdsTotalUsdt ?? (extraIdsList.length > 0 ? (mainReport?.extraIdDeductedTotalUsdt ?? 0) : 0)} U</strong> ({extraIdsList.length} รหัส)</div>
-                            <div>• สร้าง Auto ID: <strong className="text-amber-300">-{mainReport?.vaultDeductedBreakdown?.autoIdsTotalUsdt ?? (autoIdsList.length * 5)} U</strong> ({autoIdsList.length} รหัส)</div>
-                            {(mainReport?.vaultDeductedBreakdown?.upgradesTotalUsdt ?? 0) > 0 && (
-                              <div>• ออโต้อัปเกรด: <strong className="text-cyan-300">-{mainReport?.vaultDeductedBreakdown?.upgradesTotalUsdt} U</strong></div>
+                            {(mainReport?.vault35DeductedTotalUsdt ?? 0) === 0 ? (
+                              <div className="text-slate-500 italic">ยังไม่มีการหักใช้งานใดๆ</div>
+                            ) : (
+                              <>
+                                <div>• สร้าง Extra ID: <strong className="text-rose-300">-{Number(mainReport?.vaultDeductedBreakdown?.extraIdsTotalUsdt ?? 0).toFixed(2)} U</strong> ({extraIdsList.length} รหัส)</div>
+                                <div>• สร้าง Auto ID: <strong className="text-amber-300">-{Number(mainReport?.vaultDeductedBreakdown?.autoIdsTotalUsdt ?? 0).toFixed(2)} U</strong> ({autoIdsList.length} รหัส)</div>
+                                {(mainReport?.vaultDeductedBreakdown?.upgradesTotalUsdt ?? 0) > 0 && (
+                                  <div>• หักอัปเกรดแรงค์: <strong className="text-cyan-300">-{Number(mainReport?.vaultDeductedBreakdown?.upgradesTotalUsdt).toFixed(2)} U</strong></div>
+                                )}
+                              </>
                             )}
                           </div>
                         </div>

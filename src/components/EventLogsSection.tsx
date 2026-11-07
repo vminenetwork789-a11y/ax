@@ -212,6 +212,8 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
         const d = new Date(isoOrTime);
         if (isNaN(d.getTime())) return isoOrTime;
         return d.toLocaleString(language === 'th' ? 'th-TH' : 'en-US', {
+          timeZone: 'Asia/Bangkok',
+          hour12: false,
           day: '2-digit',
           month: 'short',
           hour: '2-digit',

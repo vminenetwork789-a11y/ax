@@ -185,7 +185,7 @@ const DEFAULT_SYSTEM_CONFIG = {
   contractAddress:
     process.env.OVERRIDE_CONTRACT_ADDRESS ||
     process.env.CONTRACT_ADDRESS ||
-    '0x982a87F726Cc1044A546FA853A425e6F445bCA3d',
+    '0x3B69efbd1f615cD31E326497555BFA56a194F935',
   usdtAddress: process.env.USDT_ADDRESS || '0x05f24E1F598DF1aE8d0B424ce978f8ea33bB752b',
   chainId: Number(process.env.CHAIN_ID || 97),
   networkName: process.env.NETWORK_NAME || 'BNB Smart Chain Testnet',
@@ -227,6 +227,8 @@ const SERVER_LEGACY_CONTRACTS = new Set([
   '0xc115f39897811d83be2613e9722753cfb78d492b',
   '0x191d0c2cd0496e05aa4f91273125ddccc6645df4',
   '0x36932dca76922f8f05513710db89238258e61378',
+  '0xee087e0318a8ac20229892bbc63d2fe43809234d',
+  '0x982a87f726cc1044a546fa853a425e6f445bca3d',
 ]);
 
 const SERVER_LEGACY_USDT = new Set([
@@ -762,9 +764,11 @@ const inMemoryDB = {
 function ensurePersistentNodeTimestamps() {
   let missingAny = false;
   const seenTimes = new Set<string>();
+  const staleCutoffMs = 1793900000000; // Refresh any legacy hardcoded Nov 5 (1793853600000) timestamps
   for (let r = 1; r <= 27; r++) {
     for (const n of matrixDB.nodesByRank[r] || []) {
-      if (!n.createdAt || seenTimes.has(n.createdAt)) {
+      const tMs = n.createdAt ? new Date(n.createdAt).getTime() : 0;
+      if (!n.createdAt || !tMs || tMs <= staleCutoffMs || seenTimes.has(n.createdAt)) {
         missingAny = true;
         break;
       }
@@ -774,7 +778,7 @@ function ensurePersistentNodeTimestamps() {
   }
   if (!missingAny) return;
 
-  // Build a deterministic chronological sequence across all ranks so historical nodes each have a unique, stable timestamp
+  // Build a deterministic chronological sequence across all ranks anchored to current time
   const orderedNodes: IndexedTreeNode[] = [];
   for (let r = 1; r <= 27; r++) {
     const rList = (matrixDB.nodesByRank[r] || []).slice().sort((a, b) => a.id - b.id);
@@ -783,34 +787,43 @@ function ensurePersistentNodeTimestamps() {
     }
   }
   const totalCount = orderedNodes.length;
-  const fixedAnchorMs = 1793853600000; // Fixed historical anchor so historical node timestamps never shift on sync
+  const anchorMs = Date.now();
   orderedNodes.forEach((n, idx) => {
-    const stepsFromEnd = Math.max(0, totalCount - 1 - idx);
-    n.createdAt = new Date(fixedAnchorMs - stepsFromEnd * 37000).toISOString();
+    const tMs = n.createdAt ? new Date(n.createdAt).getTime() : 0;
+    if (!n.createdAt || !tMs || tMs <= staleCutoffMs) {
+      const stepsFromEnd = Math.max(0, totalCount - 1 - idx);
+      n.createdAt = new Date(anchorMs - stepsFromEnd * 2000).toISOString();
+    }
   });
 }
 
 function rebuildDatabaseRewardLogsFromNodes() {
   ensurePersistentNodeTimestamps();
   const r1Nodes = matrixDB.nodesByRank[1] || [];
-  if (r1Nodes.length <= 1) return;
+  if (r1Nodes.length <= 1) {
+    matrixDB.rewardLogs = [];
+    inMemoryDB.rewardLogs = matrixDB.rewardLogs;
+    return;
+  }
 
   const rootOwnerAddr = r1Nodes[0]?.owner || matrixDB.systemWallets.rootOwner;
   const allSellAddr = matrixDB.systemWallets.allSellWallet || '0xBeFEdbB942A73957F6123bA0B3aA27B4A081F710';
   const botAddr = matrixDB.systemWallets.botWallet || '0xbFD0A57Ac58165A863A9F4d9E5C1B57996B24a56';
   const familyAddr = matrixDB.systemWallets.familyPool || '0x225D2016F610C99051EfD91F812B2736647B275A';
 
-  // Preserve any real txHash events captured live by the listener
-  const liveTxEvents = matrixDB.rewardLogs.filter(
-    (l) => l.txHash && !l.id.startsWith('db-chain-')
-  );
+  // Preserve any real txHash events captured live by the listener that still exist in current rank nodes
+  const liveTxEvents = matrixDB.rewardLogs.filter((l) => {
+    if (!l.txHash || l.id.startsWith('db-chain-')) return false;
+    const rLen = matrixDB.nodesByRank[l.rank || 1]?.length || 1;
+    return Number(l.fromNodeId || 0) <= rLen;
+  });
   const seenKeys = new Set<string>();
   for (const ev of liveTxEvents) {
     seenKeys.add(`${ev.rank || 1}:${ev.fromNodeId}:${ev.rewardType}:${ev.toNodeId}`);
   }
 
   const reconstructed: RewardLogModel[] = [...liveTxEvents];
-  const baseBlock = matrixDB.lastSyncedBlock || 140018600;
+  const baseBlock = matrixDB.lastSyncedBlock || 99850000;
 
   for (let rankNum = 1; rankNum <= 27; rankNum++) {
     const rNodes = matrixDB.nodesByRank[rankNum] || [];
@@ -845,13 +858,34 @@ function rebuildDatabaseRewardLogsFromNodes() {
     const resolveSponsorNodeId = (nodeId: number): number => {
       const n = nodesMap.get(nodeId);
       if (!n || nodeId === 1) return 1;
-      if (rankNum > 1 && n.originMainId > 1) {
-        const origR1 = r1Nodes.find((x) => x.id === n.originMainId);
-        if (origR1 && origR1.directSponsorNodeId > 0) {
-          return origR1.directSponsorNodeId;
+      if (rankNum > 1) {
+        const localOrigNode =
+          !n.isClone && !n.isExtraId
+            ? n
+            : rNodes.find(
+                (x) =>
+                  !x.isClone &&
+                  !x.isExtraId &&
+                  (x.id === n.originMainId || x.originMainId === n.originMainId)
+              );
+        const r1OriginId = localOrigNode?.originMainId || n.originMainId;
+        if (r1OriginId === 1) return 1;
+        if (r1OriginId > 1) {
+          const origR1 = r1Nodes.find((x) => x.id === r1OriginId && !x.isClone && !x.isExtraId);
+          if (origR1 && origR1.directSponsorNodeId > 0) {
+            const spR1 = r1Nodes.find((x) => x.id === origR1.directSponsorNodeId);
+            return spR1 && spR1.isClone && spR1.originMainId > 0
+              ? spR1.originMainId
+              : origR1.directSponsorNodeId;
+          }
         }
       }
-      if (n.directSponsorNodeId > 0) return n.directSponsorNodeId;
+      if (n.directSponsorNodeId > 0) {
+        const spR1 = r1Nodes.find((x) => x.id === n.directSponsorNodeId);
+        return spR1 && spR1.isClone && spR1.originMainId > 0
+          ? spR1.originMainId
+          : n.directSponsorNodeId;
+      }
       const spKey = (n.directSponsor || '').toLowerCase();
       if (!spKey || spKey === ethers.ZeroAddress) return 1;
 
@@ -891,18 +925,27 @@ function rebuildDatabaseRewardLogsFromNodes() {
       const eventTime =
         child.createdAt ||
         new Date(
-          1793853600000 - (Math.max(0, rNodes.length - id) * 45000 + Math.max(0, 27 - rankNum) * 19000)
+          Date.now() - (Math.max(0, rNodes.length - id) * 2000 + Math.max(0, 27 - rankNum) * 1000)
         ).toISOString();
 
       const parentOrigin = nodesMap.get(parent.originMainId || parent.id) || parent;
       const isParentExtraLineage = Boolean(parent.isExtraId || parentOrigin.isExtraId);
 
-      // กรณี EXTRA ID: รายได้ที่เกิดจากเม็ดซ้าย:
-      // - 30% ค่าแนะนำ จะถูกส่งกลับไปให้ directSponsor
-      // - 30% ค่าชั้น จะถูกส่งกลับไปให้ directSponsor
-      // - Vault (35%) จะถูกส่งกลับที่ New Extra ID Pool ของ directSponsor
-      // - 4% all sell
-      // - 1% bot
+      // กฎหลัก Rank 2-27: 30% ค่าแนะนำตรง (Direct Sponsor) ต้องจ่ายให้ผู้แนะนำตรงของโหนดที่วาง (อ้างอิงที่ Rank 1 เสมอ)
+      // กรณีโคลนของรหัส #1 (Root #1 Clone) 30% ค่าแนะนำจะส่งเข้า Family Pool
+      const isId1CloneChild = child.isClone && (child.originMainId === 1 || parent.id === 1);
+      const childDirectSpNodeId = resolveSponsorNodeId(id);
+      const childDirectSpNode =
+        rankNum > 1
+          ? r1Nodes.find((x) => x.id === childDirectSpNodeId) || nodesMap.get(childDirectSpNodeId)
+          : nodesMap.get(childDirectSpNodeId);
+      const childDirectRecip = isId1CloneChild
+        ? familyAddr
+        : childDirectSpNode?.owner || child.directSponsor || rootOwnerAddr;
+      const childDirectType: RewardType = isId1CloneChild
+        ? 'DIRECT_ID1_CLONE_FAMILY_POOL'
+        : 'DIRECT';
+
       if (isParentExtraLineage) {
         const extraSpNodeId =
           parentOrigin.directSponsorNodeId > 0
@@ -918,15 +961,16 @@ function rebuildDatabaseRewardLogsFromNodes() {
           extraSpNode?.owner || parentOrigin.directSponsor || parent.directSponsor || rootOwnerAddr;
         const fullLevelAmt = (unitPrice * 0.3).toFixed(2);
 
-        // 1. 30% ค่าแนะนำ -> ส่งกลับไปให้ directSponsor
-        if (!seenKeys.has(`${rankNum}:${id}:DIRECT:${extraSpNodeId}`)) {
+        // 1. 30% ค่าแนะนำตรง -> จ่ายให้ผู้แนะนำตรงของโหนดที่วาง (อ้างอิงที่ Rank 1 เสมอ หรือเข้า Family Pool หากเป็นโคลนของ #1)
+        const targetDirectNodeKey = isId1CloneCloneTarget(isId1CloneChild, childDirectSpNodeId);
+        if (!seenKeys.has(`${rankNum}:${id}:${childDirectType}:${targetDirectNodeKey}`)) {
           reconstructed.push({
             id: `db-chain-r${rankNum}-${id}-direct`,
             fromNodeId: String(id),
-            toNodeId: String(extraSpNodeId),
-            recipient: extraSpRecip,
+            toNodeId: isId1CloneChild ? '0' : String(childDirectSpNodeId),
+            recipient: childDirectRecip,
             rank: rankNum,
-            rewardType: 'DIRECT',
+            rewardType: childDirectType,
             amount: directAmt,
             txHash: syntheticTx,
             blockNumber: baseBlock - (rNodes.length - id),
@@ -1000,16 +1044,9 @@ function rebuildDatabaseRewardLogsFromNodes() {
         continue;
       }
 
-      const spNodeId = resolveSponsorNodeId(id);
-      const spNode =
-        rankNum > 1
-          ? r1Nodes.find((x) => x.id === spNodeId) || nodesMap.get(spNodeId)
-          : nodesMap.get(spNodeId);
-      const isId1CloneChild = child.isClone && (child.originMainId === 1 || parent.id === 1);
-      const directRecip = isId1CloneChild
-        ? familyAddr
-        : spNode?.owner || child.directSponsor || rootOwnerAddr;
-      const directType: RewardType = isId1CloneChild ? 'DIRECT_ID1_CLONE_FAMILY_POOL' : 'DIRECT';
+      const spNodeId = childDirectSpNodeId;
+      const directRecip = childDirectRecip;
+      const directType: RewardType = childDirectType;
 
       // 1. Direct 30%
       if (!seenKeys.has(`${rankNum}:${id}:${directType}:${isId1CloneCloneTarget(isId1CloneChild, spNodeId)}`)) {
@@ -1288,9 +1325,9 @@ function rebuildDatabaseUpgradeLogsFromNodes() {
           liveMeta?.createdAt ||
           node.createdAt ||
           new Date(
-            1793853600000 -
-              Math.max(0, rNodes.length - node.id) * 45000 -
-              Math.max(0, 27 - rankNum) * 19000
+            Date.now() -
+              Math.max(0, rNodes.length - node.id) * 2000 -
+              Math.max(0, 27 - rankNum) * 1000
           ).toISOString(),
       });
     }
@@ -1372,11 +1409,13 @@ function reconcileRankTreeLinks(nodes: IndexedTreeNode[]): IndexedTreeNode[] {
   nodes.sort((a, b) => a.id - b.id);
   const byId = new Map<number, IndexedTreeNode>();
   const ownerFirstMain = new Map<string, number>();
+  const rankNum = nodes[0]?.rank || 1;
+  const r1Nodes = matrixDB?.nodesByRank?.[1] || [];
   for (const n of nodes) {
     byId.set(n.id, n);
     const ok = (n.owner || '').toLowerCase();
     if (!n.isClone && !n.isExtraId && !ownerFirstMain.has(ok)) {
-      ownerFirstMain.set(ok, n.id);
+      ownerFirstMain.set(ok, rankNum === 1 ? n.id : (n.originMainId > 0 ? n.originMainId : n.id));
     }
   }
   const cloneCountByOrigin = new Map<number, number>();
@@ -1385,8 +1424,22 @@ function reconcileRankTreeLinks(nodes: IndexedTreeNode[]): IndexedTreeNode[] {
       n.isExtraId = false;
       const ok = (n.owner || '').toLowerCase();
       const fallbackMain = ownerFirstMain.get(ok) || 1;
-      const candidateOrig = byId.get(n.originMainId);
-      if (!n.originMainId || n.originMainId === n.id || !candidateOrig || candidateOrig.isClone) {
+      const candidateOrig =
+        rankNum === 1
+          ? byId.get(n.originMainId)
+          : r1Nodes.find((x) => x.id === n.originMainId && !x.isClone) ||
+            nodes.find(
+              (x) =>
+                !x.isClone &&
+                (x.originMainId === n.originMainId || x.id === n.originMainId)
+            ) ||
+            byId.get(n.originMainId);
+      if (
+        !n.originMainId ||
+        (rankNum === 1 && n.originMainId === n.id) ||
+        !candidateOrig ||
+        candidateOrig.isClone
+      ) {
         n.originMainId = fallbackMain;
       }
       const origId = n.originMainId > 0 ? n.originMainId : fallbackMain;
@@ -1410,13 +1463,11 @@ function reconcileRankTreeLinks(nodes: IndexedTreeNode[]): IndexedTreeNode[] {
   }
 
   // สำหรับ Rank 1-27: ตรวจสอบว่าโหนดและโคลนนิ่งรอบที่ 1 วางอยู่ใต้ผู้แนะนำตรง/โคลนของผู้แนะนำตามลำดับที่ถูกต้องหรือไม่
-  const rankNum = nodes[0]?.rank || 1;
   if (rankNum >= 1 && nodes.length > 1) {
-    const r1Nodes = matrixDB?.nodesByRank?.[1] || [];
     const r9Nodes = matrixDB?.nodesByRank?.[9] || [];
     const r4Nodes = matrixDB?.nodesByRank?.[4] || [];
 
-    // 1. Resolve directSponsorNodeId for Extra IDs and Main IDs in Rank 2..27 from Rank 1 before checking tree placement
+    // 1. กฎหลัก Rank 2..27: ห้ามเปลี่ยนข้อมูล ผู้แนะนำตรง (Direct Sponsor) ให้ยึดตาม Rank 1 เสมอ
     if (rankNum > 1 && r1Nodes.length > 0) {
       for (const n of nodes) {
         if (n.isExtraId && !n.isClone) {
@@ -1444,20 +1495,66 @@ function reconcileRankTreeLinks(nodes: IndexedTreeNode[]): IndexedTreeNode[] {
             n.directSponsor = eligibleMain.owner;
           }
         } else if (!n.isClone && !n.isExtraId && n.id > 1) {
-          const origR1 =
+          const ok = (n.owner || '').toLowerCase();
+          const ownerMainsR1 = r1Nodes.filter(
+            (x) => x.id > 1 && !x.isClone && !x.isExtraId && (x.owner || '').toLowerCase() === ok
+          );
+          let origR1 =
             n.originMainId > 1
-              ? r1Nodes.find((x) => x.id === n.originMainId && !x.isClone && !x.isExtraId)
-              : r1Nodes.find(
+              ? r1Nodes.find(
                   (x) =>
-                    x.id > 1 &&
+                    x.id === n.originMainId &&
                     !x.isClone &&
                     !x.isExtraId &&
-                    (x.owner || '').toLowerCase() === (n.owner || '').toLowerCase()
-                );
+                    (x.owner || '').toLowerCase() === ok
+                )
+              : undefined;
+          if (!origR1 && n.directSponsorNodeId > 1 && ownerMainsR1.length > 1) {
+            origR1 = ownerMainsR1.find((x) => x.directSponsorNodeId === n.directSponsorNodeId);
+          }
+          if (!origR1 && ownerMainsR1.length > 0) {
+            origR1 = ownerMainsR1[0];
+          }
           if (origR1) {
             n.originMainId = origR1.id;
-            n.directSponsorNodeId = origR1.directSponsorNodeId || 1;
-            n.directSponsor = origR1.directSponsor || n.directSponsor;
+            const spR1 = r1Nodes.find((x) => x.id === origR1.directSponsorNodeId);
+            const canonSpId =
+              spR1 && spR1.isClone && spR1.originMainId > 0
+                ? spR1.originMainId
+                : origR1.directSponsorNodeId || 1;
+            const canonSpNode = r1Nodes.find((x) => x.id === canonSpId) || spR1;
+            n.directSponsorNodeId = canonSpId;
+            n.directSponsor = canonSpNode?.owner || origR1.directSponsor || n.directSponsor;
+          }
+        } else if (n.isClone) {
+          const localOrigMain = nodes.find(
+            (m) =>
+              !m.isClone &&
+              !m.isExtraId &&
+              (m.originMainId === n.originMainId || m.id === n.originMainId)
+          );
+          const r1OriginId = localOrigMain ? localOrigMain.originMainId : n.originMainId;
+          if (r1OriginId > 0) {
+            n.originMainId = r1OriginId;
+          }
+          if (r1OriginId === 1) {
+            n.directSponsorNodeId = 0;
+            const rootR1 = r1Nodes.find((x) => x.id === 1);
+            if (rootR1) n.directSponsor = rootR1.directSponsor;
+          } else {
+            const origR1 = r1Nodes.find(
+              (x) => x.id === r1OriginId && !x.isClone && !x.isExtraId
+            );
+            if (origR1) {
+              const spR1 = r1Nodes.find((x) => x.id === origR1.directSponsorNodeId);
+              const canonSpId =
+                spR1 && spR1.isClone && spR1.originMainId > 0
+                  ? spR1.originMainId
+                  : origR1.directSponsorNodeId || 1;
+              const canonSpNode = r1Nodes.find((x) => x.id === canonSpId) || spR1;
+              n.directSponsorNodeId = canonSpId;
+              n.directSponsor = canonSpNode?.owner || origR1.directSponsor || n.directSponsor;
+            }
           }
         }
       }
@@ -4015,6 +4112,7 @@ async function startApp() {
             rawNodeVault: rawVaultVal,
             reconciledBaseVault: rawVaultVal,
             originType,
+            createdAt: new Date().toISOString(),
           } as IndexedTreeNode;
         }
         return null;
@@ -4347,16 +4445,36 @@ async function startApp() {
           )
         );
 
-        const ranksToSync = new Set<number>([1, 2, 3, 4, 5]);
+        const ranksToSync = new Set<number>([1, 2, 3, 4, 5, 6]);
         countsResults.forEach((c, idx) => {
           const r = idx + 1;
-          const prevCount = matrixDB.rankCounts[r] || 1;
           matrixDB.rankCounts[r] = c;
-          const hasStoredVault = (matrixDB.nodesByRank[r] || []).some((n) => Number(n.nodeVault || 0) > 0);
-          if (c > 1 || hasStoredVault || c !== prevCount || !matrixDB.nodesByRank[r] || matrixDB.nodesByRank[r].length < c) {
-            if (r <= 5 || c > 1 || hasStoredVault) {
-              ranksToSync.add(r);
+          const currentNodes = matrixDB.nodesByRank[r] || [];
+          if (c <= 1) {
+            if (currentNodes.length > 1) {
+              const rootNode = currentNodes.find((n) => n.id === 1) || {
+                id: 1,
+                rank: r,
+                owner: matrixDB.systemWallets.rootOwner,
+                directSponsor: ethers.ZeroAddress,
+                parentId: 0,
+                leftChild: 0,
+                rightChild: 0,
+                isClone: false,
+                isExtraId: false,
+                originMainId: 1,
+                cloneRound: 0,
+                directSponsorNodeId: 0,
+                nodeVault: 0,
+                rawNodeVault: 0,
+                reconciledBaseVault: 0,
+              };
+              rootNode.leftChild = 0;
+              rootNode.rightChild = 0;
+              matrixDB.nodesByRank[r] = [rootNode];
             }
+          } else {
+            ranksToSync.add(r);
           }
         });
 
@@ -4742,7 +4860,7 @@ async function startApp() {
         const totalInRank = Math.max(rList.length, nodeId, 1);
         const stepsBack = Math.max(0, totalInRank - nodeId);
         return new Date(
-          1793853600000 - stepsBack * 45000 - Math.max(0, 27 - rankNum) * 19000
+          Date.now() - stepsBack * 2000 - Math.max(0, 27 - rankNum) * 1000
         ).toISOString();
       };
 
@@ -5334,6 +5452,21 @@ async function startApp() {
             ? Boolean(parent.isExtraId)
             : Boolean(parent.isExtraId || parentOrigin.isExtraId);
 
+          // กฎหลัก Rank 2-27: ห้ามเปลี่ยนข้อมูล ผู้แนะนำตรง (Direct Sponsor)
+          // 30% ค่าแนะนำตรง (Direct Sponsor) ต้องจ่ายให้ ผู้แนะนำตรง (Direct Sponsor อ้างอิงที่ Rank 1 เสมอ)
+          const isId1CloneChild = child.isClone && (childCanonMainId === 1 || parent.id === 1);
+          let spMainId = child.directSponsorNodeId || 1;
+          if (!child.isExtraId && childCanonMainId > 1) {
+            const origR1 = r1Nodes.find((x) => x.id === childCanonMainId && !x.isClone && !x.isExtraId);
+            if (origR1 && origR1.directSponsorNodeId > 0) {
+              spMainId = origR1.directSponsorNodeId;
+            }
+          }
+          const spR1Node = r1Nodes.find((x) => x.id === spMainId);
+          if (spR1Node && spR1Node.isClone && spR1Node.originMainId > 0) {
+            spMainId = spR1Node.originMainId;
+          }
+
           if (isParentExtraLineage) {
             const extraOwner = (parentOrigin.owner || parent.owner || '').toLowerCase();
             const ownerMains = r1Nodes.filter(
@@ -5378,21 +5511,53 @@ async function startApp() {
             );
             const extraSpLocalId = extraSpLocalNode ? extraSpLocalNode.id : targetMainId;
 
-            const rep = reportsMap.get(targetMainId);
-            if (rep) {
-              rep.direct30TotalUsdt = Number((rep.direct30TotalUsdt + directAmt).toFixed(2));
-              rep.direct30History.push({
+            // 1. 30% ค่าแนะนำตรง -> จ่ายให้ผู้แนะนำตรงของโหนดที่วาง (อ้างอิงที่ Rank 1 เสมอ หรือเข้า Family Pool หากเป็นโคลนของ #1)
+            if (isId1CloneChild) {
+              familyPoolRootCloneDirectUsdt = Number(
+                (familyPoolRootCloneDirectUsdt + directAmt).toFixed(4)
+              );
+              familyPoolTotalUsdt = Number((familyPoolTotalUsdt + directAmt).toFixed(4));
+              familyPoolByRank[rankNum] = Number(
+                ((familyPoolByRank[rankNum] || 0) + directAmt).toFixed(4)
+              );
+              familyPoolHistory.push({
                 rank: rankNum,
                 fromNodeId: id,
                 fromMainId: childCanonMainId,
                 fromNodeType: childTypeLabel,
-                toNodeId: extraSpLocalId,
-                toMainId: targetMainId,
+                parentId: parent.id,
+                subType: 'ROOT_CLONE_DIRECT',
                 amountUsdt: directAmt,
-                note: `30% ค่าแนะนำจากเม็ดซ้ายของ Extra R${rankNum}-#${parent.id} ส่งกลับผู้แนะนำ Main #${targetMainId}`,
+                recipient: familyPoolWalletAddr,
+                note: `30% ค่าแนะนำจากโคลนรหัส #1 (${childTypeLabel} วางซ้ายใต้ Extra R${rankNum}-#${parent.id}) เข้า Family Pool`,
                 timestamp: rowEventTime,
               });
+            } else {
+              const spRepForExtraChild = reportsMap.get(spMainId);
+              if (spRepForExtraChild) {
+                const spLocalInR = rNodes.find(
+                  (x) => !x.isClone && !x.isExtraId && (rankNum === 1 ? x.id === spMainId : x.originMainId === spMainId)
+                );
+                spRepForExtraChild.direct30TotalUsdt = Number(
+                  (spRepForExtraChild.direct30TotalUsdt + directAmt).toFixed(2)
+                );
+                spRepForExtraChild.direct30History.push({
+                  rank: rankNum,
+                  fromNodeId: id,
+                  fromMainId: childCanonMainId,
+                  fromNodeType: childTypeLabel,
+                  toNodeId: spLocalInR ? spLocalInR.id : spMainId,
+                  toMainId: spMainId,
+                  amountUsdt: directAmt,
+                  note: `30% ค่าแนะนำตรงจาก ${childTypeLabel} (วางซ้ายใต้ Extra R${rankNum}-#${parent.id} • อ้างอิงผู้แนะนำตรง R1 Main #${spMainId})`,
+                  timestamp: rowEventTime,
+                });
+              }
+            }
 
+            // 2. 30% ค่าชั้น และ 35% Vault ของ Extra ID ส่งกลับเจ้าของรหัสหลักที่สร้าง Extra ID นั้น
+            const rep = reportsMap.get(targetMainId);
+            if (rep) {
               rep.level30TotalUsdt = Number((rep.level30TotalUsdt + fullLevelExtraAmt).toFixed(2));
               rep.level30History.push({
                 rank: rankNum,
@@ -5424,7 +5589,6 @@ async function startApp() {
           }
 
           // 1. Direct 30%
-          const isId1CloneChild = child.isClone && (childCanonMainId === 1 || parent.id === 1);
           if (isId1CloneChild) {
             familyPoolRootCloneDirectUsdt = Number(
               (familyPoolRootCloneDirectUsdt + directAmt).toFixed(4)
@@ -5446,25 +5610,21 @@ async function startApp() {
               timestamp: rowEventTime,
             });
           } else {
-            let spMainId = child.directSponsorNodeId || 1;
-            if (rankNum > 1 && childCanonMainId > 1) {
-              const origR1 = r1Nodes.find((x) => x.id === childCanonMainId);
-              if (origR1 && origR1.directSponsorNodeId > 0) {
-                spMainId = origR1.directSponsorNodeId;
-              }
-            }
             const spRep = reportsMap.get(spMainId);
             if (spRep) {
+              const spLocalInR = rNodes.find(
+                (x) => !x.isClone && !x.isExtraId && (rankNum === 1 ? x.id === spMainId : x.originMainId === spMainId)
+              );
               spRep.direct30TotalUsdt = Number((spRep.direct30TotalUsdt + directAmt).toFixed(2));
               spRep.direct30History.push({
                 rank: rankNum,
                 fromNodeId: id,
                 fromMainId: childCanonMainId,
                 fromNodeType: childTypeLabel,
-                toNodeId: spMainId,
+                toNodeId: spLocalInR ? spLocalInR.id : spMainId,
                 toMainId: spMainId,
                 amountUsdt: directAmt,
-                note: `30% ค่าแนะนำตรงจาก ${childTypeLabel} (วางซ้ายใต้ R${rankNum}-#${parent.id})`,
+                note: `30% ค่าแนะนำตรงจาก ${childTypeLabel} (วางซ้ายใต้ R${rankNum}-#${parent.id} • อ้างอิงผู้แนะนำตรง R1 Main #${spMainId})`,
                 timestamp: rowEventTime,
               });
             }
@@ -5631,11 +5791,16 @@ async function startApp() {
 
       // Compute remaining & deducted Vault + finalize levelSummary (clonesLevelTotalUsdt & combinedLevelTotalUsdt) for each ID
       for (const rep of reportsMap.values()) {
+        const stats = computeMainIdDatabaseStats(rep.id);
         const rem = rep.rankNodesList.reduce((acc, rItem) => acc + Number(rItem.nodeVault || 0), 0);
         rep.vault35RemainingTotalUsdt = Number(rem.toFixed(2));
+        rep.vault35GrossTotalUsdt = Number(
+          rep.vault35History.reduce((s, h) => s + (Number(h.amountUsdt) || 0), 0).toFixed(2)
+        );
         rep.vault35DeductedTotalUsdt = Number(
           Math.max(0, rep.vault35GrossTotalUsdt - rep.vault35RemainingTotalUsdt).toFixed(2)
         );
+
         if (!rep.isClone) {
           const cloneLvlSum = Number(
             Math.max(0, rep.level30TotalUsdt - rep.levelSummary.thisNodeLevelTotalUsdt).toFixed(2)
@@ -5647,30 +5812,72 @@ async function startApp() {
           rep.levelSummary.combinedLevelTotalUsdt = Number(rep.levelSummary.thisNodeLevelTotalUsdt.toFixed(2));
         }
 
+        // Deductions breakdown: 100% mathematically balanced to vault35DeductedTotalUsdt
+        const extraDeduct = Number(
+          rep.autoExtraIdsSpawned.reduce(
+            (s, x) => s + (RANK_PRICES_USDT[x.rank - 1] || 10),
+            0
+          ).toFixed(2)
+        );
+        const autoDeduct = Number((rep.autoIdsSpawned.length * 5.0).toFixed(2));
+        const upDeduct = Number(
+          Math.max(0, rep.vault35DeductedTotalUsdt - extraDeduct - autoDeduct).toFixed(2)
+        );
+
+        rep.vaultDeductedBreakdown = {
+          extraIdsTotalUsdt: extraDeduct,
+          autoIdsTotalUsdt: autoDeduct,
+          upgradesTotalUsdt: upDeduct,
+        };
+
+        // Align 3 pools with stats
+        rep.upgradeRankPool = stats.upgradeRankPool;
+        rep.newAutoIdPool = stats.newAutoIdPool;
+        rep.newExtraIdPool = stats.newExtraIdPool;
+        if (rep.pools) {
+          rep.pools.upgradeRankPool = stats.upgradeRankPool;
+          rep.pools.newAutoIdPool = stats.newAutoIdPool;
+          rep.pools.newExtraIdPool = stats.newExtraIdPool;
+        }
+
         // Build 35% Vault Audit Ledger (Inflow vs Outflow & Running Balance)
         const ledgerEvents: VaultLedgerItem[] = [];
         const sortedInflows = rep.vault35History.slice().reverse();
         const sortedAutoSpawned = rep.autoIdsSpawned.slice().reverse();
         const sortedExtraSpawned = rep.autoExtraIdsSpawned.slice().reverse();
-        const idUpgrades = (matrixDB.upgradeLogs || []).filter(
-          (u) => Number(u.mainNodeId) === rep.id && Number(u.vaultDeductedUsdt) > 0
-        );
 
-        let autoPoolBal = 0;
-        let extraPoolBal = 0;
-        let autoIdx = 0;
-        let extraIdx = 0;
-
+        // 1. Inflow Events
         for (const inf of sortedInflows) {
-          const tMs = new Date(inf.timestamp).getTime() || Date.now();
-          const pType: 'UPGRADE_POOL' | 'AUTO_ID_POOL' | 'EXTRA_ID_POOL' =
-            inf.rank <= 3 ? 'AUTO_ID_POOL' : 'EXTRA_ID_POOL';
-          const pLabel = pType === 'AUTO_ID_POOL' ? 'Auto ID Pool' : 'Extra ID Pool';
+          const isExtraLeftBonus =
+            (inf.note || '').includes('Extra R') ||
+            (inf.note || '').includes('Extra Left Bonus') ||
+            (inf.note || '').includes('ส่งเข้า New Extra ID Pool');
 
-          if (pType === 'AUTO_ID_POOL') {
-            autoPoolBal = Number((autoPoolBal + inf.amountUsdt).toFixed(2));
+          let pType: 'UPGRADE_POOL' | 'AUTO_ID_POOL' | 'EXTRA_ID_POOL';
+          let pLabel: string;
+
+          if (isExtraLeftBonus) {
+            pType = 'EXTRA_ID_POOL';
+            pLabel = 'Extra ID Pool';
+          } else if ((rep.currentMaxRank || 1) >= 27) {
+            if (inf.rank <= 3 && inf.rank < stats.window5Start) {
+              pType = 'AUTO_ID_POOL';
+              pLabel = 'Auto ID Pool';
+            } else {
+              pType = 'EXTRA_ID_POOL';
+              pLabel = 'Extra ID Pool';
+            }
           } else {
-            extraPoolBal = Number((extraPoolBal + inf.amountUsdt).toFixed(2));
+            if (inf.rank >= stats.window5Start && inf.rank <= stats.window5End) {
+              pType = 'UPGRADE_POOL';
+              pLabel = 'Upgrade Pool';
+            } else if (inf.rank <= 3 && inf.rank < stats.window5Start) {
+              pType = 'AUTO_ID_POOL';
+              pLabel = 'Auto ID Pool';
+            } else {
+              pType = 'EXTRA_ID_POOL';
+              pLabel = 'Extra ID Pool';
+            }
           }
 
           ledgerEvents.push({
@@ -5685,70 +5892,17 @@ async function startApp() {
             poolLabelTh: pLabel,
             descriptionTh: `รับ 35% Vault (+${inf.amountUsdt.toFixed(2)} USDT) จากเม็ดซ้ายใน Rank ${inf.rank} สะสมเข้า ${pLabel}`,
             note: inf.note,
-            poolBalanceAfterUsdt: pType === 'AUTO_ID_POOL' ? autoPoolBal : extraPoolBal,
+            poolBalanceAfterUsdt: 0,
             balanceAfterUsdt: 0,
           });
-
-          // Check if Auto ID can be spawned
-          while (autoIdx < sortedAutoSpawned.length && autoPoolBal >= 5.0) {
-            const sp = sortedAutoSpawned[autoIdx];
-            autoPoolBal = Number((autoPoolBal - 5.0).toFixed(2));
-            autoIdx++;
-            const spTime = new Date(tMs + autoIdx * 1000).toISOString();
-            ledgerEvents.push({
-              id: `v-out-auto-${rep.id}-${sp.id}`,
-              timestamp: spTime,
-              direction: 'OUT',
-              actionType: 'SPAWN_AUTO_ID',
-              actionLabelTh: 'หักสร้าง Auto ID',
-              rank: 1,
-              amountUsdt: 5.0,
-              poolType: 'AUTO_ID_POOL',
-              poolLabelTh: 'Auto ID Pool',
-              descriptionTh: `หัก 5.00 USDT จาก Auto ID Pool สร้าง ${sp.label} วางผัง Rank 1 ใต้ R1-#${sp.parentId} (${sp.side})`,
-              note: `สร้าง Auto ID สำเร็จ (ID #${sp.id})`,
-              poolBalanceAfterUsdt: autoPoolBal,
-              balanceAfterUsdt: 0,
-            });
-          }
-
-          // Check if Extra ID can be spawned
-          while (extraIdx < sortedExtraSpawned.length) {
-            const sp = sortedExtraSpawned[extraIdx];
-            const cost = RANK_PRICES_USDT[sp.rank - 1] || 10;
-            if (extraPoolBal < cost) break;
-            extraPoolBal = Number((extraPoolBal - cost).toFixed(2));
-            extraIdx++;
-            const spTime = new Date(tMs + extraIdx * 1000).toISOString();
-            ledgerEvents.push({
-              id: `v-out-extra-${rep.id}-${sp.rank}-${sp.id}`,
-              timestamp: spTime,
-              direction: 'OUT',
-              actionType: 'SPAWN_EXTRA_ID',
-              actionLabelTh: `หักสร้าง Extra ID (${sp.label})`,
-              rank: sp.rank,
-              amountUsdt: cost,
-              poolType: 'EXTRA_ID_POOL',
-              poolLabelTh: 'Extra ID Pool',
-              descriptionTh: `หัก ${cost.toFixed(2)} USDT จาก Extra ID Pool สร้าง ${sp.label} ในผัง Rank ${sp.rank} ใต้ R${sp.rank}-#${sp.parentId} (${sp.side})`,
-              note: `สร้าง Extra ID สำเร็จ (ID #${sp.id})`,
-              poolBalanceAfterUsdt: extraPoolBal,
-              balanceAfterUsdt: 0,
-            });
-          }
         }
 
-        while (autoIdx < sortedAutoSpawned.length) {
-          const sp = sortedAutoSpawned[autoIdx];
-          autoIdx++;
-          const lastTime =
-            ledgerEvents.length > 0
-              ? new Date(ledgerEvents[ledgerEvents.length - 1].timestamp).getTime() + 1000
-              : Date.now();
-          autoPoolBal = Number(Math.max(0, autoPoolBal - 5.0).toFixed(2));
+        // 2. Outflow Events: Auto IDs
+        sortedAutoSpawned.forEach((sp, idx) => {
+          const spTime = sp.timestamp || new Date(Date.now() - (idx + 1) * 60000).toISOString();
           ledgerEvents.push({
             id: `v-out-auto-${rep.id}-${sp.id}`,
-            timestamp: new Date(lastTime).toISOString(),
+            timestamp: spTime,
             direction: 'OUT',
             actionType: 'SPAWN_AUTO_ID',
             actionLabelTh: 'หักสร้าง Auto ID',
@@ -5758,23 +5912,18 @@ async function startApp() {
             poolLabelTh: 'Auto ID Pool',
             descriptionTh: `หัก 5.00 USDT จาก Auto ID Pool สร้าง ${sp.label} วางผัง Rank 1`,
             note: `สร้าง Auto ID สำเร็จ (ID #${sp.id})`,
-            poolBalanceAfterUsdt: autoPoolBal,
+            poolBalanceAfterUsdt: 0,
             balanceAfterUsdt: 0,
           });
-        }
+        });
 
-        while (extraIdx < sortedExtraSpawned.length) {
-          const sp = sortedExtraSpawned[extraIdx];
+        // 3. Outflow Events: Extra IDs
+        sortedExtraSpawned.forEach((sp, idx) => {
           const cost = RANK_PRICES_USDT[sp.rank - 1] || 10;
-          extraIdx++;
-          const lastTime =
-            ledgerEvents.length > 0
-              ? new Date(ledgerEvents[ledgerEvents.length - 1].timestamp).getTime() + 1000
-              : Date.now();
-          extraPoolBal = Number(Math.max(0, extraPoolBal - cost).toFixed(2));
+          const spTime = sp.timestamp || new Date(Date.now() - (idx + 1) * 50000).toISOString();
           ledgerEvents.push({
             id: `v-out-extra-${rep.id}-${sp.rank}-${sp.id}`,
-            timestamp: new Date(lastTime).toISOString(),
+            timestamp: spTime,
             direction: 'OUT',
             actionType: 'SPAWN_EXTRA_ID',
             actionLabelTh: `หักสร้าง Extra ID (${sp.label})`,
@@ -5784,29 +5933,62 @@ async function startApp() {
             poolLabelTh: 'Extra ID Pool',
             descriptionTh: `หัก ${cost.toFixed(2)} USDT จาก Extra ID Pool สร้าง ${sp.label} ในผัง Rank ${sp.rank}`,
             note: `สร้าง Extra ID สำเร็จ (ID #${sp.id})`,
-            poolBalanceAfterUsdt: extraPoolBal,
-            balanceAfterUsdt: 0,
-          });
-        }
-
-        for (const u of idUpgrades) {
-          const uCost = Number(u.vaultDeductedUsdt) || 0;
-          if (uCost <= 0) continue;
-          ledgerEvents.push({
-            id: `v-out-up-${rep.id}-${u.toRank}`,
-            timestamp: u.createdAt || new Date().toISOString(),
-            direction: 'OUT',
-            actionType: 'AUTO_UPGRADE',
-            actionLabelTh: `หักออโต้อัปเกรด (สู่ Rank ${u.toRank})`,
-            rank: u.toRank,
-            amountUsdt: uCost,
-            poolType: 'UPGRADE_POOL',
-            poolLabelTh: 'Upgrade Pool',
-            descriptionTh: `หัก ${uCost.toFixed(2)} USDT จาก Upgrade Pool เพื่ออัปเกรด Main #${rep.id} จาก Rank ${u.fromRank} สู่ Rank ${u.toRank}`,
-            note: `อัปเกรดสู่ Rank ${u.toRank} สำเร็จ`,
             poolBalanceAfterUsdt: 0,
             balanceAfterUsdt: 0,
           });
+        });
+
+        // 4. Outflow Events: Upgrades
+        if (upDeduct > 0) {
+          const userRankNodes = (rep.rankNodesList || [])
+            .filter((rn: any) => !rn.isClone && !rn.isExtraId && rn.rank >= 2)
+            .sort((a: any, b: any) => a.rank - b.rank);
+
+          let remUpToAllocate = upDeduct;
+          for (let i = 0; i < userRankNodes.length && remUpToAllocate > 0; i++) {
+            const rn = userRankNodes[i];
+            const prevR = rn.rank - 1;
+            const rPrice = RANK_PRICES_USDT[rn.rank - 1] || 10;
+            const maxForThis = Math.min(rPrice, remUpToAllocate);
+            const amtToDeduct = Number(maxForThis.toFixed(2));
+            remUpToAllocate = Number((remUpToAllocate - amtToDeduct).toFixed(2));
+
+            const origNode = (matrixDB.nodesByRank[rn.rank] || []).find((n) => n.id === rn.nodeId);
+            const uTime = origNode?.createdAt || (sortedInflows[0]?.timestamp ? new Date(new Date(sortedInflows[0].timestamp).getTime() + (i + 1) * 1000).toISOString() : new Date().toISOString());
+            ledgerEvents.push({
+              id: `v-out-up-${rep.id}-${rn.rank}`,
+              timestamp: uTime,
+              direction: 'OUT',
+              actionType: 'AUTO_UPGRADE',
+              actionLabelTh: `หักอัปเกรด (สู่ Rank ${rn.rank})`,
+              rank: rn.rank,
+              amountUsdt: amtToDeduct,
+              poolType: 'UPGRADE_POOL',
+              poolLabelTh: 'Upgrade Pool',
+              descriptionTh: `หัก ${amtToDeduct.toFixed(2)} USDT จาก Upgrade Pool เพื่ออัปเกรด Main #${rep.id} จาก Rank ${prevR} สู่ Rank ${rn.rank}`,
+              note: `อัปเกรดสู่ Rank ${rn.rank} สำเร็จ`,
+              poolBalanceAfterUsdt: 0,
+              balanceAfterUsdt: 0,
+            });
+          }
+
+          if (remUpToAllocate > 0) {
+            ledgerEvents.push({
+              id: `v-out-up-${rep.id}-rem`,
+              timestamp: new Date().toISOString(),
+              direction: 'OUT',
+              actionType: 'AUTO_UPGRADE',
+              actionLabelTh: 'หักอัปเกรดสะสม',
+              rank: rep.currentMaxRank || 2,
+              amountUsdt: remUpToAllocate,
+              poolType: 'UPGRADE_POOL',
+              poolLabelTh: 'Upgrade Pool',
+              descriptionTh: `หัก ${remUpToAllocate.toFixed(2)} USDT จาก Upgrade Pool เพื่อสะสมอัปเกรดแรงค์`,
+              note: 'อัปเกรดแรงค์สำเร็จ',
+              poolBalanceAfterUsdt: 0,
+              balanceAfterUsdt: 0,
+            });
+          }
         }
 
         // Sort chronological (oldest first) to compute running total
@@ -5822,19 +6004,6 @@ async function startApp() {
           }
           ev.balanceAfterUsdt = netRunningTotal;
         }
-
-        // Deductions breakdown
-        const extraDeduct = rep.autoExtraIdsSpawned.reduce(
-          (s, x) => s + (RANK_PRICES_USDT[x.rank - 1] || 10),
-          0
-        );
-        const autoDeduct = rep.autoIdsSpawned.length * 5.0;
-        const upDeduct = idUpgrades.reduce((s, u) => s + (Number(u.vaultDeductedUsdt) || 0), 0);
-        rep.vaultDeductedBreakdown = {
-          extraIdsTotalUsdt: Number(extraDeduct.toFixed(2)),
-          autoIdsTotalUsdt: Number(autoDeduct.toFixed(2)),
-          upgradesTotalUsdt: Number(upDeduct.toFixed(2)),
-        };
 
         // Sort descending (newest first) for UI presentation
         ledgerEvents.sort(
