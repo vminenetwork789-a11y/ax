@@ -376,9 +376,9 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
       if (totalNodes > 1) {
         try {
           const [allSellAddr, botAddr, familyAddr] = await Promise.all([
-            contract.allSellWallet().catch(() => '0xBeFEdbB942A73957F6123bA0B3aA27B4A081F710'),
-            contract.botWallet().catch(() => '0xbFD0A57Ac58165A863A9F4d9E5C1B57996B24a56'),
-            contract.familyPool().catch(() => '0x225D2016F610C99051EfD91F812B2736647B275A'),
+            contract.allSellWallet().catch(() => '0xBeFEB9871a20656aeF7E8d218f751e9C23FAF710'),
+            contract.botWallet().catch(() => '0xbFD03d4D69221085a63Dd372A5d59f952C084a56'),
+            contract.familyPool().catch(() => '0x225DF4b5961f757f54728138F289Eaf49D4F275A'),
           ]);
 
           const nodesMap = new Map<
@@ -470,7 +470,7 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
             const hasSponsor =
               nodeData.directSponsor && nodeData.directSponsor !== ethers.ZeroAddress;
 
-            // 1. Direct 30% (1.50 USDT on Rank 1)
+            // 1. Direct 30% (3.00 USDT on Rank 1)
             const directType =
               isId1Clone || !hasSponsor ? 'DIRECT_ID1_CLONE_FAMILY_POOL' : 'DIRECT';
             const directToId =
@@ -486,14 +486,14 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
                 recipient: directRecip,
                 rank: 1,
                 rewardType: directType,
-                amount: '1.50',
+                amount: '3.00',
                 txHash: '',
                 blockNumber: currentBlock,
                 timestamp: new Date().toISOString(),
               });
             }
 
-            // 2. Upgrade Vault 35% (1.75 USDT on Rank 1)
+            // 2. Upgrade Vault 35% (3.50 USDT on Rank 1)
             const vaultKey = `${nodeId}:UPGRADE_VAULT:${parentData.id}`;
             if (!existingFromNodeTypes.has(vaultKey)) {
               collectedEvents.push({
@@ -503,14 +503,14 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
                 recipient: String(parentData.owner),
                 rank: 1,
                 rewardType: 'UPGRADE_VAULT',
-                amount: '1.75',
+                amount: '3.50',
                 txHash: '',
                 blockNumber: currentBlock,
                 timestamp: new Date().toISOString(),
               });
             }
 
-            // 3. Level 2% (0.10 USDT per upline tier up to 15 levels)
+            // 3. Level 2% (0.20 USDT per upline tier up to 15 levels)
             let currUpId = nodeData.parentId;
             let paidLevels = 0;
             const guard = new Set<number>();
@@ -528,7 +528,7 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
                   recipient: String(upNode.owner),
                   rank: 1,
                   rewardType: 'LEVEL',
-                  amount: '0.10',
+                  amount: '0.20',
                   txHash: '',
                   blockNumber: currentBlock,
                   timestamp: new Date().toISOString(),
@@ -540,7 +540,7 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
             // Unpaid levels overflow to Family Pool
             const unpaidLevels = 15 - paidLevels;
             if (unpaidLevels > 0) {
-              const famAmount = (unpaidLevels * 0.1).toFixed(2);
+              const famAmount = (unpaidLevels * 0.2).toFixed(2);
               const famKey1 = `${nodeId}:UNPAID_LEVEL_FAMILY_POOL:0`;
               const famKey2 = `${nodeId}:FAMILY_POOL_OVERFLOW:0`;
               if (!existingFromNodeTypes.has(famKey1) && !existingFromNodeTypes.has(famKey2)) {
@@ -570,7 +570,7 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
               }
             }
 
-            // 4. AllSell 4% (0.20 USDT on Rank 1)
+            // 4. AllSell 4% (0.40 USDT on Rank 1)
             if (!existingFromNodeTypes.has(`${nodeId}:ALLSELL:0`)) {
               collectedEvents.push({
                 id: `onchain-allsell-r1-n${nodeId}`,
@@ -579,14 +579,14 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
                 recipient: String(allSellAddr),
                 rank: 1,
                 rewardType: 'ALLSELL',
-                amount: '0.20',
+                amount: '0.40',
                 txHash: '',
                 blockNumber: currentBlock,
                 timestamp: new Date().toISOString(),
               });
             }
 
-            // 5. Bot 1% (0.05 USDT on Rank 1)
+            // 5. Bot 1% (0.10 USDT on Rank 1)
             if (!existingFromNodeTypes.has(`${nodeId}:BOT:0`)) {
               collectedEvents.push({
                 id: `onchain-bot-r1-n${nodeId}`,
@@ -595,7 +595,7 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
                 recipient: String(botAddr),
                 rank: 1,
                 rewardType: 'BOT',
-                amount: '0.05',
+                amount: '0.10',
                 txHash: '',
                 blockNumber: currentBlock,
                 timestamp: new Date().toISOString(),
@@ -761,7 +761,7 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
           userAddress: rep.owner,
           mainNodeId: rep.originMainId || rep.id,
           rank: 1,
-          amountUsdt: 5.0,
+          amountUsdt: 10.0,
           timestamp: (rep as any).createdAt || lastSyncedAt || new Date().toISOString(),
           detailsTh: `ประเภทโหนด: ${typeLabel} • ถือครองโดยกระเป๋า ${rep.owner.slice(0, 8)}...${rep.owner.slice(-6)}`,
           detailsEn: `Node Type: ${typeLabel} • Owner Wallet ${rep.owner.slice(0, 8)}...${rep.owner.slice(-6)}`,

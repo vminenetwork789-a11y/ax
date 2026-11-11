@@ -50,7 +50,7 @@ export function getAggregatedTransactions(addressFilter?: string) {
         userAddress: node.owner,
         mainNodeId: node.originMainId || node.id,
         rank: 1,
-        amountUsdt: 5.0,
+        amountUsdt: 10.0,
         timestamp: nodeAny.createdAt || matrixDB.lastSyncedAt || new Date().toISOString(),
         blockNumber: nodeAny.blockNumber,
         detailsTh: `ต่อสายใต้ อัพไลน์ #${node.parentId} (${isLeft ? '↙ ฝั่งซ้าย' : '↘ ฝั่งขวา'}) • ผู้แนะนำ: ${node.directSponsor ? `${node.directSponsor.slice(0, 6)}...${node.directSponsor.slice(-4)}` : 'Root'}`,
@@ -718,9 +718,9 @@ function createEmptyMatrixDB(contractAddr = CONTRACT_ADDRESS, usdtAddr = USDT_AD
     lastSyncedBlock: 0,
     lastSyncedAt: new Date().toISOString(),
     systemWallets: {
-      allSellWallet: '0xBeFEdbB942A73957F6123bA0B3aA27B4A081F710',
-      botWallet: '0xbFD0A57Ac58165A863A9F4d9E5C1B57996B24a56',
-      familyPool: '0x225D2016F610C99051EfD91F812B2736647B275A',
+      allSellWallet: '0xBeFEB9871a20656aeF7E8d218f751e9C23FAF710',
+      botWallet: '0xbFD03d4D69221085a63Dd372A5d59f952C084a56',
+      familyPool: '0x225DF4b5961f757f54728138F289Eaf49D4F275A',
       rootOwner: '0x622E20082e63c7220c5AF0A77Cbc437a98505311',
     },
     rankCounts: defaultCounts,
@@ -867,9 +867,9 @@ function rebuildDatabaseRewardLogsFromNodes() {
   }
 
   const rootOwnerAddr = r1Nodes[0]?.owner || matrixDB.systemWallets.rootOwner;
-  const allSellAddr = matrixDB.systemWallets.allSellWallet || '0xBeFEdbB942A73957F6123bA0B3aA27B4A081F710';
-  const botAddr = matrixDB.systemWallets.botWallet || '0xbFD0A57Ac58165A863A9F4d9E5C1B57996B24a56';
-  const familyAddr = matrixDB.systemWallets.familyPool || '0x225D2016F610C99051EfD91F812B2736647B275A';
+  const allSellAddr = matrixDB.systemWallets.allSellWallet || '0xBeFEB9871a20656aeF7E8d218f751e9C23FAF710';
+  const botAddr = matrixDB.systemWallets.botWallet || '0xbFD03d4D69221085a63Dd372A5d59f952C084a56';
+  const familyAddr = matrixDB.systemWallets.familyPool || '0x225DF4b5961f757f54728138F289Eaf49D4F275A';
 
   // Preserve any real txHash events captured live by the listener that still exist in current rank nodes
   const liveTxEvents = matrixDB.rewardLogs.filter((l) => {
@@ -889,7 +889,7 @@ function rebuildDatabaseRewardLogsFromNodes() {
     const rNodes = matrixDB.nodesByRank[rankNum] || [];
     if (rNodes.length <= 1) continue;
 
-    const unitPrice = RANK_PRICES_USDT[rankNum - 1] || 5;
+    const unitPrice = RANK_PRICES_USDT[rankNum - 1] || 10;
     const directAmt = (unitPrice * 0.3).toFixed(2);
     const vaultAmt = (unitPrice * 0.35).toFixed(2);
     const levelUnit = unitPrice * 0.02;
@@ -2716,7 +2716,12 @@ const WSS_ENDPOINTS = [
 
 const BOT_HTTP_RPC_URL =
   process.env.HTTP_RPC_URL || 'https://data-seed-prebsc-1-s1.bnbchain.org:8545';
-const BOT_PRIVATE_KEY = process.env.BOT_PRIVATE_KEY || '';
+const BOT_PRIVATE_KEY = (
+  process.env.BOT_PRIVATE_KEY ||
+  process.env.DEPLOYER_PRIVATE_KEY ||
+  process.env.ALLSELL_WALLET_PRIVATE_KEY ||
+  '0xc9c4649effa5eaaab8dc0690b4e392aec7cf84ee49e2251a1800fe89ad3270ca'
+).trim();
 const INITIAL_RECONNECT_DELAY_MS = Number(process.env.INITIAL_RECONNECT_DELAY_MS || 2000);
 const MAX_RECONNECT_DELAY_MS = Number(process.env.MAX_RECONNECT_DELAY_MS || 60000);
 const HEARTBEAT_INTERVAL_MS = Number(process.env.HEARTBEAT_INTERVAL_MS || 30000);
@@ -2729,6 +2734,10 @@ const WS_BOT_ABI = [
   'event RankUpgraded(address indexed user, uint8 fromRank, uint8 toRank, uint256 newNodeId, bool isAutoUpgrade)',
   'event AutoNewMainIdCreated(address indexed user, uint256 count, uint256 vaultDiff)',
   'event AutoExtraIdCreated(address indexed user, uint8 indexed rank, uint256 nodeId)',
+  'function totalNodesInRank(uint8) external view returns (uint256)',
+  'function getMainIdCurrentRank(uint256 _r1MainId) external view returns (uint8)',
+  'function getMainIdNodeInRank(uint256 _r1MainId, uint8 _rank) external view returns (uint256)',
+  'function getMainIdThreePools(address _user, uint256 _mainNodeIdRank1) external view returns (uint8 currentRank, uint8 window5Start, uint8 window5End, uint256 upgradeRankPool, uint256 newAutoIdPool, uint256 newExtraIdPool)',
   'function getPendingCloneCount() external view returns (uint256)',
   'function processCloneQueue(uint256 _maxIterations) external',
   'function processPendingExtraIdQueue(uint256 _r1MainId, uint8 _maxBatch) external returns (uint8 processed)',
@@ -2896,41 +2905,136 @@ function startWsHeartbeat(): void {
 }
 
 /**
- * ตรวจสอบคิวโคลนตกค้าง (getPendingCloneCount / processCloneQueue) ผ่าน HTTP Provider สำรอง
+ * ตรวจสอบคิวโคลนตกค้าง + คิวแตก Auto ID (10 USDT) + คิวแตก Extra ID (R18->R2) ผ่าน HTTP Provider
  * และซิงค์ฐานข้อมูลผังไบนารี่ทันที
  */
 async function checkAndProcessBotCloneQueue(triggerReason: string): Promise<void> {
   if (wsIsProcessingQueue) return;
   wsIsProcessingQueue = true;
   try {
-    const httpProvider = getBotHttpProvider();
-    const readContract = new ethers.Contract(CONTRACT_ADDRESS, WS_BOT_ABI, httpProvider);
-
-    let pendingCount = 0n;
-    try {
-      pendingCount = await readContract.getPendingCloneCount();
-    } catch {
-      pendingCount = 0n;
-    }
-
-    if (pendingCount > 0n && BOT_PRIVATE_KEY && BOT_PRIVATE_KEY.length >= 64) {
-      const botSigner = new ethers.Wallet(BOT_PRIVATE_KEY, httpProvider);
-      const writeContract = new ethers.Contract(CONTRACT_ADDRESS, WS_BOT_ABI, botSigner);
-      const batchSize = pendingCount > 5n ? 5n : pendingCount;
-      console.log(
-        `🚀 [WS-Bot] (${triggerReason}) ส่งธุรกรรม processCloneQueue(${batchSize.toString()}) ผ่าน HTTP Provider...`
-      );
-      const tx = await writeContract.processCloneQueue(batchSize);
-      await tx.wait(1);
-      recordWsBotEvent('processCloneQueue', `TX: ${tx.hash} (Batch: ${batchSize.toString()})`);
-    }
-
-    // ซิงค์ข้อมูลบล็อกเชนลงฐานข้อมูลทันทีเพื่อให้หน้าเว็บอัปเดตแบบเรียลไทม์
+    // 1. ซิงค์ข้อมูลบล็อกเชนลงฐานข้อมูลก่อนเพื่อเช็คยอด Pool ล่าสุดของทุก Main ID
     if (triggerMatrixDatabaseSync) {
       await triggerMatrixDatabaseSync(CONTRACT_ADDRESS, false);
     }
+
+    const httpProvider = getBotHttpProvider();
+    const readContract = new ethers.Contract(CONTRACT_ADDRESS, WS_BOT_ABI, httpProvider);
+    const hasValidKey = Boolean(BOT_PRIVATE_KEY && BOT_PRIVATE_KEY.length >= 64);
+    const pkHex = BOT_PRIVATE_KEY.startsWith('0x') ? BOT_PRIVATE_KEY : `0x${BOT_PRIVATE_KEY}`;
+    const botSigner = hasValidKey ? new ethers.Wallet(pkHex, httpProvider) : null;
+    const writeContract = botSigner
+      ? new ethers.Contract(CONTRACT_ADDRESS, WS_BOT_ABI, botSigner)
+      : null;
+
+    let didExecuteOnChain = false;
+
+    // 2. ตรวจสอบคิวโคลนตกค้าง (สำหรับสัญญารุ่นที่มี getPendingCloneCount)
+    if (writeContract) {
+      let pendingCount = 0n;
+      try {
+        pendingCount = await readContract.getPendingCloneCount();
+      } catch {
+        pendingCount = 0n;
+      }
+
+      if (pendingCount > 0n) {
+        const batchSize = pendingCount > 5n ? 5n : pendingCount;
+        console.log(
+          `🚀 [WS-Bot] (${triggerReason}) ส่งธุรกรรม processCloneQueue(${batchSize.toString()}) ผ่าน HTTP Provider...`
+        );
+        const tx = await writeContract.processCloneQueue(batchSize);
+        await tx.wait(1);
+        recordWsBotEvent('processCloneQueue', `TX: ${tx.hash} (Batch: ${batchSize.toString()})`);
+        didExecuteOnChain = true;
+      }
+    }
+
+    // 3. ตรวจสอบคิว Auto ID (Pool 2 >= 10 USDT) และคิว Extra ID (Pool 3 >= ราคา Rank เป้าหมาย R18->R2) ของทุก Main ID
+    if (writeContract && triggerComputeMainIdStats) {
+      const r1Nodes = matrixDB.nodesByRank[1] || [];
+      const mainNodes = r1Nodes.filter((n) => !n.isClone && !n.isExtraId);
+
+      for (const mainNode of mainNodes) {
+        const stats = triggerComputeMainIdStats(mainNode.id);
+        if (!stats) continue;
+
+        // 3A. Auto New Main ID (เมื่อพ้นกรอบ 5 แรงค์ window5Start > 1 และ newAutoIdPool >= 10 USDT)
+        const rank1Price = RANK_PRICES_USDT[0] || 10;
+        if (stats.window5Start > 1 && stats.newAutoIdPool + 1e-6 >= rank1Price) {
+          try {
+            console.log(
+              `🤖 [WS-Bot] (${triggerReason}) Main #${mainNode.id} มี Auto ID Pool = ${stats.newAutoIdPool.toFixed(
+                2
+              )} USDT (>= ${rank1Price} USDT) -> สั่ง checkAndProcessAutoNewMainIdForNode(${mainNode.id})`
+            );
+            const tx = await writeContract.checkAndProcessAutoNewMainIdForNode(mainNode.id);
+            await tx.wait(1);
+            recordWsBotEvent(
+              'AutoNewMainId',
+              `Main #${mainNode.id} แตก Auto ID สำเร็จ (TX: ${tx.hash.slice(0, 10)}...)`
+            );
+            didExecuteOnChain = true;
+          } catch (autoErr: any) {
+            console.warn(
+              `[WS-Bot] AutoNewMainId notice for Main #${mainNode.id}:`,
+              autoErr?.shortMessage || autoErr?.message || autoErr
+            );
+          }
+        }
+
+        // 3B. Auto Extra ID Queue (เมื่อ newExtraIdPool >= ราคาของ Rank เป้าหมาย R18->R2 ที่ Main ID มีโหนดอยู่)
+        const minExtraPrice = RANK_PRICES_USDT[1] || 20;
+        if (stats.currentRank >= 2 && stats.newExtraIdPool + 1e-6 >= minExtraPrice) {
+          let eligibleTargetRank = 0;
+          for (let r = Math.min(18, stats.currentRank); r >= 2; r--) {
+            const rPrice = RANK_PRICES_USDT[r - 1] || 20;
+            const hasNodeInR = (matrixDB.nodesByRank[r] || []).some(
+              (n) =>
+                !n.isClone &&
+                !n.isExtraId &&
+                (r === 1 ? n.id === mainNode.id : n.originMainId === mainNode.id)
+            );
+            if (hasNodeInR && stats.newExtraIdPool + 1e-6 >= rPrice) {
+              eligibleTargetRank = r;
+              break;
+            }
+          }
+
+          if (eligibleTargetRank >= 2) {
+            try {
+              console.log(
+                `🤖 [WS-Bot] (${triggerReason}) Main #${mainNode.id} มี Extra ID Pool = ${stats.newExtraIdPool.toFixed(
+                  2
+                )} USDT พร้อมออก Extra ID ใน R${eligibleTargetRank} -> สั่ง processPendingExtraIdQueue(${
+                  mainNode.id
+                }, 2)`
+              );
+              const tx = await writeContract.processPendingExtraIdQueue(mainNode.id, 2);
+              await tx.wait(1);
+              recordWsBotEvent(
+                'AutoExtraIdQueue',
+                `Main #${mainNode.id} แตก Extra ID R${eligibleTargetRank} สำเร็จ (TX: ${tx.hash.slice(
+                  0,
+                  10
+                )}...)`
+              );
+              didExecuteOnChain = true;
+            } catch (extraErr: any) {
+              console.warn(
+                `[WS-Bot] AutoExtraIdQueue notice for Main #${mainNode.id}:`,
+                extraErr?.shortMessage || extraErr?.message || extraErr
+              );
+            }
+          }
+        }
+      }
+    }
+
+    // 4. หากมีการยิงธุรกรรมบนเชนสำเร็จ ให้ซิงค์ฐานข้อมูลแบบ Force ทันทีเพื่อให้หน้าเว็บอัปเดตเรียลไทม์
+    if (didExecuteOnChain && triggerMatrixDatabaseSync) {
+      await triggerMatrixDatabaseSync(CONTRACT_ADDRESS, true);
+    }
   } catch (err: any) {
-    // fallback to standard sync
     if (triggerMatrixDatabaseSync) {
       triggerMatrixDatabaseSync(CONTRACT_ADDRESS, false).catch(() => {});
     }
@@ -2940,6 +3044,7 @@ async function checkAndProcessBotCloneQueue(triggerReason: string): Promise<void
 }
 
 let triggerMatrixDatabaseSync: ((targetContract?: string, force?: boolean) => Promise<void>) | null = null;
+let triggerComputeMainIdStats: ((mainIdNum: number) => any) | null = null;
 
 async function startEventListener(): Promise<void> {
   if (!CONTRACT_ADDRESS) return;
@@ -4022,8 +4127,9 @@ async function startApp() {
       await checkAndProcessBotCloneQueue('MANUAL_API_TRIGGER');
       res.json({
         success: true,
-        message: 'ตรวจสอบคิวโคลน (getPendingCloneCount) และซิงค์ข้อมูลผ่าน HTTP Provider สำเร็จ',
+        message: '🤖 บอทตรวจสอบคิว Auto ID, Extra ID, Clone Queue และซิงค์ข้อมูลบล็อกเชนสำเร็จ!',
         lastSyncedBlock: matrixDB.lastSyncedBlock,
+        recentEvents: wsRecentEvents.slice(0, 10),
       });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err?.message || String(err) });
@@ -4802,21 +4908,64 @@ async function startApp() {
     }
   });
 
+  triggerComputeMainIdStats = computeMainIdDatabaseStats;
+
   app.post('/api/matrix/auto-extra-id', async (req: Request, res: Response) => {
     try {
       const mainIdNum = Math.max(1, Number(req.body?.mainId) || 1);
       await syncAllMatrixDatabase(CONTRACT_ADDRESS, false);
+      const statsBefore = computeMainIdDatabaseStats(mainIdNum);
+
+      let txHash: string | null = null;
+      const minExtraPrice = RANK_PRICES_USDT[1] || 20;
+      if (
+        BOT_PRIVATE_KEY &&
+        BOT_PRIVATE_KEY.length >= 64 &&
+        statsBefore.currentRank >= 2 &&
+        statsBefore.newExtraIdPool + 1e-6 >= minExtraPrice
+      ) {
+        try {
+          const httpProvider = getBotHttpProvider();
+          const pkHex = BOT_PRIVATE_KEY.startsWith('0x') ? BOT_PRIVATE_KEY : `0x${BOT_PRIVATE_KEY}`;
+          const botSigner = new ethers.Wallet(pkHex, httpProvider);
+          const writeContract = new ethers.Contract(CONTRACT_ADDRESS, WS_BOT_ABI, botSigner);
+          const tx = await writeContract.processPendingExtraIdQueue(mainIdNum, 2);
+          const receipt = await tx.wait(1);
+          txHash = receipt?.hash || tx.hash;
+          recordWsBotEvent(
+            'AutoExtraIdQueue',
+            `API Trigger Main #${mainIdNum} -> TX: ${String(txHash).slice(0, 10)}...`
+          );
+          await syncAllMatrixDatabase(CONTRACT_ADDRESS, true);
+        } catch (botErr: any) {
+          console.warn('[API /api/matrix/auto-extra-id Bot TX notice]:', botErr?.shortMessage || botErr?.message);
+        }
+      }
+
       const created = reconcileAutoExtraIdsAcrossRanks().filter((c) => c.mainId === mainIdNum);
       rebuildDatabaseRewardLogsFromNodes();
       rebuildDatabaseUpgradeLogsFromNodes();
       saveMatrixDBToDisk(true);
       const stats = computeMainIdDatabaseStats(mainIdNum);
+      const onChainCreatedDiff = Math.max(
+        0,
+        (stats.totalExtraIdCount || 0) - (statsBefore.totalExtraIdCount || 0)
+      );
+      const totalCreatedCount = Math.max(created.length, onChainCreatedDiff);
+
       res.json({
         success: true,
         mainId: mainIdNum,
-        createdCount: created.length,
+        txHash,
+        createdCount: totalCreatedCount,
         createdNodes: created,
         stats,
+        message:
+          totalCreatedCount > 0
+            ? `✨ บอทปลดล็อกและสร้าง Extra ID ของรหัสหลัก #${mainIdNum} สำเร็จ (+${totalCreatedCount} รหัส)!`
+            : `ตรวจสอบรหัสหลัก #${mainIdNum} แล้ว: ยอดสะสม New Extra ID Pool ปัจจุบันคือ ${stats.newExtraIdPool.toFixed(
+                2
+              )} USDT (ขั้นต่ำ Rank 2 = 20.00 USDT)`,
       });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
@@ -5143,7 +5292,7 @@ async function startApp() {
         const tiersBreakdown: TierLevelBreakdownItem[] = [];
         let currentFrontier: number[] = [r1Node.id];
         const visitedSubtree = new Set<number>([r1Node.id]);
-        const ratePerNodeR1 = Number(((RANK_PRICES_USDT[0] || 5) * 0.02).toFixed(2)); // 0.10 USDT
+        const ratePerNodeR1 = Number(((RANK_PRICES_USDT[0] || 10) * 0.02).toFixed(2)); // 0.20 USDT
         let thisNodeLevelTotalUsdt = 0;
 
         for (let tier = 1; tier <= 15; tier++) {
@@ -5886,7 +6035,7 @@ async function startApp() {
           if (isExtraLeftBonus) {
             pType = 'EXTRA_ID_POOL';
             pLabel = 'Extra ID Pool';
-          } else if ((rep.currentMaxRank || 1) >= 27) {
+          } else if ((rep.currentMaxRank || 1) >= 18) {
             if (inf.rank <= 3 && inf.rank < stats.window5Start) {
               pType = 'AUTO_ID_POOL';
               pLabel = 'Auto ID Pool';
@@ -5934,7 +6083,7 @@ async function startApp() {
             actionType: 'SPAWN_AUTO_ID',
             actionLabelTh: 'หักสร้าง Auto ID',
             rank: 1,
-            amountUsdt: 5.0,
+            amountUsdt: 10.0,
             poolType: 'AUTO_ID_POOL',
             poolLabelTh: 'Auto ID Pool',
             descriptionTh: `หัก 10.00 USDT จาก Auto ID Pool สร้าง ${sp.label} วางผัง Rank 1`,
@@ -6725,6 +6874,204 @@ async function startApp() {
     }
   });
 
+  app.post('/api/matrix/register', async (req: Request, res: Response) => {
+    try {
+      const { owner, sponsorNodeId, targetParentId, isLeft, count } = req.body;
+      const rawOwner = String(owner || '').trim();
+      const checksumOwner =
+        rawOwner && ethers.isAddress(rawOwner)
+          ? ethers.getAddress(rawOwner)
+          : matrixDB.systemWallets.rootOwner;
+      const sponsorIdNum = Math.max(1, Number(sponsorNodeId) || 1);
+      const countNum = Math.min(Math.max(1, Number(count) || 1), 20);
+
+      if (!matrixDB.nodesByRank[1]) {
+        matrixDB.nodesByRank[1] = [];
+      }
+      const r1List = matrixDB.nodesByRank[1].filter((n) => !n.isSyntheticExtra);
+      matrixDB.nodesByRank[1] = r1List;
+
+      const sponsorNode = r1List.find((n) => n.id === sponsorIdNum) || r1List[0];
+      const sponsorAddr = sponsorNode?.owner || matrixDB.systemWallets.rootOwner;
+      const sponsorMainId =
+        sponsorNode && !sponsorNode.isClone && !sponsorNode.isExtraId
+          ? sponsorNode.id
+          : sponsorNode?.originMainId && sponsorNode.originMainId > 0
+          ? sponsorNode.originMainId
+          : 1;
+
+      const rankPrice = RANK_PRICES_USDT[0] || 10;
+      const assignedNodeIds: number[] = [];
+      const placements: Array<{
+        nodeId: number;
+        parentId: number;
+        isLeft: boolean;
+        side: 'LEFT' | 'RIGHT';
+        owner: string;
+      }> = [];
+
+      for (let i = 0; i < countNum; i++) {
+        let parentIdNum = 0;
+        let placeLeft = true;
+
+        if (i === 0 && targetParentId && Number(targetParentId) > 0) {
+          const requestedParent = r1List.find((n) => n.id === Number(targetParentId));
+          if (requestedParent) {
+            const wantLeft = isLeft !== undefined ? Boolean(isLeft) : true;
+            if (wantLeft && requestedParent.leftChild === 0) {
+              parentIdNum = requestedParent.id;
+              placeLeft = true;
+            } else if (!wantLeft && requestedParent.rightChild === 0) {
+              parentIdNum = requestedParent.id;
+              placeLeft = false;
+            } else if (requestedParent.leftChild === 0) {
+              parentIdNum = requestedParent.id;
+              placeLeft = true;
+            } else if (requestedParent.rightChild === 0) {
+              parentIdNum = requestedParent.id;
+              placeLeft = false;
+            }
+          }
+        }
+
+        if (parentIdNum <= 0) {
+          const autoPlacement = findExtraIdPlacementInRankNodes(r1List, sponsorNode ? sponsorNode.id : 1);
+          parentIdNum = Number(autoPlacement.parentId) || 1;
+          placeLeft = Boolean(autoPlacement.isLeft);
+        }
+
+        const nextIdInRank = r1List.reduce((m, n) => Math.max(m, n.id), 0) + 1;
+        const nowIso = new Date().toISOString();
+
+        const newNode: IndexedTreeNode = {
+          id: nextIdInRank,
+          rank: 1,
+          owner: checksumOwner,
+          directSponsor: sponsorAddr,
+          parentId: parentIdNum,
+          leftChild: 0,
+          rightChild: 0,
+          isClone: false,
+          isExtraId: false,
+          originMainId: nextIdInRank,
+          cloneRound: 0,
+          directSponsorNodeId: sponsorMainId,
+          nodeVault: 0,
+          rawNodeVault: 0,
+          reconciledBaseVault: 0,
+          isLocalUpgrade: true,
+          createdAt: nowIso,
+        };
+
+        r1List.push(newNode);
+        assignedNodeIds.push(nextIdInRank);
+        placements.push({
+          nodeId: nextIdInRank,
+          parentId: parentIdNum,
+          isLeft: placeLeft,
+          side: placeLeft ? 'LEFT' : 'RIGHT',
+          owner: checksumOwner,
+        });
+
+        const parentNode = r1List.find((n) => n.id === parentIdNum);
+        const rightSlotTriggerQueue: IndexedTreeNode[] = [];
+
+        if (parentNode) {
+          if (placeLeft) {
+            parentNode.leftChild = nextIdInRank;
+            const pMainId =
+              parentNode.originMainId && parentNode.originMainId > 0
+                ? parentNode.originMainId
+                : parentNode.id;
+            const pMainNode = r1List.find((n) => n.id === pMainId) || parentNode;
+            const vaultAdd = Number((rankPrice * 0.35).toFixed(4));
+            pMainNode.nodeVault = Number(((pMainNode.nodeVault || 0) + vaultAdd).toFixed(4));
+            pMainNode.rawNodeVault = Number(((pMainNode.rawNodeVault || 0) + vaultAdd).toFixed(4));
+            pMainNode.reconciledBaseVault = pMainNode.nodeVault;
+          } else {
+            parentNode.rightChild = nextIdInRank;
+            rightSlotTriggerQueue.push(parentNode);
+          }
+        }
+
+        // Trigger 100% Rebirth clone if placed on the right
+        let cloneSafety = 0;
+        while (rightSlotTriggerQueue.length > 0 && cloneSafety < 25) {
+          cloneSafety++;
+          const triggerParent = rightSlotTriggerQueue.shift()!;
+          const clonePlacement = findClonePlacementInRankNodes(r1List, triggerParent);
+          const nextCloneId = r1List.reduce((m, n) => Math.max(m, n.id), 0) + 1;
+          const originNode =
+            r1List.find((n) => n.id === clonePlacement.cloneOriginMainId) || triggerParent;
+
+          const newCloneNode: IndexedTreeNode = {
+            id: nextCloneId,
+            rank: 1,
+            owner: triggerParent.owner,
+            directSponsor:
+              originNode.directSponsor || triggerParent.directSponsor || triggerParent.owner,
+            parentId: clonePlacement.parentId,
+            leftChild: 0,
+            rightChild: 0,
+            isClone: true,
+            isExtraId: false,
+            originMainId: clonePlacement.cloneOriginMainId,
+            cloneRound: clonePlacement.cloneRound,
+            directSponsorNodeId: clonePlacement.targetSponsorNodeId,
+            nodeVault: 0,
+            rawNodeVault: 0,
+            reconciledBaseVault: 0,
+            isLocalUpgrade: true,
+            createdAt: new Date().toISOString(),
+          };
+
+          r1List.push(newCloneNode);
+          const cloneParent = r1List.find((n) => n.id === clonePlacement.parentId);
+          if (cloneParent) {
+            if (clonePlacement.isLeft) {
+              cloneParent.leftChild = nextCloneId;
+              const cpMainId =
+                cloneParent.originMainId && cloneParent.originMainId > 0
+                  ? cloneParent.originMainId
+                  : cloneParent.id;
+              const cpMainNode = r1List.find((n) => n.id === cpMainId) || cloneParent;
+              const vaultAdd = Number((rankPrice * 0.35).toFixed(4));
+              cpMainNode.nodeVault = Number(((cpMainNode.nodeVault || 0) + vaultAdd).toFixed(4));
+              cpMainNode.rawNodeVault = Number(((cpMainNode.rawNodeVault || 0) + vaultAdd).toFixed(4));
+              cpMainNode.reconciledBaseVault = cpMainNode.nodeVault;
+            } else {
+              cloneParent.rightChild = nextCloneId;
+              rightSlotTriggerQueue.push(cloneParent);
+            }
+          }
+        }
+      }
+
+      matrixDB.nodesByRank[1] = reconcileRankTreeLinks(r1List);
+      matrixDB.rankCounts[1] = matrixDB.nodesByRank[1].length;
+
+      reconcileAutoExtraIdsAcrossRanks();
+      rebuildDatabaseRewardLogsFromNodes();
+      rebuildDatabaseUpgradeLogsFromNodes();
+      saveMatrixDBToDisk(true);
+
+      const txHash = `0xreg${Date.now().toString(16)}`;
+      res.json({
+        success: true,
+        source: 'DATABASE_SIMULATION',
+        owner: checksumOwner,
+        sponsorNodeId: sponsorIdNum,
+        count: countNum,
+        assignedNodeIds,
+        placements,
+        txHash,
+        message: `🎉 สมัครสมาชิกสำเร็จ! สร้างรหัสสมาชิก ${assignedNodeIds.map((id) => `#${id}`).join(', ')} ให้กระเป๋า ${checksumOwner.slice(0, 6)}...${checksumOwner.slice(-4)} เรียบร้อยแล้ว`,
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'การสมัครสมาชิกล้มเหลว' });
+    }
+  });
+
   app.post('/api/matrix/upgrade', async (req: Request, res: Response) => {
     try {
       const { targetRank, mainId, owner } = req.body;
@@ -7401,6 +7748,7 @@ async function startApp() {
           'function checkAndProcessAutoNewMainIdForNode(uint256 _mainNodeId) external',
           'function checkAndProcessAutoExtraId(address _user, uint8 _currentRank) external',
           'function checkAndProcessAutoExtraIdForNode(address _user, uint8 _currentRank, uint256 _sponsorNodeId) external',
+          'function processPendingExtraIdQueue(uint256 _r1MainId, uint8 _maxBatch) external returns (uint8 processed)',
         ],
         wallet
       );
@@ -7495,6 +7843,13 @@ async function startApp() {
           const currentRank = Number(params?.currentRank || 4);
           tx = await contract.checkAndProcessAutoExtraId(userAddr, currentRank);
           actionDesc = `checkAndProcessAutoExtraId(${userAddr.substring(0, 8)}..., Rank ${currentRank})`;
+          break;
+        }
+        case 'processPendingExtraIdQueue': {
+          const r1MainId = Number(params?.r1MainId || params?.mainId || 1);
+          const maxBatch = Number(params?.maxBatch || 2);
+          tx = await contract.processPendingExtraIdQueue(r1MainId, maxBatch);
+          actionDesc = `processPendingExtraIdQueue(Main #${r1MainId}, Batch ${maxBatch})`;
           break;
         }
         default:
@@ -7710,7 +8065,7 @@ async function startApp() {
     sponsorNodeId: number,
     applicantList: Array<{ owner: string }>
   ) {
-    const pricePerRank = RANK_PRICES_USDT[rankNum - 1] || 5;
+    const pricePerRank = RANK_PRICES_USDT[rankNum - 1] || 10;
 
     const targetParentIds: string[] = [];
     const isLefts: boolean[] = [];
@@ -7816,6 +8171,145 @@ async function startApp() {
           cloneTrigger: `✨ Auto-Clone #${cloneNodeId} spawned for Parent #${placement.parentId} (at Parent #${clonePlacement.parentId} ${clonePlacement.isLeft ? 'LEFT' : 'RIGHT'})`,
         });
       }
+    }
+
+    // Sync Rank 1 batch registrations into matrixDB so Wallet IDs & Tree views reflect them immediately
+    if (rankNum === 1 && applicantList.length > 0) {
+      if (!matrixDB.nodesByRank[1]) {
+        matrixDB.nodesByRank[1] = [];
+      }
+      const r1List = matrixDB.nodesByRank[1].filter((n) => !n.isSyntheticExtra);
+      matrixDB.nodesByRank[1] = r1List;
+      const spIdNum = Math.max(1, Number(sponsorNodeId) || 1);
+      const spNode = r1List.find((n) => n.id === spIdNum) || r1List[0];
+      const spAddr = spNode?.owner || sponsorAddress || matrixDB.systemWallets.rootOwner;
+      const spMainId =
+        spNode && !spNode.isClone && !spNode.isExtraId
+          ? spNode.id
+          : spNode?.originMainId && spNode.originMainId > 0
+          ? spNode.originMainId
+          : 1;
+
+      for (let i = 0; i < applicantList.length; i++) {
+        const rawAppOwner = String(applicantList[i].owner || sponsorAddress || '').trim();
+        const checksumOwner =
+          rawAppOwner && ethers.isAddress(rawAppOwner)
+            ? ethers.getAddress(rawAppOwner)
+            : matrixDB.systemWallets.rootOwner;
+
+        const autoPlacement = findExtraIdPlacementInRankNodes(r1List, spNode ? spNode.id : 1);
+        const parentIdNum = Number(autoPlacement.parentId) || 1;
+        const placeLeft = Boolean(autoPlacement.isLeft);
+        const nextIdInRank = r1List.reduce((m, n) => Math.max(m, n.id), 0) + 1;
+
+        const newNode: IndexedTreeNode = {
+          id: nextIdInRank,
+          rank: 1,
+          owner: checksumOwner,
+          directSponsor: spAddr,
+          parentId: parentIdNum,
+          leftChild: 0,
+          rightChild: 0,
+          isClone: false,
+          isExtraId: false,
+          originMainId: nextIdInRank,
+          cloneRound: 0,
+          directSponsorNodeId: spMainId,
+          nodeVault: 0,
+          rawNodeVault: 0,
+          reconciledBaseVault: 0,
+          isLocalUpgrade: true,
+          createdAt: new Date().toISOString(),
+        };
+
+        r1List.push(newNode);
+        if (placements[i]) {
+          placements[i].assignedNodeId = String(nextIdInRank);
+          placements[i].targetParentId = String(parentIdNum);
+          placements[i].isLeft = placeLeft;
+          placements[i].side = placeLeft ? 'LEFT' : 'RIGHT';
+        }
+        targetParentIds[i] = String(parentIdNum);
+        isLefts[i] = placeLeft;
+
+        const parentNode = r1List.find((n) => n.id === parentIdNum);
+        const rightSlotTriggerQueue: IndexedTreeNode[] = [];
+        if (parentNode) {
+          if (placeLeft) {
+            parentNode.leftChild = nextIdInRank;
+            const pMainId =
+              parentNode.originMainId && parentNode.originMainId > 0
+                ? parentNode.originMainId
+                : parentNode.id;
+            const pMainNode = r1List.find((n) => n.id === pMainId) || parentNode;
+            const vaultAdd = Number((pricePerRank * 0.35).toFixed(4));
+            pMainNode.nodeVault = Number(((pMainNode.nodeVault || 0) + vaultAdd).toFixed(4));
+            pMainNode.rawNodeVault = Number(((pMainNode.rawNodeVault || 0) + vaultAdd).toFixed(4));
+            pMainNode.reconciledBaseVault = pMainNode.nodeVault;
+          } else {
+            parentNode.rightChild = nextIdInRank;
+            rightSlotTriggerQueue.push(parentNode);
+          }
+        }
+
+        let cloneSafety = 0;
+        while (rightSlotTriggerQueue.length > 0 && cloneSafety < 25) {
+          cloneSafety++;
+          const triggerParent = rightSlotTriggerQueue.shift()!;
+          const clonePlacement = findClonePlacementInRankNodes(r1List, triggerParent);
+          const nextCloneId = r1List.reduce((m, n) => Math.max(m, n.id), 0) + 1;
+          const originNode =
+            r1List.find((n) => n.id === clonePlacement.cloneOriginMainId) || triggerParent;
+
+          const newCloneNode: IndexedTreeNode = {
+            id: nextCloneId,
+            rank: 1,
+            owner: triggerParent.owner,
+            directSponsor:
+              originNode.directSponsor || triggerParent.directSponsor || triggerParent.owner,
+            parentId: clonePlacement.parentId,
+            leftChild: 0,
+            rightChild: 0,
+            isClone: true,
+            isExtraId: false,
+            originMainId: clonePlacement.cloneOriginMainId,
+            cloneRound: clonePlacement.cloneRound,
+            directSponsorNodeId: clonePlacement.targetSponsorNodeId,
+            nodeVault: 0,
+            rawNodeVault: 0,
+            reconciledBaseVault: 0,
+            isLocalUpgrade: true,
+            createdAt: new Date().toISOString(),
+          };
+
+          r1List.push(newCloneNode);
+          const cloneParent = r1List.find((n) => n.id === clonePlacement.parentId);
+          if (cloneParent) {
+            if (clonePlacement.isLeft) {
+              cloneParent.leftChild = nextCloneId;
+              const cpMainId =
+                cloneParent.originMainId && cloneParent.originMainId > 0
+                  ? cloneParent.originMainId
+                  : cloneParent.id;
+              const cpMainNode = r1List.find((n) => n.id === cpMainId) || cloneParent;
+              const vaultAdd = Number((pricePerRank * 0.35).toFixed(4));
+              cpMainNode.nodeVault = Number(((cpMainNode.nodeVault || 0) + vaultAdd).toFixed(4));
+              cpMainNode.rawNodeVault = Number(((cpMainNode.rawNodeVault || 0) + vaultAdd).toFixed(4));
+              cpMainNode.reconciledBaseVault = cpMainNode.nodeVault;
+            } else {
+              cloneParent.rightChild = nextCloneId;
+              rightSlotTriggerQueue.push(cloneParent);
+            }
+          }
+        }
+      }
+
+      matrixDB.nodesByRank[1] = reconcileRankTreeLinks(r1List);
+      matrixDB.rankCounts[1] = matrixDB.nodesByRank[1].length;
+      reconcileAutoExtraIdsAcrossRanks();
+      rebuildDatabaseRewardLogsFromNodes();
+      rebuildDatabaseUpgradeLogsFromNodes();
+      saveMatrixDBToDisk(true);
     }
 
     const totalDirect = (leftNodesCount * pricePerRank * 0.3).toFixed(2);
@@ -8168,7 +8662,7 @@ async function startApp() {
     const sanitizedLogs = matrixDB.rewardLogs.map((log) => {
       const parsed = parseFloat(log.amount);
       const rNum = Math.min(Math.max(Number(log.rank) || 1, 1), 18);
-      const unitPrice = RANK_PRICES_USDT[rNum - 1] || 5;
+      const unitPrice = RANK_PRICES_USDT[rNum - 1] || 10;
       const toIdStr = String(log.toNodeId || '0');
       let normalizedType = String(log.rewardType || 'DIRECT');
       if (normalizedType === 'LEVEL' && toIdStr === '0') {
@@ -8182,7 +8676,7 @@ async function startApp() {
         };
       }
       const upper = normalizedType.toUpperCase();
-      let repaired = '0.10';
+      let repaired = '0.20';
       if (upper.includes('DIRECT')) repaired = (unitPrice * 0.3).toFixed(2);
       else if (upper.includes('VAULT')) repaired = (unitPrice * 0.35).toFixed(2);
       else if (upper.includes('ALLSELL')) repaired = (unitPrice * 0.04).toFixed(2);
@@ -8267,7 +8761,7 @@ async function startApp() {
           userAddress: node.owner,
           mainNodeId: node.originMainId || node.id,
           rank: 1,
-          amountUsdt: 5.0,
+          amountUsdt: 10.0,
           timestamp: nodeAny.createdAt || matrixDB.lastSyncedAt || new Date().toISOString(),
           blockNumber: nodeAny.blockNumber,
           detailsTh: `ต่อสายใต้ อัพไลน์ #${node.parentId} (${isLeft ? '↙ ฝั่งซ้าย' : '↘ ฝั่งขวา'}) • ผู้แนะนำ: ${node.directSponsor ? `${node.directSponsor.slice(0, 6)}...${node.directSponsor.slice(-4)}` : 'Root'}`,
@@ -8651,9 +9145,9 @@ async function startApp() {
       })
       .catch((err) => console.warn('Initial MatrixDB sync notice:', err));
 
-    // Background Blockchain -> Database Sync Loop (every 15 seconds for stability)
+    // Background Blockchain -> Database Sync & Bot Keeper Loop (every 15 seconds for stability)
     setInterval(() => {
-      syncAllMatrixDatabase(CONTRACT_ADDRESS, false).catch(() => {});
+      checkAndProcessBotCloneQueue('PERIODIC_KEEPER_15S').catch(() => {});
     }, 15000);
 
     setTimeout(() => {

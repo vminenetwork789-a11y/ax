@@ -144,7 +144,12 @@ interface MatrixTreeVisualizerProps {
   onApproveUsdt?: (amountUsdt?: number) => Promise<any>;
   onRegisterWithSponsor?: (
     sponsorNodeId: number,
-    autoOptions?: { targetParentId?: number | string; isLeft?: boolean }
+    autoOptions?: {
+      targetParentId?: number | string;
+      isLeft?: boolean;
+      count?: number;
+      owner?: string;
+    }
   ) => Promise<any>;
   onUpgradeToRank?: (targetRank: number, targetMainId?: number | string) => Promise<any>;
   onOpenRegisterModal?: () => void;
@@ -706,10 +711,10 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
       id: toastId,
       status: 'pending',
       step: language === 'th' ? 'กำลังอนุมัติวงเงิน USDT บนบล็อกเชน...' : 'Approving USDT on Blockchain...',
-      message: `${regNodeCount * 5} USDT`,
+      message: `${regNodeCount * 10} USDT`,
     });
     try {
-      await onApproveUsdt(regNodeCount * 5);
+      await onApproveUsdt(regNodeCount * 10);
       const msg = language === 'th' ? 'อนุมัติ USDT บนบล็อกเชนสำเร็จเรียบร้อย!' : 'USDT Approved successfully!';
       setRegTxMessage(msg);
       emitTransactionToast({
@@ -738,8 +743,8 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
     setRegTxError(null);
     const pendingMsg =
       language === 'th'
-        ? 'กำลังส่งคำสั่งลงทะเบียนไปยังบล็อกเชน...'
-        : 'Submitting registration to blockchain...';
+        ? 'กำลังส่งคำสั่งลงทะเบียนรหัสสมาชิก...'
+        : 'Submitting registration...';
     setRegTxMessage(pendingMsg);
     const toastId = `modal-register-${Date.now()}`;
     emitTransactionToast({
@@ -748,16 +753,21 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
       step: pendingMsg,
       message:
         language === 'th'
-          ? `ผู้แนะนำ #${regSponsorId}${regTargetParentId ? ` • วางใต้ #${regTargetParentId}` : ''}`
-          : `Sponsor #${regSponsorId}`,
+          ? `ผู้แนะนำ #${regSponsorId}${regTargetParentId ? ` • วางใต้ #${regTargetParentId}` : ''} (${regNodeCount} รหัส)`
+          : `Sponsor #${regSponsorId} (${regNodeCount} ID)`,
     });
     try {
       await onRegisterWithSponsor(regSponsorId, {
         targetParentId: regTargetParentId,
         isLeft: regIsLeft,
+        count: regNodeCount,
+        owner: userAddress || undefined,
       });
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('matrix:tree:refresh'));
+      }
       const okMsg =
-        language === 'th' ? 'สมัครสมาชิกบนบล็อกเชนสำเร็จเรียบร้อยแล้ว!' : 'Registration confirmed on blockchain!';
+        language === 'th' ? 'สมัครสมาชิกสำเร็จเรียบร้อยแล้ว!' : 'Registration confirmed!';
       setRegTxMessage(okMsg);
       emitTransactionToast({
         id: toastId,
@@ -767,7 +777,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
       });
       setTimeout(() => {
         setIsRegisterModalOpen(false);
-      }, 1600);
+      }, 1200);
     } catch (err: any) {
       const errMsg = err?.message || 'Registration failed';
       setRegTxError(errMsg);
@@ -984,8 +994,11 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
   }, []);
 
   useEffect(() => {
+    if (userAddress) {
+      setSelectedInspectWallet(userAddress);
+    }
     fetchPerIdHistoryForModal();
-  }, [fetchPerIdHistoryForModal, selectedRank, refreshTrigger, lastTxSuccess]);
+  }, [fetchPerIdHistoryForModal, selectedRank, refreshTrigger, lastTxSuccess, userAddress]);
 
   const [isLoadingTree, setIsLoadingTree] = useState<boolean>(true);
   const [hasInitialTreeLoaded, setHasInitialTreeLoaded] = useState<boolean>(false);
@@ -3200,9 +3213,9 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                 );
               } else if (
                 activeRank >= 4 &&
-                (parentCurRank === 27 || activeRank < parentWindow5Start)
+                (parentCurRank >= 18 || activeRank < parentWindow5Start)
               ) {
-                // พ้นกรอบ 5 rank ย้อนหลังใน Rank 4-18 (หรืออยู่ Rank 27) -> เข้า New Extra ID Pool
+                // พ้นกรอบ 5 rank ย้อนหลังใน Rank 4-18 (หรืออยู่ Rank 18) -> เข้า New Extra ID Pool
                 lineageExtraIdVault.set(
                   parentMainId,
                   Number(((lineageExtraIdVault.get(parentMainId) || 0) + vaultUnit).toFixed(4))
@@ -4033,6 +4046,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
   useEffect(() => {
     const handleGlobalTreeRefresh = () => {
       loadOnChainTree(selectedRank, { silent: true, forceSync: true });
+      fetchPerIdHistoryForModal();
       setViewMode('onchain');
       setJustUpdatedBadge(true);
       setTimeout(() => setJustUpdatedBadge(false), 6000);
@@ -4042,7 +4056,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
     return () => {
       window.removeEventListener('matrix:tree:refresh', handleGlobalTreeRefresh);
     };
-  }, [loadOnChainTree, selectedRank]);
+  }, [loadOnChainTree, fetchPerIdHistoryForModal, selectedRank]);
 
   // Active nodes map based on viewMode ('onchain' or 'demoCloneTree')
   const activeNodesMap = useMemo(() => {
@@ -4230,7 +4244,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             parentId: Number(item.parentId || 1),
             side: sideVal,
             owner: ownerStr,
-            costUsdt: 5,
+            costUsdt: 10,
             isMyWallet: Boolean(userLower && ownerStr.toLowerCase() === userLower),
             noteTh: `แตกตัวอัตโนมัติจากกระปุก New Auto ID Pool (10 USDT) ของ Main ID #${spMain} → วางต่อสายใต้ #${item.parentId || 1} (${sideVal === 'LEFT' ? '↙ ขาซ้าย' : '↘ ขาขวา'})`,
           });
@@ -4276,9 +4290,10 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         if (autoBal > 0.001) {
           const pk = `pool-auto-${repMainId}`;
           seenPoolKeys.add(pk);
-          const isReady = autoBal + 1e-6 >= 5;
-          const rem = Math.max(0, Number((5 - autoBal).toFixed(2)));
-          const pct = Math.min(100, Math.round((autoBal / 5) * 100));
+          const autoTargetCost = RANK_PRICES_USDT[0] || 10;
+          const isReady = autoBal + 1e-6 >= autoTargetCost;
+          const rem = Math.max(0, Number((autoTargetCost - autoBal).toFixed(2)));
+          const pct = Math.min(100, Math.round((autoBal / autoTargetCost) * 100));
           poolAlerts.push({
             key: pk,
             category: 'AUTO_POOL',
@@ -4287,23 +4302,24 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             currentRank: curRank,
             owner: ownerStr,
             poolBalanceUsdt: Number(autoBal.toFixed(2)),
-            targetCostUsdt: 5,
+            targetCostUsdt: autoTargetCost,
             remainingUsdt: rem,
             progressPct: pct,
             isReady,
             isMyWallet: isMine,
             noteTh: isReady
-              ? `🚨 พร้อมออก Auto ID ทันที! Main ID #${repMainId} มีสะสมครบ ${autoBal.toFixed(2)} / 10.00 USDT`
-              : `⏳ กำลังสะสม Auto ID Pool: Main ID #${repMainId} สะสมแล้ว ${autoBal.toFixed(2)} / 10.00 USDT (ขาดอีก ${rem.toFixed(2)} USDT)`,
+              ? `🚨 พร้อมออก Auto ID ทันที! Main ID #${repMainId} มีสะสมครบ ${autoBal.toFixed(2)} / ${autoTargetCost.toFixed(2)} USDT`
+              : `⏳ กำลังสะสม Auto ID Pool: Main ID #${repMainId} สะสมแล้ว ${autoBal.toFixed(2)} / ${autoTargetCost.toFixed(2)} USDT (ขาดอีก ${rem.toFixed(2)} USDT)`,
           });
         }
 
         if (extraBal > 0.001) {
           const pk = `pool-extra-${repMainId}`;
           seenPoolKeys.add(pk);
-          const isReady = extraBal + 1e-6 >= 10;
-          const rem = Math.max(0, Number((10 - extraBal).toFixed(2)));
-          const pct = Math.min(100, Math.round((extraBal / 10) * 100));
+          const minExtraCost = RANK_PRICES_USDT[1] || 20;
+          const isReady = curRank >= 2 && extraBal + 1e-6 >= minExtraCost;
+          const rem = Math.max(0, Number((minExtraCost - extraBal).toFixed(2)));
+          const pct = Math.min(100, Math.round((extraBal / minExtraCost) * 100));
           const oldR4To27 = Number(rep.r4To27OutsideWindowVault || 0);
           const extraLeftB = Number(rep.extraLeftVaultBonus || 0);
           const grossBeforeDeduct = Number(rep.newExtraIdPoolGross || extraBal);
@@ -4320,14 +4336,14 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             currentRank: curRank,
             owner: ownerStr,
             poolBalanceUsdt: Number(extraBal.toFixed(2)),
-            targetCostUsdt: 10,
+            targetCostUsdt: minExtraCost,
             remainingUsdt: rem,
             progressPct: pct,
             isReady,
             isMyWallet: isMine,
             noteTh: isReady
               ? `🚨 พร้อมออก Extra ID ทันที! Main ID #${repMainId} รวมยอดเก่า+ยอดใหม่ครบ ${extraBal.toFixed(2)} USDT${oldDetailStr} (สะสมรวมก่อนหัก: ${grossBeforeDeduct.toFixed(2)} U)`
-              : `⏳ กำลังสะสม New Extra ID Pool (รวมยอดเก่าก่อนสร้าง Extra ID): Main ID #${repMainId} มี ${extraBal.toFixed(2)} / 10.00 USDT${oldDetailStr} (ขาดอีก ${rem.toFixed(2)} USDT)`,
+              : `⏳ กำลังสะสม New Extra ID Pool (รวมยอดเก่าก่อนสร้าง Extra ID): Main ID #${repMainId} มี ${extraBal.toFixed(2)} / ${minExtraCost.toFixed(2)} USDT${oldDetailStr} (ขาดอีก ${rem.toFixed(2)} USDT)`,
           });
         }
       }
@@ -4354,7 +4370,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             parentId: n.parentId,
             side: sideVal,
             owner: n.owner,
-            costUsdt: 5,
+            costUsdt: 10,
             isMyWallet: isMine,
             noteTh: `แตกตัวอัตโนมัติจากกระปุก New Auto ID Pool (10 USDT) ของ Main ID #${spMain} → วางต่อสายใต้ #${n.parentId} (${sideVal === 'LEFT' ? '↙ ขาซ้าย' : '↘ ขาขวา'})`,
           });
@@ -4365,7 +4381,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         const k = `extra-${selectedRank}-${n.id}`;
         if (!extraMap.has(k)) {
           const spMain = n.directUplineNodeId || n.originMainId || 1;
-          const cost = RANK_PRICES_USDT[selectedRank - 1] || 10;
+          const cost = RANK_PRICES_USDT[selectedRank - 1] || 20;
           extraMap.set(k, {
             key: k,
             category: 'EXTRA_ID',
@@ -4387,48 +4403,51 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         const mId = n.r1MainId || n.originMainId || n.id;
         const autoBal = Number(n.newAutoIdPool || 0);
         const extraBal = Number(n.newExtraIdPool || 0);
+        const autoTargetCost = RANK_PRICES_USDT[0] || 10;
+        const minExtraCost = RANK_PRICES_USDT[1] || 20;
+        const nodeCurRank = n.targetMainIdCurrentRank || selectedRank;
         if (autoBal > 0.001 && !seenPoolKeys.has(`pool-auto-${mId}`)) {
           seenPoolKeys.add(`pool-auto-${mId}`);
-          const isReady = autoBal + 1e-6 >= 5;
-          const rem = Math.max(0, Number((5 - autoBal).toFixed(2)));
+          const isReady = autoBal + 1e-6 >= autoTargetCost;
+          const rem = Math.max(0, Number((autoTargetCost - autoBal).toFixed(2)));
           poolAlerts.push({
             key: `pool-auto-${mId}`,
             category: 'AUTO_POOL',
             mainId: mId,
             rank: 1,
-            currentRank: n.targetMainIdCurrentRank || selectedRank,
+            currentRank: nodeCurRank,
             owner: n.owner,
             poolBalanceUsdt: Number(autoBal.toFixed(2)),
-            targetCostUsdt: 5,
+            targetCostUsdt: autoTargetCost,
             remainingUsdt: rem,
-            progressPct: Math.min(100, Math.round((autoBal / 5) * 100)),
+            progressPct: Math.min(100, Math.round((autoBal / autoTargetCost) * 100)),
             isReady,
             isMyWallet: isMine,
             noteTh: isReady
-              ? `🚨 พร้อมออก Auto ID ทันที! Main ID #${mId} มีสะสมครบ ${autoBal.toFixed(2)} / 10.00 USDT`
-              : `⏳ กำลังสะสม Auto ID Pool: Main ID #${mId} สะสมแล้ว ${autoBal.toFixed(2)} / 10.00 USDT (ขาดอีก ${rem.toFixed(2)} USDT)`,
+              ? `🚨 พร้อมออก Auto ID ทันที! Main ID #${mId} มีสะสมครบ ${autoBal.toFixed(2)} / ${autoTargetCost.toFixed(2)} USDT`
+              : `⏳ กำลังสะสม Auto ID Pool: Main ID #${mId} สะสมแล้ว ${autoBal.toFixed(2)} / ${autoTargetCost.toFixed(2)} USDT (ขาดอีก ${rem.toFixed(2)} USDT)`,
           });
         }
         if (extraBal > 0.001 && !seenPoolKeys.has(`pool-extra-${mId}`)) {
           seenPoolKeys.add(`pool-extra-${mId}`);
-          const isReady = extraBal + 1e-6 >= 10;
-          const rem = Math.max(0, Number((10 - extraBal).toFixed(2)));
+          const isReady = nodeCurRank >= 2 && extraBal + 1e-6 >= minExtraCost;
+          const rem = Math.max(0, Number((minExtraCost - extraBal).toFixed(2)));
           poolAlerts.push({
             key: `pool-extra-${mId}`,
             category: 'EXTRA_POOL',
             mainId: mId,
             rank: 2,
-            currentRank: n.targetMainIdCurrentRank || selectedRank,
+            currentRank: nodeCurRank,
             owner: n.owner,
             poolBalanceUsdt: Number(extraBal.toFixed(2)),
-            targetCostUsdt: 10,
+            targetCostUsdt: minExtraCost,
             remainingUsdt: rem,
-            progressPct: Math.min(100, Math.round((extraBal / 10) * 100)),
+            progressPct: Math.min(100, Math.round((extraBal / minExtraCost) * 100)),
             isReady,
             isMyWallet: isMine,
             noteTh: isReady
               ? `🚨 พร้อมออก Extra ID ทันที! Main ID #${mId} มีสะสมครบ ${extraBal.toFixed(2)} USDT`
-              : `⏳ กำลังสะสม Extra ID Pool: Main ID #${mId} สะสมแล้ว ${extraBal.toFixed(2)} / 10.00 USDT (ขาดอีก ${rem.toFixed(2)} USDT)`,
+              : `⏳ กำลังสะสม Extra ID Pool: Main ID #${mId} สะสมแล้ว ${extraBal.toFixed(2)} / ${minExtraCost.toFixed(2)} USDT (ขาดอีก ${rem.toFixed(2)} USDT)`,
           });
         }
       }
@@ -4531,7 +4550,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             parentId: newAuto.parentId,
             side: newAuto.side,
             owner: newAuto.owner,
-            amountUsdt: 5,
+            amountUsdt: 10,
             timestamp: nowTime,
           });
         } else if (newReadyPool) {
@@ -5364,7 +5383,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             type="button"
             onClick={() => {
               const curMaxR = node.targetMainIdCurrentRank || node.rank || 1;
-              setModalUpgradeTargetRank(Math.min(27, curMaxR + 1));
+              setModalUpgradeTargetRank(Math.min(18, curMaxR + 1));
               setModalUpgradeMessage(null);
               setModalUpgradeError(null);
               setBenefitModalTab('all');
@@ -6693,7 +6712,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                           : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-white'
                       }`}
                     >
-                      {cnt} รหัส ({cnt * 5} U)
+                      {cnt} รหัส ({cnt * 10} U)
                     </button>
                   ))}
                 </div>
@@ -6712,7 +6731,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                 <div className="flex items-center justify-between pt-1 border-t border-slate-800">
                   <span className="text-slate-300 font-bold">รวมค่าสมัครทั้งหมด:</span>
                   <span className="font-mono font-extrabold text-amber-400 text-sm">
-                    {regNodeCount * 5} USDT
+                    {regNodeCount * 10} USDT
                   </span>
                 </div>
               </div>
@@ -6733,7 +6752,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
 
               {/* Action Buttons */}
               <div className="space-y-2 pt-1">
-                {parseFloat(allowance || '0') < regNodeCount * 5 && (
+                {parseFloat(allowance || '0') < regNodeCount * 10 && (
                   <button
                     type="button"
                     onClick={handleModalApproveUsdt}
@@ -6748,7 +6767,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                     <span>
                       {regIsApproving
                         ? 'กำลังอนุมัติ USDT...'
-                        : `อนุมัติ USDT (${regNodeCount * 5} USDT)`}
+                        : `อนุมัติ USDT (${regNodeCount * 10} USDT)`}
                     </span>
                   </button>
                 )}
@@ -6767,7 +6786,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                   <span>
                     {regIsSubmitting
                       ? 'กำลังสมัครสมาชิก...'
-                      : `🚀 ยืนยันสมัครสมาชิก (${regNodeCount * 5} USDT)`}
+                      : `🚀 ยืนยันสมัครสมาชิก (${regNodeCount * 10} USDT)`}
                   </span>
                 </button>
               </div>
@@ -6927,8 +6946,8 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         );
         const effectiveTargetRank =
           modalUpgradeTargetRank > currentMaxR
-            ? modalUpgradeTargetRank
-            : Math.min(27, currentMaxR + 1);
+            ? Math.min(18, modalUpgradeTargetRank)
+            : Math.min(18, currentMaxR + 1);
         const targetRankPrice = RANK_PRICES_USDT[effectiveTargetRank - 1] || 10;
         const curUpgradePoolVal = Number(
           modalNode.isExtraLineage
@@ -6939,7 +6958,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         const netDiffToPay = Math.max(0, Number((targetRankPrice - poolDeduct).toFixed(2)));
 
         const handleTriggerModalUpgrade = async (rankToUpgrade: number) => {
-          if (isModalUpgrading || currentMaxR >= 27 || rankToUpgrade <= currentMaxR) return;
+          if (isModalUpgrading || currentMaxR >= 18 || rankToUpgrade <= currentMaxR || rankToUpgrade > 18) return;
           setIsModalUpgrading(true);
           setModalUpgradeError(null);
           const pendingMsg = `กำลังอัปเกรด Main ID #${targetMainId} สู่ Rank ${rankToUpgrade} (${RANK_PRICES_USDT[rankToUpgrade - 1] || 10} USDT)...`;
@@ -6980,7 +6999,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
               message: okMsg,
               txHash: confirmedTxHash,
             });
-            setModalUpgradeTargetRank(Math.min(27, rankToUpgrade + 1));
+            setModalUpgradeTargetRank(Math.min(18, rankToUpgrade + 1));
             await fetchPerIdHistoryForModal();
             await loadOnChainTree(selectedRank, { silent: true, forceSync: true });
           } catch (err: any) {
@@ -7078,20 +7097,31 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                     <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-mono font-bold text-[11px]">
                       Max Rank: R{currentMaxR}
                     </span>
-                    {!modalNode.isExtraLineage && currentMaxR < 27 && (
-                      <button
-                        type="button"
-                        disabled={isModalUpgrading}
-                        onClick={() => handleTriggerModalUpgrade(effectiveTargetRank)}
-                        className="px-3 py-1 rounded-full bg-gradient-to-r from-amber-500 via-orange-500 to-rose-500 hover:from-amber-400 hover:to-rose-400 text-slate-950 font-extrabold text-[11px] shadow-md transition flex items-center gap-1 cursor-pointer disabled:opacity-50"
-                      >
-                        <Sparkles className="w-3.5 h-3.5" />
-                        <span>
-                          {isModalUpgrading
-                            ? 'กำลังอัพเกรด...'
-                            : `🚀 อัพ Rank R${effectiveTargetRank}`}
-                        </span>
-                      </button>
+                    {!modalNode.isExtraLineage && (
+                      currentMaxR >= 18 ? (
+                        <button
+                          type="button"
+                          disabled
+                          className="px-3 py-1 rounded-full bg-slate-800/90 border border-slate-700 text-slate-400 font-extrabold text-[11px] flex items-center gap-1 opacity-60 cursor-not-allowed"
+                          title="รหัสหลักนี้อยู่ใน Rank 18 (แรงค์สูงสุด) เรียบร้อยแล้ว"
+                        >
+                          <span>👑 อยู่ Rank 18 สูงสุดแล้ว (ปิดการอัพเดท)</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={isModalUpgrading}
+                          onClick={() => handleTriggerModalUpgrade(effectiveTargetRank)}
+                          className="px-3 py-1 rounded-full bg-gradient-to-r from-amber-500 via-orange-500 to-rose-500 hover:from-amber-400 hover:to-rose-400 text-slate-950 font-extrabold text-[11px] shadow-md transition flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                        >
+                          <Sparkles className="w-3.5 h-3.5" />
+                          <span>
+                            {isModalUpgrading
+                              ? 'กำลังอัพเกรด...'
+                              : `🚀 อัพ Rank R${effectiveTargetRank}`}
+                          </span>
+                        </button>
+                      )
                     )}
                   </div>
                   <div className="text-[11px] font-mono text-slate-400 flex flex-wrap items-center gap-2">
@@ -7286,11 +7316,20 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                       </div>
 
                       {/* ปุ่มอัพเกรด Rank ของไอดีนี้โดยตรงในหน้าต่างป๊อปอัพ */}
-                      {currentMaxR >= 27 ? (
-                        <div className="mt-2 pt-2 border-t border-indigo-500/30 text-center">
-                          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-300 font-bold text-[11px]">
-                            👑 รหัสหลัก #{targetMainId} อยู่ใน Rank สูงสุด (R27) เรียบร้อยแล้ว
-                          </span>
+                      {currentMaxR >= 18 ? (
+                        <div className="mt-2 pt-2 border-t border-indigo-500/30 space-y-2">
+                          <div className="text-center">
+                            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-300 font-bold text-[11px]">
+                              👑 รหัสหลัก #{targetMainId} อยู่ใน Rank สูงสุด (R18) เรียบร้อยแล้ว
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            disabled
+                            className="w-full py-2 px-3 rounded-xl bg-slate-900 border border-slate-700 text-slate-500 font-extrabold text-xs flex items-center justify-center gap-2 opacity-60 cursor-not-allowed"
+                          >
+                            <span>🔒 ปิดสถานะปุ่มอัพเดท (อยู่ Rank 18 สูงสุดแล้ว)</span>
+                          </button>
                         </div>
                       ) : (
                         <div className="mt-2 pt-2 border-t border-indigo-500/30 space-y-2">
@@ -7302,7 +7341,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                                 onChange={(e) => setModalUpgradeTargetRank(Number(e.target.value))}
                                 className="bg-slate-950 border border-amber-500/50 rounded-lg px-2 py-1 text-amber-300 font-mono font-bold text-xs focus:outline-none focus:border-amber-400 cursor-pointer"
                               >
-                                {Array.from({ length: 27 - currentMaxR }, (_, idx) => {
+                                {Array.from({ length: Math.max(0, 18 - currentMaxR) }, (_, idx) => {
                                   const r = currentMaxR + 1 + idx;
                                   const p = RANK_PRICES_USDT[r - 1] || 10;
                                   return (
@@ -8097,44 +8136,71 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
       })()}
 
       {/* ===================================================================== */}
-      {/* POPUP MODAL: ดูข้อมูล ID ของกระเป๋านี้ (เมื่อกดปุ่มซ้ายล่างสุดของผัง) */}
+      {/* POPUP MODAL: ดูข้อมูล ID ของกระเป๋านี้ (แสดงเฉพาะข้อมูล ID ของกระเป๋าที่ Login) */}
       {/* ===================================================================== */}
       {isWalletIdsModalOpen && (() => {
         const allReports = Array.from(perIdReportsMap.values()).sort(
           (a: any, b: any) => Number(a.id) - Number(b.id)
         );
 
-        const uniqueWallets: string[] = [];
-        const seenWallets = new Set<string>();
-        if (userAddress && !seenWallets.has(userAddress.toLowerCase())) {
-          seenWallets.add(userAddress.toLowerCase());
-          uniqueWallets.push(userAddress);
-        }
-        for (const rep of allReports) {
-          const w = String(rep.owner || '');
-          if (w && !seenWallets.has(w.toLowerCase())) {
-            seenWallets.add(w.toLowerCase());
-            uniqueWallets.push(w);
-          }
-        }
-        for (const n of activeNodesMap.values()) {
-          const w = String(n.owner || '');
-          if (w && !seenWallets.has(w.toLowerCase())) {
-            seenWallets.add(w.toLowerCase());
-            uniqueWallets.push(w);
-          }
-        }
-
+        // แสดงเฉพาะข้อมูล ID ของกระเป๋าที่ Login (userAddress) เท่านั้น
         const activeWallet =
-          selectedInspectWallet ||
           userAddress ||
-          uniqueWallets[0] ||
+          selectedInspectWallet ||
+          activeNodesMap.get(focusRootId)?.owner ||
+          activeNodesMap.get(1)?.owner ||
           '0x622E20082e63c7220c5AF0A77Cbc437a98505311';
         const activeWalletLower = activeWallet.toLowerCase();
 
-        const walletReports = allReports
-          .filter((rep: any) => String(rep.owner || '').toLowerCase() === activeWalletLower)
-          .sort((a: any, b: any) => Number(b.id) - Number(a.id));
+        const walletReportsMap = new Map<number, any>();
+        for (const rep of allReports) {
+          if (String(rep.owner || '').toLowerCase() === activeWalletLower) {
+            walletReportsMap.set(Number(rep.id), rep);
+          }
+        }
+
+        // Fallback: หากมีโหนดในผัง Rank 1 ที่เป็นของกระเป๋าที่ Login แต่ยังไม่อยู่ใน perIdReportsMap ให้แสดงทันที
+        if (selectedRank === 1) {
+          for (const n of activeNodesMap.values()) {
+            if (
+              String(n.owner || '').toLowerCase() === activeWalletLower &&
+              !walletReportsMap.has(Number(n.id))
+            ) {
+              walletReportsMap.set(Number(n.id), {
+                id: n.id,
+                label: n.isClone
+                  ? `Clone #${n.id} (ของ Main #${n.originMainId || n.id})`
+                  : n.isAutoMainId
+                  ? `Auto ID #${n.id}`
+                  : `Main ID #${n.id}`,
+                typeBadge: n.isClone ? 'CLONE ID' : n.isAutoMainId ? 'AUTO ID' : 'MAIN ID',
+                isClone: Boolean(n.isClone),
+                isAutoId: Boolean(n.isAutoMainId),
+                isExtraId: Boolean(n.isExtraId),
+                originMainId: n.originMainId || n.id,
+                cloneRound: n.cloneRound || 0,
+                owner: n.owner,
+                directSponsorNodeId: n.directUplineNodeId || 1,
+                parentId: n.parentId || 0,
+                side: n.parentId === 0 ? 'ROOT' : n.isLeft ? 'LEFT' : 'RIGHT',
+                currentMaxRank: n.targetMainIdCurrentRank || 1,
+                direct30TotalUsdt: n.directRewardAllNodes || n.directRewardThisNode || 0,
+                level30TotalUsdt: n.unilevelRewardAllNodes || n.unilevelRewardThisNode || 0,
+                vault35GrossTotalUsdt: n.grossVaultFromLineage || n.vaultBalance || 0,
+                upgradeRankPool: n.upgradeRankPool || 0,
+                newAutoIdPool: n.newAutoIdPool || 0,
+                newExtraIdPool: n.newExtraIdPool || 0,
+                totalAutoIdCount: n.totalAutoIdCount || 0,
+                totalExtraIdCount: n.totalExtraIdCount || 0,
+                levelSummary: n.levelSummary,
+              });
+            }
+          }
+        }
+
+        const walletReports = Array.from(walletReportsMap.values()).sort(
+          (a: any, b: any) => Number(b.id) - Number(a.id)
+        );
 
         const WALLET_PAGE_SIZE = 10;
         const walletTotalPages = Math.max(1, Math.ceil(walletReports.length / WALLET_PAGE_SIZE));
@@ -8193,8 +8259,11 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                     </span>
                   </div>
                   <div className="text-[11px] font-mono text-slate-400 flex items-center gap-2 flex-wrap">
-                    <span>กระเป๋าที่กำลังดู:</span>
+                    <span>กระเป๋าที่ Login ปัจจุบัน:</span>
                     <strong className="text-amber-300 break-all">{activeWallet}</strong>
+                    <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-[10px] font-bold">
+                      คุณ (Logged In)
+                    </span>
                     <button
                       type="button"
                       onClick={() => copyAddress(activeWallet)}
@@ -8224,50 +8293,6 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                   <X className="w-5 h-5" />
                 </button>
               </div>
-
-              {/* Wallet Selector Pills (Switch between connected wallet & other wallets in tree) */}
-              {uniqueWallets.length > 1 && (
-                <div className="bg-slate-950/90 border border-slate-800 rounded-xl p-3 space-y-2">
-                  <div className="text-[11px] font-bold text-slate-300">
-                    🔄 เลือกกระเป๋าที่ต้องการดูข้อมูล ID:
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {uniqueWallets.map((wAddr) => {
-                      const isSelected = wAddr.toLowerCase() === activeWalletLower;
-                      const isConnectedUser =
-                        Boolean(userAddress) && wAddr.toLowerCase() === userAddress!.toLowerCase();
-                      const countInW = allReports.filter(
-                        (r: any) => String(r.owner || '').toLowerCase() === wAddr.toLowerCase()
-                      ).length;
-
-                      return (
-                        <button
-                          key={wAddr}
-                          type="button"
-                          onClick={() => setSelectedInspectWallet(wAddr)}
-                          className={`px-3 py-1.5 rounded-xl font-mono text-xs font-bold transition flex items-center gap-1.5 cursor-pointer border ${
-                            isSelected
-                              ? 'bg-indigo-600 text-white border-indigo-400 shadow-lg shadow-indigo-950/50'
-                              : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border-slate-800'
-                          }`}
-                        >
-                          <span>
-                            {wAddr.slice(0, 6)}...{wAddr.slice(-4)}
-                          </span>
-                          <span className="px-1.5 py-0.2 rounded bg-black/30 text-amber-300 text-[10px]">
-                            {countInW} ID
-                          </span>
-                          {isConnectedUser && (
-                            <span className="px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 text-[10px]">
-                              คุณ
-                            </span>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
 
               {/* Wallet Total Earnings Summary Strip */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 font-mono">
@@ -8299,7 +8324,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
 
               {/* List of IDs Owned by This Wallet */}
               <div className="space-y-2.5">
-                <div className="text-xs font-bold text-indigo-300 flex items-center justify-between">
+                <div className="text-xs font-bold text-indigo-300 flex items-center justify-between flex-wrap gap-2">
                   <span>📋 รายการ ID ทั้งหมดของกระเป๋านี้ ({walletReports.length} ID):</span>
                   <span className="text-[11px] text-slate-400 font-normal">
                     คลิกปุ่ม "ดูผลประโยชน์ / อัพ Rank" เพื่อดูประวัติรายรายการหรือกดอัพแรงค์ของ ID นั้น
@@ -8307,8 +8332,26 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                 </div>
 
                 {walletReports.length === 0 ? (
-                  <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-8 text-center text-slate-400">
-                    กระเป๋านี้ยังไม่มีรหัสสมาชิกในระบบ
+                  <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-6 text-center space-y-3">
+                    <div className="text-slate-300 font-bold text-sm">
+                      กระเป๋าที่ Login นี้ ({activeWallet.slice(0, 6)}...{activeWallet.slice(-4)}) ยังไม่มีรหัสสมาชิกในระบบ
+                    </div>
+                    <div className="text-slate-400 text-xs max-w-lg mx-auto">
+                      หากคุณเพิ่งเข้าสู่ระบบด้วยกระเป๋าใหม่ สามารถกดปุ่มด้านล่างเพื่อสมัครรหัสสมาชิก (Main ID) ให้กระเป๋านี้ได้ทันที
+                    </div>
+                    <div className="flex flex-wrap items-center justify-center gap-2.5 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsWalletIdsModalOpen(false);
+                          openRegisterModal(focusRootId || 1);
+                        }}
+                        className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-extrabold text-xs shadow-lg shadow-emerald-950/60 transition inline-flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Sparkles className="w-4 h-4" />
+                        <span>+ สมัครสมาชิก / ลงรหัสให้กระเป๋านี้</span>
+                      </button>
+                    </div>
                   </div>
                 ) : (
                   <>
@@ -8481,7 +8524,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                               onClick={() => {
                                 const targetNodeId = nodeInActiveRank ? nodeInActiveRank.id : Number(rep.id);
                                 const curMaxR = Number(rep.currentMaxRank || 1);
-                                setModalUpgradeTargetRank(Math.min(27, curMaxR + 1));
+                                setModalUpgradeTargetRank(Math.min(18, curMaxR + 1));
                                 setModalUpgradeMessage(null);
                                 setModalUpgradeError(null);
                                 setBenefitModalTab('all');
@@ -8495,7 +8538,11 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                               className="flex-1 py-1.5 px-2.5 rounded-lg bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white font-bold text-[11px] transition cursor-pointer flex items-center justify-center gap-1 shadow"
                             >
                               <Coins className="w-3.5 h-3.5 text-amber-300 shrink-0" />
-                              <span>ดูผลประโยชน์ / อัพ Rank</span>
+                              <span>
+                                {Number(rep.currentMaxRank || 1) >= 18
+                                  ? 'ดูผลประโยชน์ (Max R18)'
+                                  : 'ดูผลประโยชน์ / อัพ Rank'}
+                              </span>
                             </button>
 
                             <button
@@ -9519,7 +9566,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                 sample?.owner ||
                 userAddress ||
                 '0x622E20082e63c7220c5AF0A77Cbc437a98505311',
-              amountUsdt: 5,
+              amountUsdt: 10,
               timestamp: nowTime,
             });
           } else {
@@ -9533,7 +9580,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                 : `🔴 แจ้งเตือน Extra ID ใหม่! (Extra R2-#5)`,
               subtitle: sampleEx
                 ? sampleEx.noteTh
-                : `แตกตัวอัตโนมัติจากกระปุก New Extra ID Pool (10 USDT) ของ Main ID #1 ในผัง Rank 2 → วางต่อสายใต้ R2-#2 (↙ ขาซ้าย)`,
+                : `แตกตัวอัตโนมัติจากกระปุก New Extra ID Pool (20 USDT) ของ Main ID #1 ในผัง Rank 2 → วางต่อสายใต้ R2-#2 (↙ ขาซ้าย)`,
               sourceMainId: sampleEx ? sampleEx.sourceMainId : 1,
               parentId: sampleEx ? sampleEx.parentId : 2,
               side: sampleEx ? sampleEx.side : 'LEFT',
@@ -9541,7 +9588,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                 sampleEx?.owner ||
                 userAddress ||
                 '0x622E20082e63c7220c5AF0A77Cbc437a98505311',
-              amountUsdt: sampleEx ? sampleEx.costUsdt : 10,
+              amountUsdt: sampleEx ? sampleEx.costUsdt : 20,
               timestamp: nowTime,
             });
           }
@@ -9702,7 +9749,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                         • <strong className="text-amber-300">Auto ID (กรอบทอง)</strong>: แตกอัตโนมัติใน Rank 1 เมื่อกระปุก New Auto ID Pool สะสมครบ <strong>10.00 USDT</strong>
                       </div>
                       <div>
-                        • <strong className="text-red-300">Extra ID (กรอบแดง)</strong>: รวมยอดเก่าคงเหลือ + ยอดใหม่ในกระปุก New Extra ID Pool ก่อนสร้าง Extra ID เมื่อครบราคาผัง R27→R2 (เริ่ม 10 USDT)
+                        • <strong className="text-red-300">Extra ID (กรอบแดง)</strong>: รวมยอดเก่าคงเหลือ + ยอดใหม่ในกระปุก New Extra ID Pool ก่อนสร้าง Extra ID เมื่อครบราคาผัง R18→R2 (เริ่ม 20 USDT)
                       </div>
                     </div>
                   </div>

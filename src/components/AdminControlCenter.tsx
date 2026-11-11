@@ -107,6 +107,7 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
   const [editContractAddr, setEditContractAddr] = useState<string>(contractAddress || '');
   const [editUsdtAddr, setEditUsdtAddr] = useState<string>(usdtAddress || '');
   const [batchStatus, setBatchStatus] = useState<any | null>(null);
+  const [wsBotStatus, setWsBotStatus] = useState<any | null>(null);
 
   // 7. Rank Inspector State
   const [inspectRankNum, setInspectRankNum] = useState<number>(1);
@@ -133,9 +134,10 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
   const fetchAdminOverview = useCallback(async () => {
     setLoadingOverview(true);
     try {
-      const [ovRes, bqRes] = await Promise.all([
+      const [ovRes, bqRes, botRes] = await Promise.all([
         fetch('/api/admin/overview').then((r) => r.json()).catch(() => null),
         fetch('/api/batch-queue').then((r) => r.json()).catch(() => null),
+        fetch('/api/ws-bot/status').then((r) => r.json()).catch(() => null),
       ]);
       if (ovRes?.success) {
         setOverview(ovRes);
@@ -145,6 +147,9 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
       }
       if (bqRes) {
         setBatchStatus(bqRes);
+      }
+      if (botRes?.success) {
+        setWsBotStatus(botRes);
       }
     } finally {
       setLoadingOverview(false);
@@ -239,6 +244,11 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
           );
         } else if (actionName === 'checkAndProcessAutoExtraId') {
           tx = await contract.checkAndProcessAutoExtraId(params.user, Number(params.currentRank));
+        } else if (actionName === 'processPendingExtraIdQueue') {
+          tx = await contract.processPendingExtraIdQueue(
+            Number(params.r1MainId || params.mainId || 1),
+            Number(params.maxBatch || 2)
+          );
         } else {
           throw new Error(`Unsupported Web3 action: ${actionName}`);
         }
@@ -780,10 +790,16 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
 
                 <button
                   type="submit"
-                  disabled={isLoading || !upgradeTarget.trim()}
-                  className="w-full py-2.5 px-4 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs transition cursor-pointer disabled:opacity-50"
+                  disabled={
+                    isLoading ||
+                    !upgradeTarget.trim() ||
+                    Boolean(targetLookup?.found && (targetLookup.currentRank || 1) >= 18)
+                  }
+                  className="w-full py-2.5 px-4 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {isLoading
+                  {targetLookup?.found && (targetLookup.currentRank || 1) >= 18
+                    ? `🔒 รหัสหลัก #${targetLookup.mainId} อยู่ใน Rank 18 สูงสุดแล้ว (ปิดการอัพเดท)`
+                    : isLoading
                     ? 'กำลังดำเนินการอัปเกรด...'
                     : `สั่งอัปเกรด ${upgradeTarget.startsWith('0x') ? upgradeTarget.substring(0, 8) + '...' : '#' + upgradeTarget.replace(/^#/, '')} ไปยัง Rank ${upgradeRank} ฟรี`}
                 </button>
@@ -1217,7 +1233,53 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
                     }}
                     className="py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 border border-rose-500/40 text-rose-300 font-bold text-xs transition cursor-pointer"
                   >
-                    สั่งคำนวณ Extra ID ในระบบ Database
+                    สั่งคำนวณ & แตก Extra ID ด้วยบอท (Bot + DB)
+                  </button>
+                </div>
+
+                <div className="pt-2 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-[11px] font-mono text-slate-400">
+                    สถานะ WS-Bot Keeper:{' '}
+                    <strong className={wsBotStatus?.connected ? 'text-emerald-400' : 'text-amber-300'}>
+                      {wsBotStatus?.connected ? '🟢 เชื่อมต่อออนไลน์' : '🟡 HTTP Fallback'}
+                    </strong>{' '}
+                    • Signer Key:{' '}
+                    <strong className={wsBotStatus?.hasBotPrivateKey ? 'text-emerald-400' : 'text-rose-400'}>
+                      {wsBotStatus?.hasBotPrivateKey ? 'พร้อมยิงธุรกรรม' : 'ไม่พบ Key'}
+                    </strong>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setActionStatus({
+                        type: 'loading',
+                        title: 'กำลังสั่งรัน WS-Bot Keeper ตรวจสอบทุก Main ID...',
+                        message: 'ตรวจสอบคิว Auto ID (10 USDT), Extra ID (R18->R2) และซิงค์ข้อมูลจากเชน',
+                      });
+                      try {
+                        const res = await fetch('/api/ws-bot/trigger-check', { method: 'POST' });
+                        const data = await res.json();
+                        await fetchAdminOverview();
+                        onRefreshOnChainData();
+                        if (typeof window !== 'undefined') {
+                          window.dispatchEvent(new CustomEvent('matrix:tree:refresh'));
+                        }
+                        setActionStatus({
+                          type: 'success',
+                          title: 'รัน WS-Bot Keeper สำเร็จ!',
+                          message: data.message || 'บอทตรวจสอบและประมวลผลคิวทั้งหมดเรียบร้อยแล้ว',
+                        });
+                      } catch (err: any) {
+                        setActionStatus({
+                          type: 'error',
+                          title: 'รัน WS-Bot ล้มเหลว',
+                          message: err.message,
+                        });
+                      }
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs cursor-pointer transition"
+                  >
+                    🤖 สั่งบอทตรวจคิว Auto/Extra ID ทั้งระบบทันที
                   </button>
                 </div>
               </div>
@@ -1668,27 +1730,37 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
                       </td>
                       <td className="py-2.5 px-3 text-right font-sans">
                         <div className="inline-flex items-center gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setUpgradeTarget(String(m.mainId));
-                              setUpgradeRank(String(nextR));
-                              setActiveSection('owner');
-                              window.scrollTo({ top: 0, behavior: 'smooth' });
-                            }}
-                            className="px-2.5 py-1 rounded-lg bg-rose-600/20 hover:bg-rose-600/40 border border-rose-500/30 text-rose-300 font-semibold text-[11px] cursor-pointer whitespace-nowrap"
-                          >
-                            ตั้งค่าอัปแรงค์ #{m.mainId}
-                          </button>
-                          {m.currentRank < 18 && (
+                          {(m.currentRank || 1) >= 18 ? (
                             <button
                               type="button"
-                              onClick={() => onAdminUpgrade(String(m.mainId), nextR)}
-                              disabled={isLoading}
-                              className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-[11px] cursor-pointer whitespace-nowrap disabled:opacity-50"
+                              disabled
+                              className="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700 text-slate-500 font-semibold text-[11px] opacity-60 cursor-not-allowed whitespace-nowrap"
                             >
-                              + ขึ้น R{nextR} ฟรีทันที
+                              🔒 อยู่ Rank 18 แล้ว (ปิดการอัพเดท)
                             </button>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setUpgradeTarget(String(m.mainId));
+                                  setUpgradeRank(String(nextR));
+                                  setActiveSection('owner');
+                                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                                }}
+                                className="px-2.5 py-1 rounded-lg bg-rose-600/20 hover:bg-rose-600/40 border border-rose-500/30 text-rose-300 font-semibold text-[11px] cursor-pointer whitespace-nowrap"
+                              >
+                                ตั้งค่าอัปแรงค์ #{m.mainId}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => onAdminUpgrade(String(m.mainId), nextR)}
+                                disabled={isLoading}
+                                className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-[11px] cursor-pointer whitespace-nowrap disabled:opacity-50"
+                              >
+                                + ขึ้น R{nextR} ฟรีทันที
+                              </button>
+                            </>
                           )}
                         </div>
                       </td>

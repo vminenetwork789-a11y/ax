@@ -131,7 +131,7 @@ export const UpgradeRankSection: React.FC<UpgradeRankSectionProps> = ({
         <div>
           <div className="flex items-center gap-2">
             <span className="text-base sm:text-lg font-bold text-indigo-400">
-              {language === 'th' ? '🚀 อัปเกรดแรงค์ 2 - 27' : '🚀 Rank Progression (Rank 2 - 18)'}
+              {language === 'th' ? '🚀 อัปเกรดแรงค์ 2 - 18' : '🚀 Rank Progression (Rank 2 - 18)'}
             </span>
           </div>
           <p className="text-[11px] text-slate-400 mt-0.5">
@@ -434,13 +434,26 @@ export const UpgradeRankSection: React.FC<UpgradeRankSectionProps> = ({
       {targetRankDef && (
         <div className="bg-slate-950/90 border border-slate-800/90 rounded-xl p-4 space-y-3">
           {currentRank >= 18 ? (
-            <div className="p-3 bg-amber-500/10 border border-amber-500/30 text-amber-300 rounded-xl text-xs font-bold flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
-              <span>
-                {language === 'th'
-                  ? `👑 รหัสหลัก #${selectedMainId} อยู่ใน Rank สูงสุด (Rank 18 - Max Rank) เรียบร้อยแล้ว`
-                  : `👑 Main ID #${selectedMainId} is already at Max Rank (Rank 18)`}
-              </span>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="p-3 bg-amber-500/10 border border-amber-500/30 text-amber-300 rounded-xl text-xs font-bold flex items-center gap-2 flex-1">
+                <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>
+                  {language === 'th'
+                    ? `👑 รหัสหลัก #${selectedMainId} อยู่ใน Rank สูงสุด (Rank 18 - Max Rank) เรียบร้อยแล้ว`
+                    : `👑 Main ID #${selectedMainId} is already at Max Rank (Rank 18)`}
+                </span>
+              </div>
+              <button
+                type="button"
+                disabled
+                className="w-full sm:w-auto min-w-[190px] bg-slate-900 border border-slate-700 text-slate-500 font-semibold py-2.5 px-5 rounded-xl text-xs flex items-center justify-center gap-1.5 opacity-60 cursor-not-allowed"
+              >
+                <span>
+                  {language === 'th'
+                    ? '🔒 ปิดสถานะปุ่มอัพเดท (Rank 18 แล้ว)'
+                    : '🔒 Max Rank 18 Reached (Disabled)'}
+                </span>
+              </button>
             </div>
           ) : currentRank >= targetRankDef.rank ? (
             <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 rounded-xl text-xs font-semibold flex items-center justify-between gap-2 flex-wrap">

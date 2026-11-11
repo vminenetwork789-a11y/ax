@@ -151,7 +151,7 @@ export const inMemoryDB = {
   rewardLogs: [] as RewardLogModel[],
 };
 
-// Seed initial reward logs matching FractalFlowMatrix27.sol (Rank 1 = 5 USDT: 30% Direct = 1.50, 2% Level = 0.10, 35% Vault = 1.75, 4% AllSell = 0.20, 1% Bot = 0.05)
+// Seed initial reward logs matching FractalFlowMatrix27.sol (Rank 1 = 10 USDT: 30% Direct = 3.00, 2% Level = 0.20, 35% Vault = 3.50, 4% AllSell = 0.40, 1% Bot = 0.10)
 inMemoryDB.rewardLogs = [
   {
     id: 'log-1',
@@ -160,7 +160,7 @@ inMemoryDB.rewardLogs = [
     recipient: '0x7Ab09d1a90CA26a0E0eBF06758de668C848D700D',
     rank: 1,
     rewardType: 'DIRECT',
-    amount: '1.500000',
+    amount: '3.000000',
     txHash: '0x8f2a93c129e4710bcf7730e7192a550d53c7a2d3b4e5f6a7b8c9d0e1f2a3b4c5',
     createdAt: new Date(Date.now() - 3600000 * 4).toISOString(),
   },
@@ -171,7 +171,7 @@ inMemoryDB.rewardLogs = [
     recipient: '0x7Ab09d1a90CA26a0E0eBF06758de668C848D700D',
     rank: 1,
     rewardType: 'LEVEL',
-    amount: '0.100000',
+    amount: '0.200000',
     txHash: '0x3c19b4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3',
     createdAt: new Date(Date.now() - 3600000 * 2.5).toISOString(),
   },
@@ -182,7 +182,7 @@ inMemoryDB.rewardLogs = [
     recipient: '0x7Ab09d1a90CA26a0E0eBF06758de668C848D700D',
     rank: 1,
     rewardType: 'UPGRADE_VAULT',
-    amount: '1.750000',
+    amount: '3.500000',
     txHash: '0x99e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1',
     createdAt: new Date(Date.now() - 3600000 * 1.1).toISOString(),
   },

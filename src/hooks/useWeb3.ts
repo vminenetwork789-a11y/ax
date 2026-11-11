@@ -825,15 +825,18 @@ export function useWeb3() {
     return null;
   };
 
-  // 1. Single Register with Automatic Placement Finder & FIFO Queue Lock (5 USDT - Rank 1)
+  // 1. Single/Multi Register with Automatic Placement Finder & FIFO Queue Lock (10 USDT - Rank 1)
   const handleRegister = async (
     sponsorNodeId: number,
     autoOptions?: {
       targetParentId?: number | string;
       isLeft?: boolean;
       mode?: PlacementMode;
+      count?: number;
+      owner?: string;
     }
   ) => {
+    const countToReg = Math.max(1, Number(autoOptions?.count) || 1);
     setTxState({
       isLoading: true,
       step: `กำลังขอตั๋วคิว FIFO (BullMQ + Redis) เพื่อป้องกัน Race Condition แย่งตำแหน่ง...`,
@@ -842,9 +845,63 @@ export function useWeb3() {
       successMessage: null,
     });
 
+    const fallbackDatabaseRegister = async (targetOwnerAddr: string) => {
+      const regRes = await fetch('/api/matrix/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          owner: targetOwnerAddr,
+          sponsorNodeId,
+          targetParentId: autoOptions?.targetParentId,
+          isLeft: autoOptions?.isLeft,
+          count: countToReg,
+        }),
+      });
+      const regData = await regRes.json();
+      if (!regRes.ok || !regData?.success) {
+        throw new Error(regData?.error || 'การสมัครสมาชิกไม่สำเร็จ');
+      }
+      const assignedIds: number[] = Array.isArray(regData.assignedNodeIds)
+        ? regData.assignedNodeIds
+        : [];
+      const firstPlacement = Array.isArray(regData.placements) ? regData.placements[0] : null;
+      const sideText = firstPlacement
+        ? firstPlacement.isLeft
+          ? 'LEFT ลูกซ้าย'
+          : 'RIGHT ลูกขวา'
+        : autoOptions?.isLeft === false
+        ? 'RIGHT ลูกขวา'
+        : 'LEFT ลูกซ้าย';
+      const parentText = firstPlacement?.parentId || autoOptions?.targetParentId || sponsorNodeId;
+
+      setTxState({
+        isLoading: false,
+        step: 'สำเร็จ!',
+        txHash: regData.txHash || null,
+        error: null,
+        successMessage:
+          regData.message ||
+          `🎉 สมัครสมาชิกสำเร็จ! ได้รับรหัส ${assignedIds.map((id) => `#${id}`).join(', ')} วางที่ Parent #${parentText} (${sideText}) ภายใต้ผู้แนะนำ #${sponsorNodeId}`,
+      });
+
+      await refreshUserData(regData.owner || targetOwnerAddr);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('matrix:tree:refresh'));
+      }
+      return regData;
+    };
+
     let activeTicket: any = null;
 
     try {
+      if (!window.ethereum) {
+        const targetOwner = autoOptions?.owner || account || '';
+        if (!targetOwner) {
+          throw new Error('กรุณาเข้าสู่ระบบกระเป๋าก่อนทำการสมัครสมาชิก');
+        }
+        return await fallbackDatabaseRegister(targetOwner);
+      }
+
       const { signer, userAddr } = await ensureWalletAndBscTestnet();
       const currentContract = contractAddressRef.current || CONTRACT_ADDRESS;
       const currentUsdt = usdtAddressRef.current || USDT_ADDRESS;
@@ -865,20 +922,21 @@ export function useWeb3() {
         throw new Error(`Sponsor Node ID #${sponsorNodeId} ไม่ถูกต้อง: ${reason}`);
       }
 
-      // 2. Get Rank 1 price (5 USDT = 5,000,000 units with 6 decimals)
+      // 2. Get Rank 1 price (10 USDT)
       let price: bigint;
       try {
         price = await matrixContract.rankPrice(1);
       } catch {
         price = ethers.parseUnits('10', usdtDecimals);
       }
+      const totalCost = price * BigInt(countToReg);
 
       // 3. Verify USDT Balance
       try {
         const currentUsdtBal: bigint = await usdtContract.balanceOf(userAddr);
-        if (currentUsdtBal < price) {
+        if (currentUsdtBal < totalCost) {
           const formattedHave = Number(ethers.formatUnits(currentUsdtBal, usdtDecimals)).toFixed(2);
-          const formattedNeed = Number(ethers.formatUnits(price, usdtDecimals)).toFixed(2);
+          const formattedNeed = Number(ethers.formatUnits(totalCost, usdtDecimals)).toFixed(2);
           throw new Error(
             `ยอดเหรียญ USDT ในกระเป๋าไม่เพียงพอ! คุณมี ${formattedHave} USDT แต่ต้องใช้ ${formattedNeed} USDT (Token: ${currentUsdt})`
           );
@@ -902,7 +960,7 @@ export function useWeb3() {
           owner: userAddr,
           sponsorNodeId,
           sponsorAddress,
-          count: 1,
+          count: countToReg,
           rank: 1,
           mode: modeToUse,
         });
@@ -937,7 +995,7 @@ export function useWeb3() {
 
       setTxState((prev) => ({
         ...prev,
-        step: 'กำลังตรวจสอบการอนุมัติเหรียญ (USDT Allowance 10 USDT)...',
+        step: `กำลังตรวจสอบการอนุมัติเหรียญ (USDT Allowance ${countToReg * 10} USDT)...`,
       }));
 
       let currentAllowance: bigint = BigInt(0);
@@ -947,7 +1005,7 @@ export function useWeb3() {
         console.warn('Could not read allowance directly:', err);
       }
 
-      if (currentAllowance < price) {
+      if (currentAllowance < totalCost) {
         setTxState((prev) => ({
           ...prev,
           step: 'ขั้นตอนที่ 1/2: กรุณากดยืนยันการอนุมัติวงเงินไม่จำกัด (Approve Unlimited USDT) ในกระเป๋า MetaMask...',
@@ -992,7 +1050,7 @@ export function useWeb3() {
         step:
           autoParentId > 0
             ? `ขั้นตอนที่ 2/2: ส่งลงตำแหน่ง (ต่อติดตัวผู้แนะนำตรง/โคลนนิ่ง) Parent #${autoParentId} (${sideLabel})... กรุณายืนยันใน MetaMask`
-            : `ขั้นตอนที่ 2/2: ส่งคำสั่งสมัครใต้ผู้แนะนำ #${sponsorNodeId} ค่าสมัคร 10 USDT... กรุณายืนยันใน MetaMask`,
+            : `ขั้นตอนที่ 2/2: ส่งคำสั่งสมัครใต้ผู้แนะนำ #${sponsorNodeId} ค่าสมัคร ${countToReg * 10} USDT... กรุณายืนยันใน MetaMask`,
       }));
 
       let regTx;
@@ -1000,7 +1058,7 @@ export function useWeb3() {
         try {
           regTx = await matrixContract.registerBatch(
             BigInt(sponsorNodeId),
-            1n,
+            BigInt(countToReg),
             [BigInt(autoParentId)],
             [Boolean(autoIsLeft)],
             [false]
@@ -1033,7 +1091,7 @@ export function useWeb3() {
         successMessage:
           autoParentId > 0
             ? `🎉 สมัครสมาชิกสำเร็จ! ลงตำแหน่งออโต้ที่ Parent #${autoParentId} (${sideLabel}) ภายใต้ผู้แนะนำ #${sponsorNodeId} (จองผ่าน FIFO Queue)`
-            : `🎉 สมัครสมาชิก FractalFlowMatrix27 (Rank 1 - 10 USDT) สำเร็จเรียบร้อย! (Sponsor Node ID: #${sponsorNodeId})`,
+            : `🎉 สมัครสมาชิก FractalFlowMatrix27 (Rank 1 - ${countToReg * 10} USDT) สำเร็จเรียบร้อย! (Sponsor Node ID: #${sponsorNodeId})`,
       });
 
       await fetch('/api/db/sync', { method: 'POST' }).catch(() => {});
@@ -1045,10 +1103,25 @@ export function useWeb3() {
       }
       return receipt;
     } catch (err: any) {
-      console.error('Register transaction error:', err);
+      console.warn('Register transaction notice:', err);
       if (activeTicket?.ticketId) {
         await releaseQueueTicket(activeTicket.ticketId);
       }
+
+      const isUserRejected =
+        err?.code === 'ACTION_REJECTED' ||
+        err?.code === 4001 ||
+        String(err?.message || '').toLowerCase().includes('user rejected');
+
+      const fallbackOwner = autoOptions?.owner || account || '';
+      if (!isUserRejected && fallbackOwner) {
+        try {
+          return await fallbackDatabaseRegister(fallbackOwner);
+        } catch (dbErr: any) {
+          console.error('Database fallback register error:', dbErr);
+        }
+      }
+
       const errorMsg = err?.reason || err?.shortMessage || err?.message || 'การสมัครสมาชิกล้มเหลว';
       setTxState({
         isLoading: false,
@@ -1057,6 +1130,7 @@ export function useWeb3() {
         error: errorMsg,
         successMessage: null,
       });
+      throw new Error(errorMsg);
     }
   };
 

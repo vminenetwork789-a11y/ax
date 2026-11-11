@@ -1218,8 +1218,9 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
           <div className="flex items-center gap-2">
             <select
               value={prospectiveRank}
+              disabled={calculation.currentOnChainRank >= 18}
               onChange={(e) => setProspectiveRank(Number(e.target.value))}
-              className="flex-1 bg-slate-950 border border-slate-700 focus:border-amber-400 rounded-lg px-3 py-2 text-xs font-mono text-white outline-none"
+              className="flex-1 bg-slate-950 border border-slate-700 focus:border-amber-400 rounded-lg px-3 py-2 text-xs font-mono text-white outline-none disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {RANK_PRICES_USDT.map((price, idx) => {
                 const r = idx + 1;
@@ -1303,10 +1304,18 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
       {calculation.steps.length === 0 ? (
         <div className="rounded-lg bg-slate-900 border border-slate-800 p-4 text-center space-y-2">
           <div className="text-xs sm:text-sm font-semibold text-amber-300">
-            Main ID #{calculation.targetMainId} อยู่ใน Rank {calculation.currentOnChainRank} บนบล็อกเชนเรียบร้อยแล้ว
+            {calculation.currentOnChainRank >= 18
+              ? `👑 Main ID #${calculation.targetMainId} อยู่ใน Rank 18 (แรงค์สูงสุด) บนบล็อกเชนเรียบร้อยแล้ว`
+              : `Main ID #${calculation.targetMainId} อยู่ใน Rank ${calculation.currentOnChainRank} บนบล็อกเชนเรียบร้อยแล้ว`}
           </div>
           <p className="text-xs text-slate-400">
-            กรุณาเลือก Rank เป้าหมายตั้งแต่ <strong className="text-white">Rank {Math.min(18, calculation.currentOnChainRank + 1)}</strong> ขึ้นไป เพื่อคำนวณเส้นทางอัพเกรดและการเกิด Extra ID ล่วงหน้า
+            {calculation.currentOnChainRank >= 18 ? (
+              '🔒 ปิดสถานะการอัพเดทแรงค์เนื่องจากอยู่ใน Rank 18 สูงสุดแล้ว'
+            ) : (
+              <>
+                กรุณาเลือก Rank เป้าหมายตั้งแต่ <strong className="text-white">Rank {Math.min(18, calculation.currentOnChainRank + 1)}</strong> ขึ้นไป เพื่อคำนวณเส้นทางอัพเกรดและการเกิด Extra ID ล่วงหน้า
+              </>
+            )}
           </p>
         </div>
       ) : (

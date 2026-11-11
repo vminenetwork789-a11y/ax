@@ -62,6 +62,8 @@ interface AuthAndOnboardingGateProps {
       targetParentId?: number | string;
       isLeft?: boolean;
       mode?: PlacementMode;
+      count?: number;
+      owner?: string;
     }
   ) => Promise<any>;
   onExecuteOffChainBatch: (

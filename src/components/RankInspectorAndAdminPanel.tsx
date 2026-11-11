@@ -350,10 +350,20 @@ export const RankInspectorAndAdminPanel: React.FC<RankInspectorAndAdminPanelProp
             <div className="flex items-end">
               <button
                 type="submit"
-                disabled={isLoading || !adminUserAddr}
-                className="w-full bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white font-bold py-2 rounded-lg transition duration-200 text-xs cursor-pointer disabled:opacity-50 shadow-md shadow-red-950/40"
+                disabled={
+                  isLoading ||
+                  !adminUserAddr ||
+                  Boolean(targetLookupInfo?.found && (targetLookupInfo.currentRank || 1) >= 18)
+                }
+                className="w-full bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white font-bold py-2 rounded-lg transition duration-200 text-xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-red-950/40"
               >
-                {isLoading ? (language === 'th' ? 'กำลังอัปเกรด...' : 'Upgrading...') : 'Admin Upgrade (ฟรี)'}
+                {targetLookupInfo?.found && (targetLookupInfo.currentRank || 1) >= 18
+                  ? '🔒 อยู่ Rank 18 แล้ว'
+                  : isLoading
+                  ? language === 'th'
+                    ? 'กำลังอัปเกรด...'
+                    : 'Upgrading...'
+                  : 'Admin Upgrade (ฟรี)'}
               </button>
             </div>
           </div>
