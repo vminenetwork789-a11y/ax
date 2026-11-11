@@ -164,6 +164,7 @@ interface MatrixTreeVisualizerProps {
     }
   ) => Promise<any>;
   onUpgradeToRank?: (targetRank: number, targetMainId?: number | string) => Promise<any>;
+  onAdminUpgrade?: (targetUserOrId: string, targetRank: number) => Promise<any>;
   onOpenRegisterModal?: () => void;
   lastTxSuccess?: string | null;
   refreshTrigger?: any;
@@ -622,6 +623,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
   onApproveUsdt,
   onRegisterWithSponsor,
   onUpgradeToRank,
+  onAdminUpgrade,
   onOpenRegisterModal,
   lastTxSuccess,
   refreshTrigger,
@@ -1231,6 +1233,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             rightChild: number;
             isClone: boolean;
             isExtraId: boolean;
+            isAdminFreeUpgrade?: boolean;
           }
         >();
         const onChainOriginMap = new Map<number, number>();
@@ -1281,6 +1284,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                     rightChild: Number(item.rightChild || 0),
                     isClone: Boolean(item.isClone),
                     isExtraId: Boolean(item.isExtraId) && !Boolean(item.isClone),
+                    isAdminFreeUpgrade: Boolean(item.isAdminFreeUpgrade),
                   });
                   if (Number(item.originMainId) > 0) {
                     onChainOriginMap.set(nid, Number(item.originMainId));
@@ -1462,6 +1466,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         rightChild: number;
         isClone: boolean;
         isExtraId: boolean;
+        isAdminFreeUpgrade?: boolean;
         originMainId: number;
         directSponsorNodeId: number;
         nodeVault: number;
@@ -1521,6 +1526,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                   rightChild: Number(item.rightChild || 0),
                   isClone: Boolean(item.isClone),
                   isExtraId: Boolean(item.isExtraId) && !Boolean(item.isClone),
+                  isAdminFreeUpgrade: Boolean(item.isAdminFreeUpgrade),
                   originMainId: Number(item.originMainId) > 0 ? Number(item.originMainId) : nid,
                   directSponsorNodeId: Number(item.directSponsorNodeId || 0),
                   nodeVault: Number(item.nodeVault ?? 0),
@@ -1549,6 +1555,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                         rightChild: Number(item.rightChild || 0),
                         isClone: Boolean(item.isClone),
                         isExtraId: Boolean(item.isExtraId) && !Boolean(item.isClone),
+                        isAdminFreeUpgrade: Boolean(item.isAdminFreeUpgrade),
                         originMainId: Number(item.originMainId) > 0 ? Number(item.originMainId) : nid,
                         directSponsorNodeId: Number(item.directSponsorNodeId || 0),
                         nodeVault: Number(item.nodeVault ?? 0),
@@ -1916,6 +1923,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                 rightChild: fs.rightChild,
                 isClone: fs.isClone,
                 isExtraId: fs.isExtraId,
+                isAdminFreeUpgrade: fs.isAdminFreeUpgrade,
               });
               onChainOriginMap.set(fs.id, fs.originMainId || fs.id);
               onChainSponsorNodeMap.set(fs.id, fs.directSponsorNodeId || 1);
@@ -2663,6 +2671,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           if (isSnExtraLineage && sn.leftChild > 0) {
             const r1SponsorMain = resolveExtraSpawnerInR1(r, snOrigin);
             const lcNode = snapR.get(sn.leftChild);
+            if (lcNode?.isAdminFreeUpgrade) continue;
             const lcOrigMain = lcNode
               ? lcNode.originMainId > 0 && lcNode.originMainId < 1_000_000
                 ? lcNode.originMainId
@@ -2731,9 +2740,10 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                 sn.id === correspId ||
                 (sn.isClone && (sn.originMainId === correspId || sn.originMainId === r1Id));
               if (isSnSameMain && sn.leftChild > 0) {
+                const lcNode = snapR.get(sn.leftChild);
+                if (lcNode?.isAdminFreeUpgrade) continue;
                 leftCountInR++;
                 if (r > 1) {
-                  const lcNode = snapR.get(sn.leftChild);
                   if (lcNode && !lcNode.isClone && !lcNode.isExtraId) {
                     const r1Orig =
                       lcNode.originMainId > 0 && lcNode.originMainId < 1_000_000
@@ -2834,7 +2844,10 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                 sn.id === correspId ||
                 (sn.isClone && (sn.originMainId === correspId || sn.originMainId === r1Id));
               if (isSnSameMain && sn.leftChild > 0) {
-                leftCountInR++;
+                const lcNode = snapR.get(sn.leftChild);
+                if (!lcNode?.isAdminFreeUpgrade) {
+                  leftCountInR++;
+                }
               }
             }
 
@@ -3167,8 +3180,8 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           }
         }
 
-        // 2. If this node is placed as a Left Child, distribute rewards
-        if (n.parentId > 0) {
+        // 2. If this node is placed as a Left Child, distribute rewards (skip when isAdminFreeUpgrade)
+        if (n.parentId > 0 && !n.isAdminFreeUpgrade) {
           const parent = rawNodes.get(n.parentId);
           if (parent && parent.leftChild === n.id) {
             const parentMainId = originMainIdMap.get(parent.id) || parent.id;
@@ -3530,7 +3543,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             }
           }
 
-          if (sn.parentId > 0) {
+          if (sn.parentId > 0 && !sn.isAdminFreeUpgrade) {
             const p = snap1.get(sn.parentId);
             if (p && p.leftChild === id1) {
               const isId1Clone = sn.isClone && s1OriginMainMap.get(id1) === 1;
@@ -3732,7 +3745,8 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           directUplineNodeId = resolveSponsorNodeIdForNode(n.id, n.directSponsor);
         }
 
-        const hasLeftChild = n.leftChild > 0;
+        const leftChildNodeObj = n.leftChild > 0 ? rawNodes.get(n.leftChild) : undefined;
+        const hasLeftChild = n.leftChild > 0 && !leftChildNodeObj?.isAdminFreeUpgrade;
         const vaultBalance = hasLeftChild ? vaultUnit : 0;
 
         // สถานะรหัสหลัก (MANUAL ID vs AUTO ID) ต้องยึดตามรหัสหลักใน Rank 1 (`r1MainId`) เสมอ ไม่ใช่เลขลำดับโหนดใน Rank 2-18 (`n.id`)
@@ -7429,6 +7443,72 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           }
         };
 
+        const handleTriggerModalAdminFreeUpgrade = async (rankToUpgrade: number) => {
+          if (isModalUpgrading || currentMaxR >= 18 || rankToUpgrade <= currentMaxR || rankToUpgrade > 18) return;
+          setIsModalUpgrading(true);
+          setModalUpgradeError(null);
+          const pendingMsg = `กำลังดำเนินการ Admin อัพ Rank ฟรี ให้ Main ID #${targetMainId} สู่ Rank ${rankToUpgrade} (ไม่จ่ายค่าคอมเมื่อวางซ้าย • ระบบโคลนนิ่งทำงานปกติเมื่อวางขวา)...`;
+          setModalUpgradeMessage(pendingMsg);
+          const toastId = `modal-admin-free-upgrade-${targetMainId}-${rankToUpgrade}-${Date.now()}`;
+          emitTransactionToast({
+            id: toastId,
+            status: 'pending',
+            step: `Admin อัพ Rank ฟรี สู่ Rank ${rankToUpgrade}...`,
+            message: pendingMsg,
+          });
+          try {
+            let confirmedTxHash: string | null = null;
+            let okMsg = `✅ Admin Upgrade สำเร็จ! อัพ Rank รหัส #${targetMainId} ให้ฟรีสู่ Rank ${rankToUpgrade} เรียบร้อยแล้ว (ไม่จ่ายค่าคอมเมื่อวางซ้าย และระบบโคลนนิ่งทำงานปกติเมื่อวางขวา)`;
+            if (onAdminUpgrade) {
+              const resObj = await onAdminUpgrade(String(targetMainId), rankToUpgrade);
+              if (resObj && resObj.success === false) {
+                throw new Error(resObj.error || 'Admin Upgrade ล้มเหลว');
+              }
+              if (resObj?.message) okMsg = resObj.message;
+              confirmedTxHash = resObj?.txHash || null;
+            } else {
+              const res = await fetch('/api/admin/upgrade-rank', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  mainId: targetMainId,
+                  targetUser: modalNode.owner,
+                  targetRank: rankToUpgrade,
+                }),
+              });
+              const data = await res.json();
+              if (!res.ok || !data?.success) {
+                throw new Error(data?.error || 'Admin Upgrade ล้มเหลว');
+              }
+              if (data?.message) okMsg = data.message;
+              confirmedTxHash = data?.txHash || null;
+            }
+            setModalUpgradeMessage(okMsg);
+            emitTransactionToast({
+              id: toastId,
+              status: 'confirmed',
+              step: `Admin อัพ Rank ${rankToUpgrade} ฟรี สำเร็จ!`,
+              message: okMsg,
+              txHash: confirmedTxHash,
+            });
+            setModalUpgradeTargetRank(Math.min(18, rankToUpgrade + 1));
+            await fetchPerIdHistoryForModal();
+            await loadOnChainTree(selectedRank, { silent: true, forceSync: false });
+          } catch (err: any) {
+            const errMsg = err?.message || 'Admin อัพ Rank ฟรี ล้มเหลว';
+            setModalUpgradeMessage(null);
+            setModalUpgradeError(errMsg);
+            emitTransactionToast({
+              id: toastId,
+              status: 'error',
+              step: `Admin อัพ Rank ${rankToUpgrade} ฟรี ไม่สำเร็จ`,
+              message: errMsg,
+            });
+          } finally {
+            setIsModalUpgrading(false);
+          }
+        };
+
         const titleBadge = modalNode.isExtraLineage
           ? modalNode.extraMainLabel || `Extra R${modalNode.rank}-#${modalNode.originMainId}`
           : modalNode.isClone
@@ -7783,6 +7863,21 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                                 : `🚀 อัพเกรด Main ID #${targetMainId} สู่ Rank ${effectiveTargetRank} (${targetRankPrice.toLocaleString()} USDT)`}
                             </span>
                           </button>
+                          {(isAuthorizedAdminWallet(userAddress) || Boolean(onAdminUpgrade)) && (
+                            <button
+                              type="button"
+                              disabled={isModalUpgrading}
+                              onClick={() => handleTriggerModalAdminFreeUpgrade(effectiveTargetRank)}
+                              className="w-full py-2 px-3 rounded-xl bg-gradient-to-r from-rose-600 via-pink-600 to-amber-500 hover:from-rose-500 hover:via-pink-500 hover:to-amber-400 text-white font-extrabold text-xs shadow-lg shadow-rose-950/60 border border-rose-300/40 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                            >
+                              <Shield className="w-4 h-4 text-amber-200 shrink-0" />
+                              <span>
+                                {isModalUpgrading
+                                  ? `กำลังอัพ Rank ฟรีให้ #${targetMainId}...`
+                                  : `👑 Admin อัพ Rank ฟรี #${targetMainId} สู่ Rank ${effectiveTargetRank} (ไม่จ่ายค่าคอม • โคลนนิ่งปกติ)`}
+                              </span>
+                            </button>
+                          )}
                         </div>
                       )}
 

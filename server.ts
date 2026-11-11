@@ -686,6 +686,7 @@ export interface IndexedTreeNode {
   rawNodeVault: number;
   reconciledBaseVault?: number;
   isLocalUpgrade?: boolean;
+  isAdminFreeUpgrade?: boolean;
   originType?: 'MANUAL_REGISTER' | 'AUTO_MAIN' | 'AUTO_NEW_MAIN' | 'AUTO_EXTRA' | 'CLONE';
   createdAt?: string;
 }
@@ -975,6 +976,7 @@ function rebuildDatabaseRewardLogsFromNodes() {
     for (const id of sortedIds) {
       if (id <= 1) continue;
       const child = nodesMap.get(id)!;
+      if (child.isAdminFreeUpgrade) continue; // เงื่อนไข Admin อัพ Rank ฟรี: ไม่จ่ายค่าคอมเมื่อวางฝั่งซ้าย
       const parent = nodesMap.get(child.parentId);
       if (!parent || parent.leftChild !== id) continue;
 
@@ -1325,6 +1327,10 @@ function rebuildDatabaseUpgradeLogsFromNodes() {
 
       if (node.isClone) {
         upgradeMode = 'CLONE_IN_RANK';
+        vaultDeducted = 0;
+        walletPaid = 0;
+      } else if (node.isAdminFreeUpgrade) {
+        upgradeMode = 'MANUAL_WALLET';
         vaultDeducted = 0;
         walletPaid = 0;
       } else if (node.isExtraId) {
@@ -1746,6 +1752,8 @@ function reconcileRankTreeLinks(nodes: IndexedTreeNode[]): IndexedTreeNode[] {
             nodeVault: 0,
             rawNodeVault: 0,
             reconciledBaseVault: 0,
+            isLocalUpgrade: template?.isLocalUpgrade,
+            isAdminFreeUpgrade: template?.isAdminFreeUpgrade,
             originType: 'CLONE',
           };
 
@@ -2172,9 +2180,10 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
           sn.id === correspMain.id ||
           (sn.isClone && (snOrig === correspMain.id || snOrig === mNode.id));
         if (isSameMain && sn.leftChild > 0) {
+          const lcNode = rList.find((rn) => rn.id === sn.leftChild);
+          if (lcNode?.isAdminFreeUpgrade) continue;
           leftCount++;
           if (r > 1) {
-            const lcNode = rList.find((rn) => rn.id === sn.leftChild);
             if (lcNode && !lcNode.isClone && !lcNode.isExtraId) {
               const r1Orig = lcNode.originMainId || 0;
               if (r1Orig > mNode.id && r1Orig < 1_000_000) {
@@ -4303,7 +4312,7 @@ async function startApp() {
         }
 
         const localUpgradedNodes = realExisting.filter(
-          (n) => n.isLocalUpgrade && n.id > totalNodes
+          (n) => n.isLocalUpgrade || n.isAdminFreeUpgrade
         );
 
         const maxFetch = Math.max(totalNodes, 1);
@@ -4414,19 +4423,34 @@ async function startApp() {
           }
         }
 
-        // Re-attach any local database-upgraded nodes whose Main ID is not yet on-chain in this rank
+        // Re-attach any local/admin database-upgraded nodes (both Main IDs and their triggered Clones)
         for (const loc of localUpgradedNodes) {
-          const alreadyOnChain = Array.from(mergedMap.values()).some(
-            (n) =>
-              !n.isLocalUpgrade &&
-              !n.isClone &&
-              !n.isExtraId &&
-              !loc.isClone &&
-              n.originMainId === loc.originMainId
-          );
-          if (!alreadyOnChain && !mergedMap.has(loc.id)) {
-            mergedMap.set(loc.id, { ...loc });
+          const alreadyOnChain =
+            !loc.isClone &&
+            Array.from(mergedMap.values()).some(
+              (n) =>
+                !n.isLocalUpgrade &&
+                !n.isAdminFreeUpgrade &&
+                !n.isClone &&
+                !n.isExtraId &&
+                n.originMainId === loc.originMainId
+            );
+          if (alreadyOnChain) continue;
+
+          const locCopy = { ...loc };
+          if (mergedMap.has(locCopy.id)) {
+            const maxCurrentId = Array.from(mergedMap.keys()).reduce((m, k) => Math.max(m, k), 0);
+            locCopy.id = maxCurrentId + 1;
           }
+          const parentInMerged = mergedMap.get(locCopy.parentId);
+          if (parentInMerged) {
+            if (parentInMerged.leftChild === 0 || parentInMerged.leftChild === loc.id) {
+              parentInMerged.leftChild = locCopy.id;
+            } else if (parentInMerged.rightChild === 0 || parentInMerged.rightChild === loc.id) {
+              parentInMerged.rightChild = locCopy.id;
+            }
+          }
+          mergedMap.set(locCopy.id, locCopy);
         }
 
         const fetchedNodes = reconcileRankTreeLinks(Array.from(mergedMap.values()));
@@ -4588,10 +4612,12 @@ async function startApp() {
         const ranksToSync = new Set<number>([1, 2, 3, 4, 5, 6]);
         countsResults.forEach((c, idx) => {
           const r = idx + 1;
-          matrixDB.rankCounts[r] = c;
           const currentNodes = matrixDB.nodesByRank[r] || [];
+          const hasLocalOrAdminNodes = currentNodes.some(
+            (n) => n.isLocalUpgrade || n.isAdminFreeUpgrade
+          );
           if (c <= 1) {
-            if (currentNodes.length > 1) {
+            if (currentNodes.length > 1 && !hasLocalOrAdminNodes) {
               const rootNode = currentNodes.find((n) => n.id === 1) || {
                 id: 1,
                 rank: r,
@@ -4612,8 +4638,12 @@ async function startApp() {
               rootNode.leftChild = 0;
               rootNode.rightChild = 0;
               matrixDB.nodesByRank[r] = [rootNode];
+              matrixDB.rankCounts[r] = 1;
+            } else {
+              matrixDB.rankCounts[r] = Math.max(c, currentNodes.length || 1);
             }
           } else {
+            matrixDB.rankCounts[r] = Math.max(c, hasLocalOrAdminNodes ? currentNodes.length : c);
             ranksToSync.add(r);
           }
         });
@@ -4735,7 +4765,10 @@ async function startApp() {
                 rn.id === correspNode.id ||
                 (rn.isClone && (rn.originMainId === correspNode.id || rn.originMainId === mainIdNum));
               if (isSameMain && rn.leftChild > 0) {
-                leftCountInR++;
+                const lcNode = rNodes.find((x) => x.id === rn.leftChild);
+                if (!lcNode?.isAdminFreeUpgrade) {
+                  leftCountInR++;
+                }
               }
             }
             grossR4To27OutsideWindow = Number(
@@ -4794,9 +4827,12 @@ async function startApp() {
               ) || n;
           const isExtraLineage = !n.isClone ? Boolean(n.isExtraId) : Boolean(n.isExtraId || nOrig.isExtraId);
           if (isExtraLineage && n.leftChild > 0) {
-            const spawnerMainId = resolveExtraSpawnerMainId(nOrig);
-            if (spawnerMainId === mainIdNum) {
-              extraLeftVaultBonusGross = Number((extraLeftVaultBonusGross + rUnitVault).toFixed(4));
+            const lcNode = rNodes.find((x) => x.id === n.leftChild);
+            if (!lcNode?.isAdminFreeUpgrade) {
+              const spawnerMainId = resolveExtraSpawnerMainId(nOrig);
+              if (spawnerMainId === mainIdNum) {
+                extraLeftVaultBonusGross = Number((extraLeftVaultBonusGross + rUnitVault).toFixed(4));
+              }
             }
           }
         }
@@ -5593,6 +5629,7 @@ async function startApp() {
         for (const id of sortedIds) {
           if (id <= 1) continue;
           const child = nodesMap.get(id)!;
+          if (child.isAdminFreeUpgrade) continue; // เงื่อนไข Admin อัพ Rank ฟรี: ไม่จ่ายค่าคอมและไม่เข้ากระปุกเมื่อวางฝั่งซ้าย
           const parent = nodesMap.get(child.parentId);
           if (!parent || parent.leftChild !== id) continue;
 
@@ -6611,7 +6648,7 @@ async function startApp() {
       const nodesMap = new Map<number, IndexedTreeNode>();
       for (const n of rNodes) nodesMap.set(n.id, n);
       for (const n of rNodes) {
-        if (n.id <= 1) continue;
+        if (n.id <= 1 || n.isAdminFreeUpgrade) continue;
         const p = nodesMap.get(n.parentId);
         if (p && p.leftChild === n.id) {
           allSellTotalUsdt = Number((allSellTotalUsdt + allSellAmt).toFixed(4));
@@ -7351,12 +7388,21 @@ async function startApp() {
   app.post('/api/admin/upgrade-rank', async (req: Request, res: Response) => {
     try {
       const { targetUser, targetRank, targetMainId, mainId } = req.body;
-      const rawInput = String(targetMainId || mainId || targetUser || '').trim().replace(/^#/, '');
+      const rawInput = String(targetMainId || mainId || targetUser || '')
+        .trim()
+        .replace(/^(id\s*|#)+/i, '')
+        .trim();
       if (!rawInput) {
-        return res.status(400).json({ success: false, error: 'กรุณากรอกเลข ID หลัก (เช่น 5 หรือ #5) หรือ Wallet Address' });
+        return res.status(400).json({
+          success: false,
+          error: 'กรุณากรอกเลข ID หลัก (เช่น 5 หรือ #5) หรือ Wallet Address',
+        });
       }
 
       const parsedRank = Math.min(18, Math.max(2, Number(targetRank) || 2));
+      if (!matrixDB.nodesByRank[1] || matrixDB.nodesByRank[1].length <= 1) {
+        await syncRankIntoDatabase(1, CONTRACT_ADDRESS, false).catch(() => {});
+      }
       const r1Nodes = matrixDB.nodesByRank[1] || [];
       let userR1Node: IndexedTreeNode | undefined;
       let normalizedUser = '';
@@ -7365,19 +7411,42 @@ async function startApp() {
         const idNum = parseInt(rawInput, 10);
         userR1Node = r1Nodes.find((n) => n.id === idNum && !n.isClone && !n.isExtraId);
         if (!userR1Node) {
-          return res.status(404).json({ success: false, error: `ไม่พบรหัสหลัก ID #${idNum} ในระบบ Rank 1` });
+          // Allow upgrading any existing Rank 1 node if user passed its ID
+          userR1Node = r1Nodes.find((n) => n.id === idNum);
+        }
+        if (!userR1Node) {
+          return res.status(404).json({
+            success: false,
+            error: `ไม่พบรหัสสมาชิก ID #${idNum} ในระบบ Rank 1`,
+          });
+        }
+        if (userR1Node.isClone && userR1Node.originMainId > 0) {
+          const origMain = r1Nodes.find((n) => n.id === userR1Node!.originMainId && !n.isClone);
+          if (origMain) userR1Node = origMain;
         }
         normalizedUser = userR1Node.owner.toLowerCase();
       } else if (ethers.isAddress(rawInput)) {
         normalizedUser = rawInput.toLowerCase();
-        userR1Node = r1Nodes.find((n) => n.owner.toLowerCase() === normalizedUser && !n.isClone && !n.isExtraId);
+        const ownedMains = r1Nodes.filter(
+          (n) => n.owner.toLowerCase() === normalizedUser && !n.isClone && !n.isExtraId
+        );
+        userR1Node = ownedMains[0] || r1Nodes.find((n) => n.owner.toLowerCase() === normalizedUser);
+        if (!userR1Node) {
+          return res.status(404).json({
+            success: false,
+            error: `ไม่พบรหัสสมาชิกของกระเป๋า ${rawInput} ในระบบ Rank 1 (กรุณาสมัคร Rank 1 ก่อนอัพ Rank)`,
+          });
+        }
       } else {
-        return res.status(400).json({ success: false, error: 'กรุณาระบุเลข ID หลัก (เช่น 5 หรือ #5) หรือ Wallet Address ที่ถูกต้อง' });
+        return res.status(400).json({
+          success: false,
+          error: 'กรุณาระบุเลข ID หลัก (เช่น 5 หรือ #5) หรือ Wallet Address ที่ถูกต้อง',
+        });
       }
 
-      const mainIdNum = userR1Node ? userR1Node.id : 1;
-      const sponsorAddr = userR1Node?.directSponsor || matrixDB.systemWallets.rootOwner;
-      const r1SponsorMainId = userR1Node?.directSponsorNodeId || 1;
+      const mainIdNum = userR1Node.id;
+      const sponsorAddr = userR1Node.directSponsor || matrixDB.systemWallets.rootOwner;
+      const r1SponsorMainId = userR1Node.directSponsorNodeId > 0 ? userR1Node.directSponsorNodeId : 1;
 
       // Determine current rank specifically for THIS Main ID (`mainIdNum`), not across the whole wallet
       let currentRank = mainIdNum === 1 ? 18 : 1;
@@ -7394,19 +7463,46 @@ async function startApp() {
       if (parsedRank <= currentRank) {
         return res.json({
           success: true,
-          message: `รหัสหลัก #${mainIdNum} อยู่ใน Rank ${currentRank} อยู่แล้ว (เป้าหมายคือ Rank ${parsedRank})`,
+          source: 'DATABASE_ADMIN_UPGRADE',
+          targetUser: normalizedUser,
+          mainId: mainIdNum,
+          fromRank: currentRank,
           currentRank,
           targetRank: parsedRank,
-          mainId: mainIdNum,
+          upgradedRanks: [],
+          createdNodes: [],
+          clonesCreated: 0,
+          message: `รหัสหลัก #${mainIdNum} อยู่ใน Rank ${currentRank} อยู่แล้ว (เป้าหมายคือ Rank ${parsedRank})`,
         });
       }
 
       const upgradedRanks: number[] = [];
       const createdNodes: any[] = [];
       let clonesCreated = 0;
+      const rootOwner = matrixDB.nodesByRank[1]?.[0]?.owner || matrixDB.systemWallets.rootOwner;
 
       for (let r = currentRank + 1; r <= parsedRank; r++) {
-        if (!matrixDB.nodesByRank[r]) matrixDB.nodesByRank[r] = [];
+        if (!matrixDB.nodesByRank[r] || matrixDB.nodesByRank[r].length === 0) {
+          matrixDB.nodesByRank[r] = [
+            {
+              id: 1,
+              rank: r,
+              owner: rootOwner,
+              directSponsor: ethers.ZeroAddress,
+              parentId: 0,
+              leftChild: 0,
+              rightChild: 0,
+              isClone: false,
+              isExtraId: false,
+              originMainId: 1,
+              cloneRound: 0,
+              directSponsorNodeId: 0,
+              nodeVault: 0,
+              rawNodeVault: 0,
+              reconciledBaseVault: 0,
+            },
+          ];
+        }
         const rList = matrixDB.nodesByRank[r].filter((n) => !n.isSyntheticExtra);
         matrixDB.nodesByRank[r] = rList;
 
@@ -7429,11 +7525,12 @@ async function startApp() {
           const parentIdNum = Number(placement.parentId) || 1;
           const maxId = rList.reduce((m, n) => Math.max(m, n.id), 0);
           const nextIdInRank = maxId + 1;
+          const nowIso = new Date().toISOString();
 
           const newNode: IndexedTreeNode = {
             id: nextIdInRank,
             rank: r,
-            owner: userR1Node?.owner || normalizedUser,
+            owner: userR1Node.owner || normalizedUser,
             directSponsor: sponsorAddr,
             parentId: parentIdNum,
             leftChild: 0,
@@ -7447,6 +7544,8 @@ async function startApp() {
             rawNodeVault: 0,
             reconciledBaseVault: 0,
             isLocalUpgrade: true,
+            isAdminFreeUpgrade: true,
+            createdAt: nowIso,
           };
 
           rList.push(newNode);
@@ -7454,6 +7553,7 @@ async function startApp() {
           const rightSlotTriggerQueue: IndexedTreeNode[] = [];
           if (parentNode) {
             if (placement.isLeft) {
+              // เงื่อนไข Admin อัพ Rank ฟรี: วางฝั่งซ้าย ไม่จ่ายค่าคอม 30%/30%/4%/1% และไม่บวก 35% เข้ากระปุก
               parentNode.leftChild = nextIdInRank;
             } else {
               parentNode.rightChild = nextIdInRank;
@@ -7461,7 +7561,7 @@ async function startApp() {
             }
           }
 
-          // ถ้าลงฝั่งขวา (!placement.isLeft) -> รันระบบโคลนนิ่ง Rebirth ให้ Parent ตามเงื่อนไข!
+          // ถ้าลงฝั่งขวา (!placement.isLeft) -> รันระบบโคลนนิ่ง Rebirth ให้ Parent ตามเงื่อนไขปกติ!
           let cloneSafety = 0;
           while (rightSlotTriggerQueue.length > 0 && cloneSafety < 25) {
             cloneSafety++;
@@ -7489,6 +7589,8 @@ async function startApp() {
               rawNodeVault: 0,
               reconciledBaseVault: 0,
               isLocalUpgrade: true,
+              isAdminFreeUpgrade: true,
+              createdAt: new Date().toISOString(),
             };
             rList.push(cloneNode);
             clonesCreated++;
@@ -7507,25 +7609,33 @@ async function startApp() {
           matrixDB.rankCounts[r] = matrixDB.nodesByRank[r].length;
 
           upgradedRanks.push(r);
-          createdNodes.push({ rank: r, nodeId: nextIdInRank, side: placement.isLeft ? 'LEFT' : 'RIGHT' });
+          createdNodes.push({
+            rank: r,
+            nodeId: nextIdInRank,
+            parentId: parentIdNum,
+            side: placement.isLeft ? 'LEFT' : 'RIGHT',
+          });
         }
       }
 
       reconcileAutoExtraIdsAcrossRanks();
       rebuildDatabaseRewardLogsFromNodes();
       rebuildDatabaseUpgradeLogsFromNodes();
+      matrixDB.lastSyncedAt = new Date().toISOString();
       saveMatrixDBToDisk(true);
+      broadcastAllMatrixUpdates();
 
       res.json({
         success: true,
         source: 'DATABASE_ADMIN_UPGRADE',
+        mainId: mainIdNum,
         targetUser: normalizedUser,
         fromRank: currentRank,
         targetRank: parsedRank,
         upgradedRanks,
         createdNodes,
         clonesCreated,
-        message: `✅ Admin Upgrade สำเร็จ! อัพ Rank ให้ฟรีจาก Rank ${currentRank} สู่ Rank ${parsedRank} เรียบร้อยแล้ว (ไม่จ่ายค่าคอม และระบบโคลนนิ่งทำงานปกติ)`,
+        message: `✅ Admin Upgrade สำเร็จ! อัพ Rank รหัส #${mainIdNum} ให้ฟรีจาก Rank ${currentRank} สู่ Rank ${parsedRank} เรียบร้อยแล้ว (ไม่จ่ายค่าคอมเมื่อวางซ้าย และระบบโคลนนิ่งทำงานปกติเมื่อวางขวา)`,
       });
     } catch (err: any) {
       console.error('Error in /api/admin/upgrade-rank:', err);

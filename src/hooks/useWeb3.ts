@@ -1934,24 +1934,29 @@ export function useWeb3() {
   );
 
   const handleAdminUpgrade = async (targetUserOrId: string, targetRank: number) => {
-    const raw = String(targetUserOrId || '').trim().replace(/^#/, '');
+    const raw = String(targetUserOrId || '')
+      .trim()
+      .replace(/^(id\s*|#)+/i, '')
+      .trim();
     const isId = /^\d+$/.test(raw);
     const isAddr = ethers.isAddress(raw);
     if (!isId && !isAddr) {
+      const errMsg = 'กรุณากรอกเลข ID หลัก (เช่น 5 หรือ #5) หรือ Wallet Address ที่ถูกต้อง';
       setTxState({
         isLoading: false,
         step: '',
         txHash: null,
-        error: 'กรุณากรอกเลข ID หลัก (เช่น 5 หรือ #5) หรือ Wallet Address ที่ถูกต้อง',
+        error: errMsg,
         successMessage: null,
       });
-      return;
+      return { success: false, error: errMsg };
     }
 
+    const parsedTargetRank = Math.min(18, Math.max(2, Number(targetRank) || 2));
     const targetLabel = isId ? `รหัสหลัก #${raw}` : `${raw.substring(0, 8)}...`;
     setTxState({
       isLoading: true,
-      step: `กำลังส่งคำสั่ง Admin Upgrade Rank ${targetRank} ให้ ${targetLabel}...`,
+      step: `กำลังดำเนินการ Admin อัพ Rank ฟรี สู่ Rank ${parsedTargetRank} ให้ ${targetLabel}...`,
       txHash: null,
       error: null,
       successMessage: null,
@@ -1959,97 +1964,122 @@ export function useWeb3() {
 
     try {
       let txHash: string | null = null;
-      let usedApi = false;
       let resolvedAddress = isAddr ? raw : '';
+      let resolvedMainId = isId ? parseInt(raw, 10) : 0;
 
-      // ถ้าป้อนเป็นเลข ID ลอง lookup address เพื่อเตรียมส่ง on-chain
-      if (isId && !resolvedAddress) {
-        try {
-          const lRes = await fetch(`/api/admin/lookup-target?query=${raw}`);
-          const lData = await lRes.json();
-          if (lData.success && lData.found && lData.owner) {
-            resolvedAddress = lData.owner;
-          }
-        } catch {
-          // ignore lookup error
+      // Lookup target details from database first
+      try {
+        const lRes = await fetch(`/api/admin/lookup-target?query=${encodeURIComponent(raw)}`);
+        const lData = await lRes.json();
+        if (lData?.success && lData?.found) {
+          if (lData.owner) resolvedAddress = lData.owner;
+          if (lData.mainId) resolvedMainId = Number(lData.mainId);
         }
+      } catch {
+        // ignore lookup error
       }
 
-      // 1. ลองทำรายการ On-Chain หากเชื่อมต่อกระเป๋า Admin อยู่
-      if (window.ethereum) {
+      // 1. ลองตรวจสอบด้วย staticCall ก่อน หากเชื่อมต่อกระเป๋าOwner และสัญญารองรับการอัพฟรีโดยไม่ revert
+      if (window.ethereum && account) {
         try {
-          const { signer } = await ensureWalletAndBscTestnet();
+          const { signer, userAddr } = await ensureWalletAndBscTestnet();
           const currentContract = contractAddressRef.current || CONTRACT_ADDRESS;
           const matrixContract = new ethers.Contract(currentContract, MATRIX_ABI, signer);
+          const contractOwner = await matrixContract.owner().catch(() => '');
 
-          let tx;
-          if (isId && typeof matrixContract.adminUpgradeRankForMainId === 'function') {
-            tx = await matrixContract.adminUpgradeRankForMainId(parseInt(raw, 10), targetRank);
-          } else if (resolvedAddress && ethers.isAddress(resolvedAddress)) {
-            tx = await matrixContract.adminUpgradeRank(resolvedAddress, targetRank);
-          } else {
-            usedApi = true;
-          }
+          if (
+            contractOwner &&
+            userAddr &&
+            contractOwner.toLowerCase() === userAddr.toLowerCase()
+          ) {
+            let canExecuteOnChain = false;
+            const mainIdToCall = resolvedMainId > 0 ? resolvedMainId : isId ? parseInt(raw, 10) : 0;
+            try {
+              if (mainIdToCall > 0 && typeof matrixContract.adminUpgradeRankForMainId?.staticCall === 'function') {
+                await matrixContract.adminUpgradeRankForMainId.staticCall(mainIdToCall, parsedTargetRank);
+                canExecuteOnChain = true;
+              } else if (resolvedAddress && typeof matrixContract.adminUpgradeRank?.staticCall === 'function') {
+                await matrixContract.adminUpgradeRank.staticCall(resolvedAddress, parsedTargetRank);
+                canExecuteOnChain = true;
+              }
+            } catch {
+              // Deployed contract reverted on staticCall (e.g. old bytecode attempting USDT transfer with 0 balance)
+              canExecuteOnChain = false;
+            }
 
-          if (tx) {
-            setTxState((prev) => ({
-              ...prev,
-              step: 'กำลังรอการยืนยันธุรกรรม Admin Upgrade บนบล็อกเชน...',
-              txHash: tx.hash,
-            }));
-            const receipt = await tx.wait();
-            txHash = receipt.hash;
+            if (canExecuteOnChain) {
+              const tx =
+                mainIdToCall > 0
+                  ? await matrixContract.adminUpgradeRankForMainId(mainIdToCall, parsedTargetRank)
+                  : await matrixContract.adminUpgradeRank(resolvedAddress, parsedTargetRank);
+              setTxState((prev) => ({
+                ...prev,
+                step: 'กำลังรอการยืนยันธุรกรรม Admin Upgrade บนบล็อกเชน...',
+                txHash: tx.hash,
+              }));
+              const receipt = await tx.wait();
+              txHash = receipt?.hash || tx.hash;
+            }
           }
         } catch (onChainErr: any) {
-          console.warn('[Admin Upgrade] On-chain attempt notice, falling back to Admin System API:', onChainErr);
-          usedApi = true;
+          console.warn('[Admin Upgrade] On-chain notice, applying Admin Free Rank Upgrade rule via API:', onChainErr);
         }
-      } else {
-        usedApi = true;
       }
 
-      // 2. หาก On-chain ไม่สำเร็จ หรือเรียกผ่าน API
-      if (usedApi || !txHash) {
-        const res = await fetch('/api/admin/upgrade-rank', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            targetUser: resolvedAddress || (isAddr ? raw : undefined),
-            mainId: isId ? parseInt(raw, 10) : undefined,
-            targetRank,
-          }),
-        });
-        const data = await res.json();
-        if (!data.success) {
-          throw new Error(data.error || 'Admin upgrade API failed');
-        }
+      // 2. บันทึกและประมวลผลตามเงื่อนไข Admin อัพ Rank ฟรี (ไม่จ่ายค่าคอมเมื่อวางซ้าย • ระบบโคลนนิ่งทำงานปกติเมื่อวางขวา)
+      const res = await fetch('/api/admin/upgrade-rank', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          targetUser: resolvedAddress || (isAddr ? raw : undefined),
+          mainId: resolvedMainId > 0 ? resolvedMainId : isId ? parseInt(raw, 10) : undefined,
+          targetRank: parsedTargetRank,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Admin upgrade API failed');
+      }
+      if (!txHash) {
         txHash = data.txHash || `0xadmin${Date.now().toString(16)}`;
       }
+
+      const finalMsg =
+        data.message ||
+        `✅ Admin Upgrade สำเร็จ! อัปเกรด ${targetLabel} เป็น Rank ${parsedTargetRank} ฟรี (ไม่จ่ายค่าคอมเมื่อวางซ้าย และระบบโคลนนิ่งทำงานปกติเมื่อวางขวา)`;
 
       setTxState({
         isLoading: false,
         step: 'สำเร็จ!',
         txHash,
         error: null,
-        successMessage: `✅ Admin Upgrade สำเร็จ! อัปเกรด ${targetLabel} เป็น Rank ${targetRank} ฟรี (ไม่จ่ายค่าคอม และระบบโคลนนิ่งทำงานปกติ)`,
+        successMessage: finalMsg,
       });
 
-      if (!usedApi && txHash) {
-        await fetch('/api/db/sync', { method: 'POST' }).catch(() => {});
-      }
       if (account) await refreshUserData(account);
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('matrix:tree:refresh'));
       }
+      return {
+        success: true,
+        txHash,
+        message: finalMsg,
+        data,
+      };
     } catch (err: any) {
       console.error('handleAdminUpgrade error:', err);
+      const errMsg = err?.message || 'Admin Upgrade ล้มเหลว';
       setTxState({
         isLoading: false,
         step: '',
         txHash: null,
-        error: err.message || 'Admin Upgrade ล้มเหลว',
+        error: errMsg,
         successMessage: null,
       });
+      return {
+        success: false,
+        error: errMsg,
+      };
     }
   };
 

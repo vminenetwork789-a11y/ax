@@ -613,7 +613,7 @@ contract FractalFlowMatrix27 is Ownable, ReentrancyGuard {
         if (isL) {
             _distributeLeftChildRewards(1, newNodeId, pId, msg.sender);
         } else {
-            _triggerRightChildClone(1, pId, false);
+            _triggerRightChildClone(1, pId, false, true);
         }
     }
 
@@ -632,7 +632,8 @@ contract FractalFlowMatrix27 is Ownable, ReentrancyGuard {
         uint256 _r1MainId,
         address _user,
         uint8 _targetRank,
-        bool _isAuto
+        bool _isAuto,
+        bool _payCommission
     ) internal returns (uint256 newNodeId) {
         if (mainIdCurrentMaxRank[_r1MainId] < _targetRank) {
             mainIdCurrentMaxRank[_r1MainId] = _targetRank;
@@ -667,15 +668,19 @@ contract FractalFlowMatrix27 is Ownable, ReentrancyGuard {
         nodeToR1MainId[_targetRank][newNodeId] = _r1MainId;
 
         if (isLeft) {
-            _distributeLeftChildRewards(_targetRank, newNodeId, parentId, _user);
+            if (_payCommission) {
+                _distributeLeftChildRewards(_targetRank, newNodeId, parentId, _user);
+            }
         } else {
-            _triggerRightChildClone(_targetRank, parentId, false);
+            _triggerRightChildClone(_targetRank, parentId, false, _payCommission);
         }
 
-        if (_r1MainId < 1_000_000) {
-            checkAndProcessAutoNewMainIdForNode(_r1MainId);
+        if (_payCommission) {
+            if (_r1MainId < 1_000_000) {
+                checkAndProcessAutoNewMainIdForNode(_r1MainId);
+            }
+            checkAndProcessAutoExtraIdForNode(_user, _targetRank, _r1MainId);
         }
-        checkAndProcessAutoExtraIdForNode(_user, _targetRank, _r1MainId);
 
         emit RankUpgraded(_user, _targetRank - 1, _targetRank, newNodeId, _isAuto);
     }
@@ -705,7 +710,7 @@ contract FractalFlowMatrix27 is Ownable, ReentrancyGuard {
             usdt.safeTransferFrom(msg.sender, address(this), targetPrice - savedInVault);
         }
 
-        _applyRankUpgrade(_r1MainId, msg.sender, _targetRank, false);
+        _applyRankUpgrade(_r1MainId, msg.sender, _targetRank, false, true);
     }
 
     function upgradeRank(uint8 _targetRank) external {
@@ -725,7 +730,7 @@ contract FractalFlowMatrix27 is Ownable, ReentrancyGuard {
         if (_targetRank <= currentRank) revert ErrRankActive();
 
         for (uint8 r = currentRank + 1; r <= _targetRank; r++) {
-            _applyRankUpgrade(_r1MainId, targetUser, r, false);
+            _applyRankUpgrade(_r1MainId, targetUser, r, false, false);
         }
     }
 
@@ -799,7 +804,7 @@ contract FractalFlowMatrix27 is Ownable, ReentrancyGuard {
         if (isLeft) {
             if (_payCommission) _distributeLeftChildRewards(_rank, newNodeId, parentId, _owner);
         } else {
-            _triggerRightChildClone(_rank, parentId, false);
+            _triggerRightChildClone(_rank, parentId, false, _payCommission);
         }
         return newNodeId;
     }
@@ -810,7 +815,8 @@ contract FractalFlowMatrix27 is Ownable, ReentrancyGuard {
         address _sponsor,
         uint256 _cloneOriginMainId,
         uint256 _targetSponsorNodeId,
-        uint256 _r1SponsorId
+        uint256 _r1SponsorId,
+        bool _payCommission
     ) internal returns (uint256) {
         (uint256 parentId, bool isLeft, uint8 round) = _findClonePlacement(_rank, _sponsor, _targetSponsorNodeId, _cloneOriginMainId);
         uint256 newNodeId = _insertRawNode(_rank, _owner, _sponsor, parentId, isLeft, true, false);
@@ -826,9 +832,11 @@ contract FractalFlowMatrix27 is Ownable, ReentrancyGuard {
         nodeCloneTotalCount[_rank][originId] += 1;
 
         if (isLeft) {
-            _distributeLeftChildRewards(_rank, newNodeId, parentId, _owner);
+            if (_payCommission) {
+                _distributeLeftChildRewards(_rank, newNodeId, parentId, _owner);
+            }
         } else {
-            _triggerRightChildClone(_rank, parentId, false);
+            _triggerRightChildClone(_rank, parentId, false, _payCommission);
         }
         return newNodeId;
     }
@@ -897,7 +905,7 @@ contract FractalFlowMatrix27 is Ownable, ReentrancyGuard {
         if (isLeft) {
             _distributeLeftChildRewards(_rank, newNodeId, parentId, _owner);
         } else {
-            _triggerRightChildClone(_rank, parentId, _isExtraId);
+            _triggerRightChildClone(_rank, parentId, _isExtraId, true);
         }
         return newNodeId;
     }
@@ -1005,7 +1013,9 @@ contract FractalFlowMatrix27 is Ownable, ReentrancyGuard {
         uint256 _amount
     ) internal {
         if (_amount > 0 && _toAddr != address(0)) {
-            usdt.safeTransfer(_toAddr, _amount);
+            if (usdt.balanceOf(address(this)) >= _amount) {
+                usdt.safeTransfer(_toAddr, _amount);
+            }
             emit RewardDistributed(_fromId, _toId, _toAddr, _rank, _rewardType, _amount);
         }
     }
@@ -1136,7 +1146,7 @@ contract FractalFlowMatrix27 is Ownable, ReentrancyGuard {
         _payAndEmit(_fromNodeId, 0, botWallet, _rank, "BOT", (_totalAmount * 1) / 100);
     }
 
-    function _triggerRightChildClone(uint8 _rank, uint256 _parentId, bool /* _isExtraId */) internal {
+    function _triggerRightChildClone(uint8 _rank, uint256 _parentId, bool /* _isExtraId */, bool _payCommission) internal {
         address parentOwner = rankNodes[_rank][_parentId].owner;
         address parentSponsor = rankNodes[_rank][_parentId].directSponsor;
         if (parentSponsor == address(0)) parentSponsor = users[parentOwner].sponsor;
@@ -1162,7 +1172,7 @@ contract FractalFlowMatrix27 is Ownable, ReentrancyGuard {
             targetSponsorNodeId = getMainIdNodeInRank(r1SponsorId, _rank);
         }
 
-        _createAndPlaceCloneNode(_rank, parentOwner, parentSponsor, cloneOriginMainId, targetSponsorNodeId, r1SponsorId);
+        _createAndPlaceCloneNode(_rank, parentOwner, parentSponsor, cloneOriginMainId, targetSponsorNodeId, r1SponsorId, _payCommission);
     }
 
     function _checkAndProcessAutoUpgradeForMainId(uint256 _r1MainId, address _user, uint8 _currentRank, uint256 _triggerNodeId) internal {
@@ -1175,7 +1185,7 @@ contract FractalFlowMatrix27 is Ownable, ReentrancyGuard {
         if (currentVault >= nextPrice && getMainIdNodeInRank(_r1MainId, nextRank) == 0) {
             uint256 remainder = currentVault - nextPrice;
             _clearVaultsForMainId(_r1MainId, _currentRank, nextPrice);
-            uint256 newNodeId = _applyRankUpgrade(_r1MainId, _user, nextRank, true);
+            uint256 newNodeId = _applyRankUpgrade(_r1MainId, _user, nextRank, true, true);
 
             _payAndEmit(_triggerNodeId, newNodeId, _user, nextRank - 1, "VAULT_OVERFLOW", remainder);
         }

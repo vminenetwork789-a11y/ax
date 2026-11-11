@@ -519,6 +519,7 @@ export default function App() {
               onApproveUsdt={handleApproveUsdt}
               onRegisterWithSponsor={handleRegister}
               onUpgradeToRank={handleUpgradeRank}
+              onAdminUpgrade={isAdminUser ? handleAdminUpgrade : undefined}
               onOpenRegisterModal={() => setIsRegisterModalOpen(true)}
               currentUserRank={profile?.currentMaxRank || 1}
               lastTxSuccess={txState.successMessage}

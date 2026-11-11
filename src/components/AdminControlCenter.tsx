@@ -65,7 +65,9 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
   const [activeSection, setActiveSection] = useState<
     'all' | 'owner' | 'autopools' | 'allsell' | 'database' | 'members'
   >('all');
-  const [execMode, setExecMode] = useState<'server_key' | 'web3_wallet'>('server_key');
+  const [execMode, setExecMode] = useState<'server_key' | 'web3_wallet'>(
+    typeof window !== 'undefined' && (window as any).ethereum ? 'web3_wallet' : 'server_key'
+  );
   const [customAdminPk, setCustomAdminPk] = useState<string>('');
   const [overview, setOverview] = useState<any | null>(null);
   const [loadingOverview, setLoadingOverview] = useState<boolean>(false);
@@ -166,24 +168,28 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
     setWithdrawTokenAddr(usdtAddress || '');
   }, [contractAddress, usdtAddress]);
 
-  // Live lookup for Admin Upgrade target
-  useEffect(() => {
-    const q = upgradeTarget.trim().replace(/^#/, '');
+  const refreshTargetLookup = useCallback(async (queryStr?: string) => {
+    const q = (queryStr ?? upgradeTarget).trim().replace(/^(id\s*|#)+/i, '').trim();
     if (!q) {
       setTargetLookup(null);
       return;
     }
-    const timer = setTimeout(async () => {
-      try {
-        const res = await fetch(`/api/admin/lookup-target?query=${encodeURIComponent(q)}`);
-        const data = await res.json();
-        setTargetLookup(data);
-      } catch {
-        setTargetLookup(null);
-      }
-    }, 200);
-    return () => clearTimeout(timer);
+    try {
+      const res = await fetch(`/api/admin/lookup-target?query=${encodeURIComponent(q)}`);
+      const data = await res.json();
+      setTargetLookup(data);
+    } catch {
+      setTargetLookup(null);
+    }
   }, [upgradeTarget]);
+
+  // Live lookup for Admin Upgrade target
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      refreshTargetLookup();
+    }, 180);
+    return () => clearTimeout(timer);
+  }, [upgradeTarget, refreshTargetLookup]);
 
   // Load Rank Inspector Data
   useEffect(() => {
@@ -328,37 +334,18 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
     }
   };
 
-  const handleExecuteAdminUpgrade = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const raw = upgradeTarget.trim().replace(/^#/, '');
-    const targetRankNum = Math.min(18, Math.max(2, parseInt(upgradeRank, 10) || 2));
+  const executeDirectAdminFreeUpgrade = async (rawTarget: string, targetRankNum: number) => {
+    const raw = rawTarget.trim().replace(/^(id\s*|#)+/i, '').trim();
     if (!raw) return;
 
-    if (upgradeExecutionMode === 'onchain') {
-      const isId = /^\d+$/.test(raw);
-      if (isId) {
-        await executeContractAdminFunction(
-          'adminUpgradeRankForMainId',
-          { mainId: Number(raw), targetRank: targetRankNum },
-          `อัปเกรดรหัสหลัก #${raw} สู่ Rank ${targetRankNum} บน Smart Contract`
-        );
-      } else {
-        await executeContractAdminFunction(
-          'adminUpgradeRank',
-          { targetUser: raw, targetRank: targetRankNum },
-          `อัปเกรดกระเป๋า ${raw.substring(0, 8)}... สู่ Rank ${targetRankNum} บน Smart Contract`
-        );
-      }
-      return;
-    }
+    setActionStatus({
+      type: 'loading',
+      title: 'กำลังดำเนินการ Admin อัพ Rank ฟรี...',
+      message: `กำลังอัพเกรด ${/^\d+$/.test(raw) ? `รหัสหลัก #${raw}` : raw} สู่ Rank ${targetRankNum} ฟรี (ไม่จ่ายค่าคอมเมื่อวางซ้าย • โคลนนิ่งทำงานปกติเมื่อวางขวา)`,
+    });
 
-    if (upgradeExecutionMode === 'db_only') {
-      setActionStatus({
-        type: 'loading',
-        title: 'กำลังอัปเกรดแรงค์ในระบบผัง Database...',
-        message: `อัปเกรด ${raw} ไปยัง Rank ${targetRankNum} ฟรี`,
-      });
-      try {
+    try {
+      if (upgradeExecutionMode === 'db_only') {
         const res = await fetch('/api/admin/upgrade-rank', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -371,28 +358,56 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'อัปเกรดไม่สำเร็จ');
         await fetchAdminOverview();
+        await refreshTargetLookup(raw);
         onRefreshOnChainData();
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('matrix:tree:refresh'));
         }
+        setUpgradeRank(String(Math.min(18, targetRankNum + 1)));
         setActionStatus({
           type: 'success',
-          title: 'Admin Upgrade สำเร็จ!',
+          title: '✅ Admin อัพ Rank ฟรี สำเร็จ!',
           message: data.message,
         });
-      } catch (err: any) {
-        setActionStatus({
-          type: 'error',
-          title: 'Admin Upgrade ล้มเหลว',
-          message: err.message,
-        });
+        return;
       }
-      return;
-    }
 
-    // Both (On-chain + DB fallback via useWeb3.handleAdminUpgrade)
-    await onAdminUpgrade(raw, targetRankNum);
-    setTimeout(() => fetchAdminOverview(), 1200);
+      // Both or Onchain: call onAdminUpgrade (which attempts on-chain staticCall/tx and applies the Admin Free Rank Upgrade rule)
+      const result = await onAdminUpgrade(raw, targetRankNum);
+      if (result && result.success === false) {
+        throw new Error(result.error || 'Admin Upgrade ล้มเหลว');
+      }
+
+      await fetchAdminOverview();
+      await refreshTargetLookup(raw);
+      onRefreshOnChainData();
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('matrix:tree:refresh'));
+      }
+      setUpgradeRank(String(Math.min(18, targetRankNum + 1)));
+      setActionStatus({
+        type: 'success',
+        title: '✅ Admin อัพ Rank ฟรี สำเร็จ!',
+        message:
+          result?.message ||
+          `อัปเกรด ${/^\d+$/.test(raw) ? `รหัสหลัก #${raw}` : raw} สู่ Rank ${targetRankNum} ฟรีเรียบร้อยแล้ว (ไม่จ่ายค่าคอมเมื่อวางซ้าย • ระบบโคลนนิ่งทำงานปกติเมื่อวางขวา)`,
+        txHash: result?.txHash,
+      });
+    } catch (err: any) {
+      setActionStatus({
+        type: 'error',
+        title: 'Admin Upgrade ล้มเหลว',
+        message: err?.message || 'เกิดข้อผิดพลาดในการอัพเกรดแรงค์',
+      });
+    }
+  };
+
+  const handleExecuteAdminUpgrade = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const raw = upgradeTarget.trim().replace(/^(id\s*|#)+/i, '').trim();
+    const targetRankNum = Math.min(18, Math.max(2, parseInt(upgradeRank, 10) || 2));
+    if (!raw) return;
+    await executeDirectAdminFreeUpgrade(raw, targetRankNum);
   };
 
   const filteredMainIds = (overview?.mainIds || []).filter((m: any) => {
@@ -1754,7 +1769,7 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
                               </button>
                               <button
                                 type="button"
-                                onClick={() => onAdminUpgrade(String(m.mainId), nextR)}
+                                onClick={() => executeDirectAdminFreeUpgrade(String(m.mainId), nextR)}
                                 disabled={isLoading}
                                 className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-[11px] cursor-pointer whitespace-nowrap disabled:opacity-50"
                               >
