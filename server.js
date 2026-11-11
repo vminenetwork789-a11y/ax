@@ -135,7 +135,7 @@ process.on("uncaughtException", (err) => {
 var { Pool } = pg;
 var __filename = fileURLToPath(import.meta.url);
 var __dirname = path.dirname(__filename);
-var PORT = Number(process.env.PORT) || 3e3;
+var PORT = 3000;
 var CONFIG_FILE_PATH = path.resolve(__dirname, "prisma/contract-config.json");
 var DEFAULT_SYSTEM_CONFIG = {
   contractAddress: process.env.OVERRIDE_CONTRACT_ADDRESS || process.env.CONTRACT_ADDRESS || "0x0742E9581217Cc8Cd6De2Aa80b7Ce9aD881DEEe3",

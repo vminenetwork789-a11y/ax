@@ -2691,8 +2691,10 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           }
 
           const deducted = Math.max(0, Number((totalGross1To3 - totalRem1To3).toFixed(4)));
+          const r1EntryPrice = RANK_PRICES_USDT[0] || 10;
+          const r1UnitVault = Number((r1EntryPrice * 0.35).toFixed(4));
           const maxPossibleSpawns =
-            window5Start > 1 ? Math.floor((deducted + 1e-4) / 5) : 0;
+            window5Start > 1 ? Math.floor((deducted + 1e-4) / r1EntryPrice) : 0;
           let spawnedCount = 0;
           if (r1Id === 1) {
             spawnedCount = maxPossibleSpawns;
@@ -2703,11 +2705,11 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           } else if (maxPossibleSpawns > 0) {
             // สำหรับ Main ID > 1 ที่ไม่ได้ใช้ยอดอัปเกรด
             for (let c = maxPossibleSpawns; c >= 1; c--) {
-              const pool2GrossNeeded = Number((totalRem1To3 + c * 5).toFixed(4));
-              const units175 = pool2GrossNeeded / 1.75;
+              const pool2GrossNeeded = Number((totalRem1To3 + c * r1EntryPrice).toFixed(4));
+              const unitsVault = pool2GrossNeeded / r1UnitVault;
               if (
                 pool2GrossNeeded <= totalGross1To3 + 0.01 &&
-                Math.abs(units175 - Math.round(units175)) < 0.01
+                Math.abs(unitsVault - Math.round(unitsVault)) < 0.01
               ) {
                 spawnedCount = c;
                 break;
@@ -2726,13 +2728,13 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             crossRankBreakdownText.set(
               r1Id,
               `สะสม R1-R3: ${totalGross1To3.toFixed(2)} U (${grossParts.join(' + ')}) • ออก Auto ID -${(
-                spawnedCount * 5
+                spawnedCount * r1EntryPrice
               ).toFixed(2)} U • คงเหลือ ${remParts.join(', ')} U`
             );
           } else if (spawnedCount > 0) {
             crossRankBreakdownText.set(
               r1Id,
-              `สะสม ${totalGross1To3.toFixed(2)} U • ออก Auto ID -${(spawnedCount * 5).toFixed(2)} U`
+              `สะสม ${totalGross1To3.toFixed(2)} U • ออก Auto ID -${(spawnedCount * r1EntryPrice).toFixed(2)} U`
             );
           }
 

@@ -146,7 +146,7 @@ export function calculateMatrixUpgradePath(
   const targetMainId = Math.max(1, Math.floor(targetMainIdInput || 2));
   const prospectiveRank = Math.min(18, Math.max(2, Math.floor(prospectiveRankInput || 10)));
 
-  // Deep-clone all 27 rank maps so simulation never mutates live UI state
+  // Deep-clone all 18 rank maps so simulation never mutates live UI state
   const simRanks = new Map<number, Map<number, SimRawNode>>();
   for (let r = 1; r <= 18; r++) {
     const srcMap = multiRankSnapshots.get(r);
@@ -201,8 +201,35 @@ export function calculateMatrixUpgradePath(
     });
   }
 
+  // Initialize totalClonesSpawned on existing non-clone nodes from on-chain clone counts
+  for (let r = 1; r <= 18; r++) {
+    const snapR = simRanks.get(r)!;
+    for (const n of snapR.values()) {
+      if (n.isClone) continue;
+      if (typeof n.totalClonesSpawned === 'number' && n.totalClonesSpawned > 0) continue;
+      const r1MainTag = n.originMainId > 0 ? n.originMainId : n.id;
+      let cloneCnt = 0;
+      for (const c of snapR.values()) {
+        if (!c.isClone) continue;
+        if (n.isExtraId) {
+          if (c.originMainId === n.id && c.owner.toLowerCase() === n.owner.toLowerCase()) {
+            cloneCnt++;
+          }
+        } else {
+          if (
+            (c.originMainId === n.id || c.originMainId === r1MainTag) &&
+            c.owner.toLowerCase() === n.owner.toLowerCase()
+          ) {
+            cloneCnt++;
+          }
+        }
+      }
+      n.totalClonesSpawned = cloneCnt;
+    }
+  }
+
   const getCorrespondingNodeInRank = (r1Main: number, rank: number): number => {
-    if (rank === 1) return r1Main;
+    if (rank === 1) return r1Map.has(r1Main) ? r1Main : 0;
     const snapR = simRanks.get(rank);
     if (!snapR) return 0;
     for (const n of snapR.values()) {
@@ -231,6 +258,13 @@ export function calculateMatrixUpgradePath(
     if (rank === 1 && !n.isClone && !n.isExtraId) return n.id;
     if (n.isExtraId) {
       return n.directSponsorNodeId > 0 ? n.directSponsorNodeId : 1;
+    }
+    // Check if this node is a clone of a local Extra ID in the same rank
+    if (n.isClone && n.originMainId > 0 && snapR?.has(n.originMainId)) {
+      const localOrig = snapR.get(n.originMainId)!;
+      if (!localOrig.isClone && localOrig.isExtraId && localOrig.owner.toLowerCase() === n.owner.toLowerCase()) {
+        return localOrig.directSponsorNodeId > 0 ? localOrig.directSponsorNodeId : 1;
+      }
     }
     const orig = n.originMainId > 0 ? n.originMainId : n.id;
     if (rank === 1) return orig;
@@ -283,8 +317,6 @@ export function calculateMatrixUpgradePath(
     }
   }
   // Subtract already-deducted Extra ID left-child bonus on-chain
-  // กฎเหล็ก Smart Contract: ต้นทุน Extra ID (totalExtraCost) จะถูกหักออกจากยอดสะสม R4..18 ก่อนเสมอ (deductedFromR4To27)
-  // ส่วนที่เกินจาก R4..18 เท่านั้นจึงจะนำมาหักออกจาก grossBonus (เม็ดซ้าย Extra ID)
   for (const r1Node of r1Map.values()) {
     if (r1Node.isClone || r1Node.isExtraId) continue;
     const mId = r1Node.id;
@@ -410,8 +442,10 @@ export function calculateMatrixUpgradePath(
     if (rem > 1e-6) {
       const curRank = getMainCurrentRank(r1Main);
       const [w5Start] = getFiveRankWindow(curRank);
-      const endR = curRank === 18 ? 27 : w5Start > 4 ? w5Start - 1 : 4;
-      deductVaultRange(r1Main, 4, endR, rem);
+      if (curRank === 18 || w5Start > 4) {
+        const endR = curRank === 18 ? 18 : w5Start - 1;
+        deductVaultRange(r1Main, 4, endR, rem);
+      }
     }
   };
 
@@ -439,6 +473,11 @@ export function calculateMatrixUpgradePath(
     isExtra: boolean
   ): { parentId: number; isLeft: boolean } => {
     const snapR = simRanks.get(rank)!;
+    if (sponsorNodeId <= 0 || !snapR.has(sponsorNodeId)) {
+      if (rank > 1) {
+        return findFirstAvailableUnder(rank, 1);
+      }
+    }
     let primaryNodeId = sponsorNodeId > 0 && snapR.has(sponsorNodeId) ? sponsorNodeId : 1;
     const primaryNode = snapR.get(primaryNodeId)!;
     const originTag = primaryNode.originMainId > 0 ? primaryNode.originMainId : primaryNodeId;
@@ -491,6 +530,7 @@ export function calculateMatrixUpgradePath(
       directSponsor,
       originMainId: originMainId > 0 ? originMainId : newId,
       directSponsorNodeId,
+      totalClonesSpawned: 0,
       nodeVault: 0,
       originType,
     };
@@ -510,6 +550,7 @@ export function calculateMatrixUpgradePath(
   const steps: UpgradePathStepResult[] = [];
   const allExtraIdEvents: ExtraIdGenerationEvent[] = [];
   const allAutoIdEvents: ChainReactionEvent[] = [];
+  const r1EntryPrice = RANK_PRICES_USDT[0] || 10;
 
   // Recursive helper for processing left-child rewards, right-child clones, Auto IDs, and Extra IDs
   const processNodePlacementCascade = (
@@ -526,17 +567,24 @@ export function calculateMatrixUpgradePath(
     const snapR = simRanks.get(rank)!;
     const parentNode = snapR.get(parentId);
     if (!parentNode) return;
-    const price = RANK_PRICES_USDT[rank - 1] || 5;
+    const price = RANK_PRICES_USDT[rank - 1] || 10;
 
     if (isLeft) {
-      const parentOriginNode = !parentNode.isClone
-        ? parentNode
-        : Array.from(snapR.values()).find(
-            (x) =>
-              !x.isClone &&
-              x.owner.toLowerCase() === parentNode.owner.toLowerCase() &&
-              x.id === parentNode.originMainId
-          ) || parentNode;
+      let parentOriginNode = parentNode;
+      if (parentNode.isClone) {
+        const byOrig = snapR.get(parentNode.originMainId);
+        if (byOrig && !byOrig.isClone && byOrig.owner.toLowerCase() === parentNode.owner.toLowerCase()) {
+          parentOriginNode = byOrig;
+        } else {
+          parentOriginNode =
+            Array.from(snapR.values()).find(
+              (x) =>
+                !x.isClone &&
+                x.owner.toLowerCase() === parentNode.owner.toLowerCase() &&
+                x.id === parentNode.originMainId
+            ) || parentNode;
+        }
+      }
       const isParentExtraLineage = parentNode.isExtraId || parentOriginNode.isExtraId;
 
       if (isParentExtraLineage) {
@@ -586,11 +634,16 @@ export function calculateMatrixUpgradePath(
     } else {
       // Right child triggers 100% Rebirth Clone of parent's origin node
       const originR1Main = resolveR1MainForNode(rank, parentNode.id);
-      const localCorrespId =
-        !parentNode.isClone
-          ? parentNode.id
-          : getCorrespondingNodeInRank(originR1Main, rank) || parentNode.originMainId || parentNode.id;
-      const originNode = snapR.get(localCorrespId) || parentNode;
+      let originNode = parentNode;
+      if (parentNode.isClone) {
+        const byOrig = snapR.get(parentNode.originMainId);
+        if (byOrig && !byOrig.isClone && byOrig.owner.toLowerCase() === parentNode.owner.toLowerCase()) {
+          originNode = byOrig;
+        } else {
+          const localCorrespId = getCorrespondingNodeInRank(originR1Main, rank) || parentNode.originMainId || parentNode.id;
+          originNode = snapR.get(localCorrespId) || parentNode;
+        }
+      }
 
       const curClonesCount = originNode.totalClonesSpawned || 0;
       const roundIdx = curClonesCount % 2; // 0 => Round 1 (Sponsor), 1 => Round 2 (Global BFS under Root #1)
@@ -602,7 +655,7 @@ export function calculateMatrixUpgradePath(
       if (originNode.isExtraId) {
         const spMain = originNode.directSponsorNodeId > 0 ? originNode.directSponsorNodeId : 1;
         lockedR1SponsorId = spMain;
-        sponsorTargetInRank = getCorrespondingNodeInRank(spMain, rank) || 1;
+        sponsorTargetInRank = getCorrespondingNodeInRank(spMain, rank);
       } else {
         const r1OrigNode = r1Map.get(originR1Main);
         const r1SpId = r1OrigNode?.directSponsorNodeId || 1;
@@ -610,7 +663,7 @@ export function calculateMatrixUpgradePath(
         if (r1OrigNode?.directSponsor) {
           lockedR1SponsorAddr = r1OrigNode.directSponsor;
         }
-        sponsorTargetInRank = getCorrespondingNodeInRank(r1SpId, rank) || 1;
+        sponsorTargetInRank = originR1Main === 1 ? 1 : getCorrespondingNodeInRank(r1SpId, rank);
       }
 
       const cloneSpot =
@@ -667,11 +720,12 @@ export function calculateMatrixUpgradePath(
     if (w5Start <= 1) return;
 
     const autoPool = calcAutoIdPool(r1Main);
-    if (autoPool + 1e-6 < 5) return;
+    if (autoPool + 1e-6 < r1EntryPrice) return;
 
-    const count = Math.floor((autoPool + 1e-6) / 5);
+    const count = Math.min(2, Math.floor((autoPool + 1e-6) / r1EntryPrice));
+    if (count <= 0) return;
     const endR = w5Start > 3 ? 3 : w5Start - 1;
-    deductVaultRange(r1Main, 1, endR, count * 5);
+    deductVaultRange(r1Main, 1, endR, count * r1EntryPrice);
 
     const mNode = r1Map.get(r1Main)!;
     for (let i = 0; i < count; i++) {
@@ -695,7 +749,7 @@ export function calculateMatrixUpgradePath(
         ownerMainId: r1Main,
         parentId: spot.parentId,
         side: spot.isLeft ? 'LEFT' : 'RIGHT',
-        descriptionTh: `กระปุก Auto ID ของ Main #${r1Main} ครบ 10.00 U → แตก Auto ID R1-#${autoNode.id} วางใต้ R1-#${spot.parentId} (${spot.isLeft ? 'ซ้าย' : 'ขวา'})`,
+        descriptionTh: `กระปุก Auto ID ของ Main #${r1Main} ครบ ${r1EntryPrice.toFixed(2)} U → แตก Auto ID R1-#${autoNode.id} วางใต้ R1-#${spot.parentId} (${spot.isLeft ? 'ซ้าย' : 'ขวา'})`,
       };
       stepChainEvents.push(autoEv);
       allAutoIdEvents.push(autoEv);
@@ -776,6 +830,7 @@ export function calculateMatrixUpgradePath(
           stepChainEvents,
           depth + 1
         );
+        break;
       }
       if (!spawned) break;
     }
@@ -788,16 +843,16 @@ export function calculateMatrixUpgradePath(
   let totalTargetPaidFromWallet = 0;
 
   for (let r = startSimulatedRank; r <= prospectiveRank; r++) {
-    const rankPrice = RANK_PRICES_USDT[r - 1] || 5;
+    const rankPrice = RANK_PRICES_USDT[r - 1] || 10;
     totalTargetCost = Number((totalTargetCost + rankPrice).toFixed(4));
 
     // Smart Contract rule: Deduct available vault in 5-rank window BEFORE upgrade towards rankPrice
     const targetUpgradePoolBefore = calcUpgradeRankPool(targetMainId);
     const paidFromVault = Number(Math.min(targetUpgradePoolBefore, rankPrice).toFixed(4));
     const paidFromWallet = Number(Math.max(0, rankPrice - paidFromVault).toFixed(4));
-    if (targetUpgradePoolBefore > 0) {
+    if (paidFromVault > 0) {
       const [wStart, wEnd] = getFiveRankWindow(getMainCurrentRank(targetMainId));
-      deductVaultRange(targetMainId, wStart, wEnd, targetUpgradePoolBefore);
+      deductVaultRange(targetMainId, wStart, wEnd, paidFromVault);
     }
     totalTargetPaidFromVault = Number((totalTargetPaidFromVault + paidFromVault).toFixed(4));
     totalTargetPaidFromWallet = Number((totalTargetPaidFromWallet + paidFromWallet).toFixed(4));
@@ -805,7 +860,7 @@ export function calculateMatrixUpgradePath(
     const sponsorExtraBefore = calcExtraIdPool(sponsorMainId);
     const targetExtraBefore = calcExtraIdPool(targetMainId);
 
-    const sponsorNodeInRank = getCorrespondingNodeInRank(sponsorMainId, r) || 1;
+    const sponsorNodeInRank = getCorrespondingNodeInRank(sponsorMainId, r);
     const spot = findPlacementSpot(r, sponsorNodeInRank, false);
     const parentNodeBefore = simRanks.get(r)!.get(spot.parentId)!;
     const parentR1Main = resolveR1MainForNode(r, spot.parentId);
@@ -824,14 +879,27 @@ export function calculateMatrixUpgradePath(
     );
 
     const vaultAddedToParent = spot.isLeft ? Number((rankPrice * 0.35).toFixed(4)) : 0;
-    const sponsorExtraAfterGain =
-      spot.isLeft && parentR1Main === sponsorMainId && r >= 4
-        ? Number((sponsorExtraBefore + vaultAddedToParent).toFixed(4))
-        : sponsorExtraBefore;
-    const targetExtraAfterGain =
-      spot.isLeft && parentR1Main === targetMainId && r >= 4
-        ? Number((targetExtraBefore + vaultAddedToParent).toFixed(4))
-        : targetExtraBefore;
+    const sponsorCurRank = getMainCurrentRank(sponsorMainId);
+    const [sponsorW5Start] = getFiveRankWindow(sponsorCurRank);
+    const isSponsorExtraGain =
+      spot.isLeft &&
+      parentR1Main === sponsorMainId &&
+      r >= 4 &&
+      (sponsorCurRank === 18 || r < sponsorW5Start);
+    const sponsorExtraAfterGain = isSponsorExtraGain
+      ? Number((sponsorExtraBefore + vaultAddedToParent).toFixed(4))
+      : sponsorExtraBefore;
+
+    const targetCurRank = getMainCurrentRank(targetMainId);
+    const [targetW5Start] = getFiveRankWindow(targetCurRank);
+    const isTargetExtraGain =
+      spot.isLeft &&
+      parentR1Main === targetMainId &&
+      r >= 4 &&
+      (targetCurRank === 18 || r < targetW5Start);
+    const targetExtraAfterGain = isTargetExtraGain
+      ? Number((targetExtraBefore + vaultAddedToParent).toFixed(4))
+      : targetExtraBefore;
 
     const stepExtraEvents: ExtraIdGenerationEvent[] = [];
     const stepChainEvents: ChainReactionEvent[] = [];
@@ -1008,7 +1076,7 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
             nodeCode: `Auto R1-#${cr.nodeId}`,
             parentId: cr.parentId,
             side: cr.side,
-            rankPriceUsdt: 5,
+            rankPriceUsdt: RANK_PRICES_USDT[0] || 10,
             costOrDeduction: 'หัก 10.00 U จาก Auto Pool (R1-3)',
             descriptionTh: cr.descriptionTh,
           });
@@ -1170,9 +1238,10 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
               Math.min(18, calculation.currentOnChainRank + 1),
               Math.min(18, calculation.currentOnChainRank + 2),
               Math.min(18, calculation.currentOnChainRank + 3),
+              10,
+              12,
               15,
-              20,
-              27,
+              18,
             ]
               .filter((v, i, arr) => v > calculation.currentOnChainRank && arr.indexOf(v) === i)
               .slice(0, 5)
@@ -1255,8 +1324,8 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
                 <div className="space-y-0.5">
                   <div className="flex items-center justify-between">
                     <span className="text-slate-300">Main #{calculation.sponsorMainId} (Sponsor):</span>
-                    {calculation.sponsorFinalRank >= 27 ? (
-                      <span className="text-amber-300 font-bold">0.00 U (Max Rank R27 👑)</span>
+                    {calculation.sponsorFinalRank >= 18 ? (
+                      <span className="text-amber-300 font-bold">0.00 U (Max Rank R18 👑)</span>
                     ) : (
                       <span className="text-cyan-300 font-bold">
                         สะสม {calculation.finalSponsorUpgradePoolUsdt.toFixed(2)} / {calculation.sponsorNextRankPriceUsdt.toLocaleString()} U
@@ -1266,7 +1335,7 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
                   <div className="flex items-center justify-between text-[10px] text-slate-500">
                     <span>กรอบ 5 Rank: R{calculation.sponsorWindow5Range[0]}–R{calculation.sponsorWindow5Range[1]}</span>
                     <span className="text-slate-400">
-                      {calculation.sponsorFinalRank >= 27 ? 'ยอด 35% เข้า Extra ID Pool ทั้งหมด' : ''}
+                      {calculation.sponsorFinalRank >= 18 ? 'ยอด 35% (R4–R18) เข้า Extra ID Pool ทั้งหมด' : ''}
                     </span>
                   </div>
                 </div>
@@ -1276,8 +1345,8 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
                   <div className="flex items-center justify-between">
                     <span className="text-slate-200 font-bold">Main #{calculation.targetMainId} (Target):</span>
                     <span className="text-cyan-300 font-bold">
-                      {calculation.targetFinalRank >= 27
-                        ? '0.00 U (Max Rank R27 👑)'
+                      {calculation.targetFinalRank >= 18
+                        ? '0.00 U (Max Rank R18 👑)'
                         : `สะสมคงเหลือ ${calculation.finalTargetUpgradePoolUsdt.toFixed(2)} U`}
                     </span>
                   </div>
@@ -1340,7 +1409,7 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
                       <span className="text-emerald-400 ml-1">(แตกใหม่ +{calculation.sponsorAutoIdEvents.length} รหัส)</span>
                     ) : (
                       <span className="text-slate-400 font-normal text-[10px] ml-1">
-                        {calculation.finalSponsorAutoPoolUsdt >= 5
+                        {calculation.finalSponsorAutoPoolUsdt >= 10
                           ? ''
                           : `(ขาดอีก ${(10.0 - calculation.finalSponsorAutoPoolUsdt).toFixed(2)} U)`}
                       </span>
@@ -1355,7 +1424,7 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
                       <span className="text-emerald-400 ml-1">(แตกใหม่ +{calculation.targetAutoIdEvents.length} รหัส)</span>
                     ) : (
                       <span className="text-slate-400 font-normal text-[10px] ml-1">
-                        {calculation.finalTargetAutoPoolUsdt >= 5
+                        {calculation.finalTargetAutoPoolUsdt >= 10
                           ? ''
                           : `(ขาดอีก ${(10.0 - calculation.finalTargetAutoPoolUsdt).toFixed(2)} U)`}
                       </span>
@@ -1368,7 +1437,7 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
             {/* Extra ID Pool Summary */}
             <div className="rounded-lg bg-slate-950 border border-fuchsia-500/30 p-2.5 space-y-1">
               <div className="flex items-center justify-between text-fuchsia-300 font-bold">
-                <span>⚡ สรุปยอด Extra ID Pool (Rank 4-27)</span>
+                <span>⚡ สรุปยอด Extra ID Pool (Rank 4-18)</span>
                 <span className="text-[10px] text-slate-400 font-normal">เกณฑ์: ลูป R18→R2 แตก Extra ID</span>
               </div>
               <div className="space-y-1 font-mono text-[11px] pt-1 border-t border-slate-800/80">
@@ -1419,9 +1488,9 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
                     <th className="py-2.5 px-3 whitespace-nowrap">ขั้นที่ / Rank</th>
                     <th className="py-2.5 px-3 whitespace-nowrap">ตำแหน่งต่อสาย (Path)</th>
                     <th className="py-2.5 px-3 whitespace-nowrap">35% Vault ที่เกิดขึ้น</th>
-                    <th className="py-2.5 px-3 min-w-[190px]">Extra ID ที่เกิดในขั้นนี้ (R27→R2)</th>
+                    <th className="py-2.5 px-3 min-w-[190px]">Extra ID ที่เกิดในขั้นนี้ (R18→R2)</th>
                     <th className="py-2.5 px-3 min-w-[190px]">Auto ID ที่เกิดในขั้นนี้ (R1)</th>
-                    <th className="py-2.5 px-3 min-w-[230px]">โคลนนิ่ง ที่เกิดในขั้นนี้ (R1 → R27)</th>
+                    <th className="py-2.5 px-3 min-w-[230px]">โคลนนิ่ง ที่เกิดในขั้นนี้ (R1 → R18)</th>
                     <th className="py-2.5 px-3 whitespace-nowrap min-w-[160px]">คงเหลือ 3 กระปุก (Up / Auto / Extra)</th>
                   </tr>
                 </thead>
@@ -1501,22 +1570,31 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
                               <div className="text-emerald-400 font-bold">
                                 +{step.vaultAddedToParentUsdt.toFixed(2)} USDT → Main #{step.recipientMainId}
                               </div>
-                              {step.recipientMainId === calculation.sponsorMainId && step.upgradeRank >= 4 && (
-                                <div className="text-[10.5px] text-slate-300">
-                                  Extra Pool #{calculation.sponsorMainId}: {step.sponsorExtraPoolBeforeUsdt.toFixed(2)} +{' '}
-                                  {step.vaultAddedToParentUsdt.toFixed(2)} ={' '}
-                                  <strong className="text-amber-300">
-                                    {step.sponsorExtraPoolAfterGainUsdt.toFixed(2)} U
-                                  </strong>
-                                </div>
-                              )}
+                              {step.recipientMainId === calculation.sponsorMainId &&
+                                step.upgradeRank >= 4 &&
+                                step.sponsorExtraPoolAfterGainUsdt > step.sponsorExtraPoolBeforeUsdt && (
+                                  <div className="text-[10.5px] text-slate-300">
+                                    Extra Pool #{calculation.sponsorMainId}: {step.sponsorExtraPoolBeforeUsdt.toFixed(2)} +{' '}
+                                    {step.vaultAddedToParentUsdt.toFixed(2)} ={' '}
+                                    <strong className="text-amber-300">
+                                      {step.sponsorExtraPoolAfterGainUsdt.toFixed(2)} U
+                                    </strong>
+                                  </div>
+                                )}
+                              {step.recipientMainId === calculation.sponsorMainId &&
+                                step.upgradeRank <= 3 &&
+                                step. upgradeRank < step.window5RangeSponsor[0] && (
+                                  <div className="text-[10.5px] text-amber-300">
+                                    เข้า Auto ID Pool #{calculation.sponsorMainId} (+{step.vaultAddedToParentUsdt.toFixed(2)} U)
+                                  </div>
+                                )}
                             </div>
                           ) : (
                             <span className="text-slate-500">0.00 U (ฝั่งขวาเด้งโคลน)</span>
                           )}
                         </td>
 
-                        {/* Col 4: Extra IDs Spawned (R27 → R2) */}
+                        {/* Col 4: Extra IDs Spawned (R18 → R2) */}
                         <td className="py-3 px-3">
                           {step.extraIdsGenerated.length === 0 ? (
                             <span className="text-slate-500 text-[11px]">ไม่เกิด Extra ID ในขั้นนี้</span>
@@ -1598,7 +1676,7 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
                           )}
                         </td>
 
-                        {/* Col 6: โคลนนิ่ง ที่เกิดในขั้นนี้ (R1 → R27) */}
+                        {/* Col 6: โคลนนิ่ง ที่เกิดในขั้นนี้ (R1 → R18) */}
                         <td className="py-3 px-3">
                           {cloneEvents.length === 0 && vaultGainEvents.length === 0 ? (
                             <span className="text-slate-500 text-[11px]">ไม่เกิดโคลนในขั้นนี้</span>
@@ -1692,7 +1770,7 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
                   </span>
                 </div>
                 <div className="text-[11px] text-slate-400">
-                  รวบรวมรหัสใหม่ทุกประเภทที่เกิดขึ้นตามปฏิกิริยาลูกโซ่: ⚡ Extra ID (R27→R2), 🤖 Auto ID (R1), ✨ โคลนนิ่ง (R1→R27)
+                  รวบรวมรหัสใหม่ทุกประเภทที่เกิดขึ้นตามปฏิกิริยาลูกโซ่: ⚡ Extra ID (R18→R2), 🤖 Auto ID (R1), ✨ โคลนนิ่ง (R1→R18)
                 </div>
               </div>
 
@@ -1807,13 +1885,23 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
                         <td className="py-2.5 px-3 whitespace-nowrap">
                           <span
                             className={`font-bold ${
-                              item.ownerMainId === calculation.sponsorMainId ? 'text-fuchsia-300' : 'text-cyan-300'
+                              item.ownerMainId === calculation.sponsorMainId
+                                ? 'text-fuchsia-300'
+                                : item.ownerMainId === calculation.targetMainId
+                                ? 'text-cyan-300'
+                                : 'text-emerald-300'
                             }`}
                           >
                             Main ID #{item.ownerMainId}
                           </span>
                           <span className="text-[10px] text-slate-400 font-normal ml-1">
-                            ({item.ownerMainId === calculation.sponsorMainId ? 'Sponsor' : 'Target'})
+                            (
+                            {item.ownerMainId === calculation.sponsorMainId
+                              ? 'Sponsor'
+                              : item.ownerMainId === calculation.targetMainId
+                              ? 'Target'
+                              : 'Upline'}
+                            )
                           </span>
                         </td>
 

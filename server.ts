@@ -200,7 +200,7 @@ const { Pool } = pg;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PORT = Number(process.env.PORT) || 3000;
+const PORT = 3000;
 
 // Persistent Database / Store File for Contract Address & Settings
 const CONFIG_FILE_PATH = path.resolve(__dirname, 'prisma/contract-config.json');
@@ -2163,7 +2163,7 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
           : rList.find((x) => !x.isClone && !x.isExtraId && x.originMainId === mNode.id);
       if (!correspMain) continue;
 
-      const rUnitVault = Number(((RANK_PRICES_USDT[r - 1] || 5) * 0.35).toFixed(4));
+      const rUnitVault = Number(((RANK_PRICES_USDT[r - 1] || 10) * 0.35).toFixed(4));
       let leftCount = 0;
       for (const sn of rList) {
         const snOrig = sn.originMainId || sn.id;
@@ -2196,18 +2196,20 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
       }
     }
 
+    const r1EntryPrice = RANK_PRICES_USDT[0] || 10;
+    const r1UnitVault = Number((r1EntryPrice * 0.35).toFixed(4));
     const deducted = Math.max(0, Number((totalGross1To3 - totalRem1To3).toFixed(4)));
-    const maxPossibleSpawns = Math.floor((deducted + 1e-4) / 5);
+    const maxPossibleSpawns = Math.floor((deducted + 1e-4) / r1EntryPrice);
     let expectedSpawns = 0;
     if (mNode.id === 1) {
       expectedSpawns = maxPossibleSpawns;
     } else if (maxPossibleSpawns > 0) {
       for (let c = maxPossibleSpawns; c >= 1; c--) {
-        const pool2GrossNeeded = Number((totalRem1To3 + c * 5).toFixed(4));
-        const units175 = pool2GrossNeeded / 1.75;
+        const pool2GrossNeeded = Number((totalRem1To3 + c * r1EntryPrice).toFixed(4));
+        const unitsVault = pool2GrossNeeded / r1UnitVault;
         if (
           pool2GrossNeeded <= totalGross1To3 + 0.01 &&
-          Math.abs(units175 - Math.round(units175)) < 0.01
+          Math.abs(unitsVault - Math.round(unitsVault)) < 0.01
         ) {
           expectedSpawns = c;
           break;
@@ -2224,7 +2226,7 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
   const ownerAllMainsMap = new Map<string, number[]>();
   const simAutoVaultByMain = new Map<number, number>();
   const spawnedCountByMain = new Map<number, number>();
-  const r1EntryPrice = RANK_PRICES_USDT[0] || 5;
+  const r1EntryPrice = RANK_PRICES_USDT[0] || 10;
 
   for (const n of sortedR1) {
     if (!n.isClone && !n.isExtraId) {
