@@ -10,7 +10,8 @@
     "build:hostinger": "vite build && esbuild server.ts --bundle --platform=node --packages=external --format=esm --outfile=server.js",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "set-contract": "tsx scripts/set-contract.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

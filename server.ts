@@ -4005,7 +4005,10 @@ async function startApp() {
 
       matrixDB = createEmptyMatrixDB(CONTRACT_ADDRESS, USDT_ADDRESS);
       saveMatrixDBToDisk(true);
-      syncAllMatrixDatabase(CONTRACT_ADDRESS, true).catch(() => {});
+      broadcastAllMatrixUpdates();
+      syncAllMatrixDatabase(CONTRACT_ADDRESS, true)
+        .then(() => broadcastAllMatrixUpdates())
+        .catch(() => {});
 
       // Re-initialize listener with new contract address
       try {
@@ -4029,7 +4032,10 @@ async function startApp() {
       const resetConfig = updateContractConfigInDB(DEFAULT_SYSTEM_CONFIG);
       matrixDB = createEmptyMatrixDB(CONTRACT_ADDRESS, USDT_ADDRESS);
       saveMatrixDBToDisk(true);
-      syncAllMatrixDatabase(CONTRACT_ADDRESS, true).catch(() => {});
+      broadcastAllMatrixUpdates();
+      syncAllMatrixDatabase(CONTRACT_ADDRESS, true)
+        .then(() => broadcastAllMatrixUpdates())
+        .catch(() => {});
       try {
         startEventListener();
       } catch (e) {

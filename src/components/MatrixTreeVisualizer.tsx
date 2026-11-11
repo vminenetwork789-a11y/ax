@@ -5626,9 +5626,17 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
 
         {/* Row 2: Contract Address Tinted Badge, Live WebSocket Tinted Badge & Auto-Extend Status */}
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="inline-flex items-center text-[11px] font-mono font-semibold text-[#15803D] bg-[#DCFCE7] border border-emerald-200/90 dark:text-emerald-400 dark:bg-emerald-950/40 dark:border-emerald-500/30 px-2.5 py-0.5 rounded-lg">
-            Contract: {(contractAddress || CONTRACT_ADDRESS).slice(0, 6)}...{(contractAddress || CONTRACT_ADDRESS).slice(-4)}
-          </span>
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new CustomEvent('matrix:open-contract-switcher'))}
+            className="inline-flex items-center gap-1.5 text-[11px] font-mono font-semibold text-[#15803D] bg-[#DCFCE7] hover:bg-emerald-200/80 border border-emerald-200/90 dark:text-emerald-400 dark:bg-emerald-950/40 dark:hover:bg-emerald-900/60 dark:border-emerald-500/30 px-2.5 py-0.5 rounded-lg transition cursor-pointer"
+            title="คลิกเพื่อตั้งค่าหรือเปลี่ยน Smart Contract Address ใหม่"
+          >
+            <span>Contract: {(contractAddress || CONTRACT_ADDRESS).slice(0, 6)}...{(contractAddress || CONTRACT_ADDRESS).slice(-4)}</span>
+            <span className="font-sans font-bold text-[10px] px-1.5 py-0.2 rounded bg-white/80 dark:bg-slate-900/80 text-[#2563EB] dark:text-indigo-300 border border-emerald-300/60 dark:border-emerald-500/40">
+              ✏️ เปลี่ยนสัญญา
+            </span>
+          </button>
           <button
             type="button"
             onClick={wsManualReconnect}

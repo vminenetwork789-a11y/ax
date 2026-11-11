@@ -5,6 +5,7 @@ import { RegisterSection } from './components/RegisterSection';
 import { MatrixTreeVisualizer } from './components/MatrixTreeVisualizer';
 import { EventLogsSection } from './components/EventLogsSection';
 import { DeployContractModal } from './components/DeployContractModal';
+import { QuickContractSwitcherModal } from './components/QuickContractSwitcherModal';
 import { AuthAndOnboardingGate } from './components/AuthAndOnboardingGate';
 import { AdminControlCenter } from './components/AdminControlCenter';
 import { CONTRACT_ADDRESS, USDT_ADDRESS, isAuthorizedAdminWallet } from './contracts/config';
@@ -23,11 +24,18 @@ export default function App() {
     return 'light';
   });
   const [isDeployModalOpen, setIsDeployModalOpen] = useState<boolean>(false);
+  const [isContractSwitcherOpen, setIsContractSwitcherOpen] = useState<boolean>(false);
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState<boolean>(false);
   const [selectedInspectRank, setSelectedInspectRank] = useState<number>(1);
   const [, setSelectedVaultBalance] = useState<string>('0.00 USDT');
   const [bypassGateToDashboard, setBypassGateToDashboard] = useState<boolean>(false);
   const [isAdminView, setIsAdminView] = useState<boolean>(false);
+
+  useEffect(() => {
+    const handleOpenSwitcher = () => setIsContractSwitcherOpen(true);
+    window.addEventListener('matrix:open-contract-switcher', handleOpenSwitcher);
+    return () => window.removeEventListener('matrix:open-contract-switcher', handleOpenSwitcher);
+  }, []);
 
   useEffect(() => {
     if (typeof document !== 'undefined') {
@@ -271,123 +279,145 @@ export default function App() {
     disconnectWallet();
   };
 
+  const contractSwitcherModal = (
+    <QuickContractSwitcherModal
+      isOpen={isContractSwitcherOpen}
+      onClose={() => setIsContractSwitcherOpen(false)}
+      language={language}
+      contractAddress={contractAddress || CONTRACT_ADDRESS}
+      usdtAddress={usdtAddress || USDT_ADDRESS}
+      onUpdateContractAddress={updateSmartContractAddress}
+      onResetContractAddress={resetSmartContractAddress}
+      onOpenDeployModal={() => setIsDeployModalOpen(true)}
+    />
+  );
+
   // Show Login Gate when no wallet is connected, or Onboarding Registration Form when wallet is not registered
   // (unless user is an Admin or bypassed gate)
   if (!bypassGateToDashboard && !(isAdminUser && isAdminView)) {
     if (!account) {
       return (
-        <AuthAndOnboardingGate
-          mode="login"
-          language={language}
-          onToggleLanguage={() => setLanguage(language === 'th' ? 'en' : 'th')}
-          theme={theme}
-          onToggleTheme={toggleTheme}
-          account={account}
-          detectedBrowserWallet={detectedBrowserWallet}
-          chainId={chainId}
-          isBscTestnet={isBscTestnet}
-          isConnecting={isConnecting}
-          isLoadingProfile={isLoadingProfile}
-          profile={profile}
-          usdtBalance={usdtBalance}
-          bnbBalance={bnbBalance}
-          allowance={allowance}
-          contractAddress={contractAddress || CONTRACT_ADDRESS}
-          usdtAddress={usdtAddress || USDT_ADDRESS}
-          txState={txState}
-          onClearTxState={clearTxState}
-          onConnectWallet={connectWallet}
-          onLoginCustomInput={loginWithCustomInput}
-          onLoginDemoUnregisteredWallet={loginWithDemoUnregisteredWallet}
-          onDisconnect={handleFullLogout}
-          onSwitchNetwork={switchToBscTestnet}
-          onRefresh={refreshUserData}
-          onEnterGuestDashboard={() => setBypassGateToDashboard(true)}
-          onApproveUsdt={handleApproveUsdt}
-          onRegister={handleRegister}
-          onExecuteOffChainBatch={handleExecuteOffChainSimulationAndBatch}
-          onCheckSponsor={checkSponsorNode}
-          onPreviewPlacement={previewNextPlacement}
-          onUpgradeToRank={handleUpgradeRank}
-        />
+        <>
+          <AuthAndOnboardingGate
+            mode="login"
+            language={language}
+            onToggleLanguage={() => setLanguage(language === 'th' ? 'en' : 'th')}
+            theme={theme}
+            onToggleTheme={toggleTheme}
+            account={account}
+            detectedBrowserWallet={detectedBrowserWallet}
+            chainId={chainId}
+            isBscTestnet={isBscTestnet}
+            isConnecting={isConnecting}
+            isLoadingProfile={isLoadingProfile}
+            profile={profile}
+            usdtBalance={usdtBalance}
+            bnbBalance={bnbBalance}
+            allowance={allowance}
+            contractAddress={contractAddress || CONTRACT_ADDRESS}
+            usdtAddress={usdtAddress || USDT_ADDRESS}
+            txState={txState}
+            onClearTxState={clearTxState}
+            onConnectWallet={connectWallet}
+            onLoginCustomInput={loginWithCustomInput}
+            onLoginDemoUnregisteredWallet={loginWithDemoUnregisteredWallet}
+            onDisconnect={handleFullLogout}
+            onSwitchNetwork={switchToBscTestnet}
+            onRefresh={refreshUserData}
+            onEnterGuestDashboard={() => setBypassGateToDashboard(true)}
+            onApproveUsdt={handleApproveUsdt}
+            onRegister={handleRegister}
+            onExecuteOffChainBatch={handleExecuteOffChainSimulationAndBatch}
+            onCheckSponsor={checkSponsorNode}
+            onPreviewPlacement={previewNextPlacement}
+            onUpgradeToRank={handleUpgradeRank}
+          />
+          {contractSwitcherModal}
+        </>
       );
     }
 
     if (isLoadingProfile && !profile) {
       return (
-        <AuthAndOnboardingGate
-          mode="Checking"
-          language={language}
-          onToggleLanguage={() => setLanguage(language === 'th' ? 'en' : 'th')}
-          theme={theme}
-          onToggleTheme={toggleTheme}
-          account={account}
-          detectedBrowserWallet={detectedBrowserWallet}
-          chainId={chainId}
-          isBscTestnet={isBscTestnet}
-          isConnecting={isConnecting}
-          isLoadingProfile={isLoadingProfile}
-          profile={profile}
-          usdtBalance={usdtBalance}
-          bnbBalance={bnbBalance}
-          allowance={allowance}
-          contractAddress={contractAddress || CONTRACT_ADDRESS}
-          usdtAddress={usdtAddress || USDT_ADDRESS}
-          txState={txState}
-          onClearTxState={clearTxState}
-          onConnectWallet={connectWallet}
-          onLoginCustomInput={loginWithCustomInput}
-          onLoginDemoUnregisteredWallet={loginWithDemoUnregisteredWallet}
-          onDisconnect={handleFullLogout}
-          onSwitchNetwork={switchToBscTestnet}
-          onRefresh={refreshUserData}
-          onEnterGuestDashboard={() => setBypassGateToDashboard(true)}
-          onApproveUsdt={handleApproveUsdt}
-          onRegister={handleRegister}
-          onExecuteOffChainBatch={handleExecuteOffChainSimulationAndBatch}
-          onCheckSponsor={checkSponsorNode}
-          onPreviewPlacement={previewNextPlacement}
-          onUpgradeToRank={handleUpgradeRank}
-        />
+        <>
+          <AuthAndOnboardingGate
+            mode="Checking"
+            language={language}
+            onToggleLanguage={() => setLanguage(language === 'th' ? 'en' : 'th')}
+            theme={theme}
+            onToggleTheme={toggleTheme}
+            account={account}
+            detectedBrowserWallet={detectedBrowserWallet}
+            chainId={chainId}
+            isBscTestnet={isBscTestnet}
+            isConnecting={isConnecting}
+            isLoadingProfile={isLoadingProfile}
+            profile={profile}
+            usdtBalance={usdtBalance}
+            bnbBalance={bnbBalance}
+            allowance={allowance}
+            contractAddress={contractAddress || CONTRACT_ADDRESS}
+            usdtAddress={usdtAddress || USDT_ADDRESS}
+            txState={txState}
+            onClearTxState={clearTxState}
+            onConnectWallet={connectWallet}
+            onLoginCustomInput={loginWithCustomInput}
+            onLoginDemoUnregisteredWallet={loginWithDemoUnregisteredWallet}
+            onDisconnect={handleFullLogout}
+            onSwitchNetwork={switchToBscTestnet}
+            onRefresh={refreshUserData}
+            onEnterGuestDashboard={() => setBypassGateToDashboard(true)}
+            onApproveUsdt={handleApproveUsdt}
+            onRegister={handleRegister}
+            onExecuteOffChainBatch={handleExecuteOffChainSimulationAndBatch}
+            onCheckSponsor={checkSponsorNode}
+            onPreviewPlacement={previewNextPlacement}
+            onUpgradeToRank={handleUpgradeRank}
+          />
+          {contractSwitcherModal}
+        </>
       );
     }
 
     if (!isLoadingProfile && !isWalletRegistered && !isAdminUser) {
       return (
-        <AuthAndOnboardingGate
-          mode="register_onboarding"
-          language={language}
-          onToggleLanguage={() => setLanguage(language === 'th' ? 'en' : 'th')}
-          theme={theme}
-          onToggleTheme={toggleTheme}
-          account={account}
-          detectedBrowserWallet={detectedBrowserWallet}
-          chainId={chainId}
-          isBscTestnet={isBscTestnet}
-          isConnecting={isConnecting}
-          isLoadingProfile={isLoadingProfile}
-          profile={profile}
-          usdtBalance={usdtBalance}
-          bnbBalance={bnbBalance}
-          allowance={allowance}
-          contractAddress={contractAddress || CONTRACT_ADDRESS}
-          usdtAddress={usdtAddress || USDT_ADDRESS}
-          txState={txState}
-          onClearTxState={clearTxState}
-          onConnectWallet={connectWallet}
-          onLoginCustomInput={loginWithCustomInput}
-          onLoginDemoUnregisteredWallet={loginWithDemoUnregisteredWallet}
-          onDisconnect={handleFullLogout}
-          onSwitchNetwork={switchToBscTestnet}
-          onRefresh={refreshUserData}
-          onEnterGuestDashboard={() => setBypassGateToDashboard(true)}
-          onApproveUsdt={handleApproveUsdt}
-          onRegister={handleRegister}
-          onExecuteOffChainBatch={handleExecuteOffChainSimulationAndBatch}
-          onCheckSponsor={checkSponsorNode}
-          onPreviewPlacement={previewNextPlacement}
-          onUpgradeToRank={handleUpgradeRank}
-        />
+        <>
+          <AuthAndOnboardingGate
+            mode="register_onboarding"
+            language={language}
+            onToggleLanguage={() => setLanguage(language === 'th' ? 'en' : 'th')}
+            theme={theme}
+            onToggleTheme={toggleTheme}
+            account={account}
+            detectedBrowserWallet={detectedBrowserWallet}
+            chainId={chainId}
+            isBscTestnet={isBscTestnet}
+            isConnecting={isConnecting}
+            isLoadingProfile={isLoadingProfile}
+            profile={profile}
+            usdtBalance={usdtBalance}
+            bnbBalance={bnbBalance}
+            allowance={allowance}
+            contractAddress={contractAddress || CONTRACT_ADDRESS}
+            usdtAddress={usdtAddress || USDT_ADDRESS}
+            txState={txState}
+            onClearTxState={clearTxState}
+            onConnectWallet={connectWallet}
+            onLoginCustomInput={loginWithCustomInput}
+            onLoginDemoUnregisteredWallet={loginWithDemoUnregisteredWallet}
+            onDisconnect={handleFullLogout}
+            onSwitchNetwork={switchToBscTestnet}
+            onRefresh={refreshUserData}
+            onEnterGuestDashboard={() => setBypassGateToDashboard(true)}
+            onApproveUsdt={handleApproveUsdt}
+            onRegister={handleRegister}
+            onExecuteOffChainBatch={handleExecuteOffChainSimulationAndBatch}
+            onCheckSponsor={checkSponsorNode}
+            onPreviewPlacement={previewNextPlacement}
+            onUpgradeToRank={handleUpgradeRank}
+          />
+          {contractSwitcherModal}
+        </>
       );
     }
   }
@@ -551,6 +581,8 @@ export default function App() {
         account={account}
         onUpdateContractAddress={updateSmartContractAddress}
       />
+
+      {contractSwitcherModal}
     </div>
   );
 }

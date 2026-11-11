@@ -185,6 +185,14 @@ export const AuthAndOnboardingGate: React.FC<AuthAndOnboardingGateProps> = ({
                     {contractAddress.substring(0, 6)}...{contractAddress.substring(contractAddress.length - 4)}
                     <ExternalLink className="w-2.5 h-2.5" />
                   </a>
+                  <button
+                    type="button"
+                    onClick={() => window.dispatchEvent(new CustomEvent('matrix:open-contract-switcher'))}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[#EFF6FF] hover:bg-blue-100/90 text-[#2563EB] border border-blue-200/80 dark:bg-indigo-500/20 dark:hover:bg-indigo-500/30 dark:text-indigo-300 dark:border-indigo-500/30 font-bold text-[10px] transition cursor-pointer"
+                    title="คลิกเพื่อเปลี่ยน Smart Contract Address"
+                  >
+                    <span>✏️ {language === 'th' ? 'เปลี่ยนสัญญา' : 'Change Contract'}</span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -525,6 +533,14 @@ export const AuthAndOnboardingGate: React.FC<AuthAndOnboardingGateProps> = ({
                   {contractAddress.substring(0, 8)}...{contractAddress.substring(contractAddress.length - 6)}
                   <ExternalLink className="w-2.5 h-2.5" />
                 </a>
+                <button
+                  type="button"
+                  onClick={() => window.dispatchEvent(new CustomEvent('matrix:open-contract-switcher'))}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[#EFF6FF] hover:bg-blue-100/90 text-[#2563EB] border border-blue-200/80 dark:bg-indigo-500/20 dark:hover:bg-indigo-500/30 dark:text-indigo-300 dark:border-indigo-500/30 font-bold text-[10px] transition cursor-pointer"
+                  title="คลิกเพื่อเปลี่ยน Smart Contract Address"
+                >
+                  <span>✏️ {language === 'th' ? 'เปลี่ยนสัญญา' : 'Change Contract'}</span>
+                </button>
               </div>
             </div>
           </div>

@@ -146,6 +146,14 @@ export const Header: React.FC<HeaderProps> = ({
                     <span>{shortContract}</span>
                     <ExternalLink className="w-3 h-3 shrink-0" />
                   </a>
+                  <button
+                    type="button"
+                    onClick={() => window.dispatchEvent(new CustomEvent('matrix:open-contract-switcher'))}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[#EFF6FF] hover:bg-blue-100/90 text-[#2563EB] border border-blue-200/80 dark:bg-indigo-500/20 dark:hover:bg-indigo-500/30 dark:text-indigo-300 dark:border-indigo-500/30 font-bold text-[10.5px] transition cursor-pointer shrink-0"
+                    title="คลิกเพื่อเปลี่ยน Smart Contract Address ใหม่ง่ายๆ"
+                  >
+                    <span>✏️ {language === 'th' ? 'เปลี่ยนสัญญา' : 'Change Contract'}</span>
+                  </button>
                   <span className="text-slate-300 dark:text-slate-600">·</span>
                   <span className="inline-flex items-center px-2 py-0.2 rounded-full bg-[#DCFCE7] text-[#15803D] dark:bg-transparent dark:text-emerald-400 font-semibold text-[10.5px] whitespace-nowrap">
                     BNB Testnet (97)
