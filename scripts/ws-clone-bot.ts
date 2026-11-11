@@ -23,6 +23,38 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+// Prevent transient public RPC / WebSocket teardown errors from crashing the bot process
+process.on('unhandledRejection', (reason: any) => {
+  const reasonStr = reason ? (reason.stack || reason.message || String(reason)) : '';
+  if (
+    reasonStr.includes('provider destroyed') ||
+    reasonStr.includes('cancelled request') ||
+    reasonStr.includes('eth_unsubscribe') ||
+    reasonStr.includes('UNSUPPORTED_OPERATION') ||
+    reasonStr.includes('WebSocket is not open') ||
+    reasonStr.includes('connection reset') ||
+    reasonStr.includes('ECONNRESET') ||
+    reasonStr.includes('ETIMEDOUT')
+  ) {
+    return; // Safely ignore benign provider cancellation during reconnect
+  }
+  console.warn('⚠️ [Process Guard] Unhandled Rejection:', reason);
+});
+
+process.on('uncaughtException', (err: any) => {
+  const errStr = err ? (err.stack || err.message || String(err)) : '';
+  if (
+    errStr.includes('provider destroyed') ||
+    errStr.includes('cancelled request') ||
+    errStr.includes('eth_unsubscribe') ||
+    errStr.includes('UNSUPPORTED_OPERATION') ||
+    errStr.includes('WebSocket is not open')
+  ) {
+    return; // Safely ignore benign provider teardown error
+  }
+  console.error('❌ [Process Guard] Uncaught Exception:', err);
+});
+
 // ============================================================================
 // 1. การตั้งค่าพารามิเตอร์จาก .env (Configuration)
 // ============================================================================
@@ -122,7 +154,7 @@ export async function cleanupWebSocket(): Promise<void> {
 
   if (wsContract) {
     try {
-      await wsContract.removeAllListeners();
+      (wsContract as any).removeAllListeners?.()?.catch?.(() => {});
     } catch {
       // ignore cleanup errors
     }
@@ -131,22 +163,34 @@ export async function cleanupWebSocket(): Promise<void> {
 
   if (wsProvider) {
     try {
-      await wsProvider.removeAllListeners();
-    } catch {
-      // ignore
-    }
-
-    try {
-      const rawWs = (wsProvider as unknown as { websocket?: { removeAllListeners?: () => void; close?: () => void } }).websocket;
-      if (rawWs && typeof rawWs.removeAllListeners === 'function') {
-        rawWs.removeAllListeners();
+      // Attach .catch to any pending requests to prevent unhandledRejection on destroy()
+      const reqs = (wsProvider as any)._requests;
+      if (reqs && typeof reqs.values === 'function') {
+        for (const r of reqs.values()) {
+          if (r && r.promise && typeof r.promise.catch === 'function') {
+            r.promise.catch(() => {});
+          }
+        }
       }
     } catch {
       // ignore
     }
 
     try {
-      await wsProvider.destroy();
+      const rawWs = (wsProvider as unknown as { websocket?: { removeAllListeners?: () => void; close?: () => void; onerror?: any; onclose?: any } }).websocket;
+      if (rawWs) {
+        if (typeof rawWs.removeAllListeners === 'function') {
+          rawWs.removeAllListeners();
+        }
+        rawWs.onerror = () => {};
+        rawWs.onclose = () => {};
+      }
+    } catch {
+      // ignore
+    }
+
+    try {
+      await wsProvider.destroy().catch?.(() => {});
     } catch {
       // ignore destroy errors on already closed socket
     }
@@ -287,6 +331,12 @@ export async function connectWebSocket(): Promise<void> {
     wsProvider = new ethers.WebSocketProvider(wssUrl, {
       chainId: 97,
       name: 'bnbt',
+    });
+
+    // Suppress unhandled provider-level errors
+    wsProvider.on('error', (err: any) => {
+      const msg = err?.message || String(err ?? 'unknown');
+      console.warn(`⚠️ [WS-Bot] Provider Event Error: ${msg}`);
     });
 
     const rawWs = (wsProvider as unknown as {

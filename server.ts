@@ -7331,9 +7331,9 @@ async function startApp() {
   });
 
   // ==========================================
-  // ADMIN CLEAR CACHE & FORCE FULL RESYNC API
+  // CLEAR CACHE & FORCE FULL RESYNC API (18 RANKS)
   // ==========================================
-  app.post('/api/admin/clear-cache', async (_req: Request, res: Response) => {
+  const handleClearCacheRequest = async (_req: Request, res: Response) => {
     try {
       rankSyncTimestamps.clear();
       for (let r = 1; r <= 18; r++) {
@@ -7349,12 +7349,16 @@ async function startApp() {
         success: true,
         contractAddress: CONTRACT_ADDRESS,
         lastSyncedAt: matrixDB.lastSyncedAt,
-        message: '🧹 ล้างแคชฐานข้อมูลเก่าและดึงข้อมูลสดจาก Smart Contract ใหม่ครบ 27 แรงค์สำเร็จ!',
+        message: '🧹 ล้างแคชฐานข้อมูลเก่าและดึงข้อมูลสดจาก Smart Contract ใหม่ครบ 18 แรงค์สำเร็จ!',
       });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
     }
-  });
+  };
+
+  app.post('/api/admin/clear-cache', handleClearCacheRequest);
+  app.post('/api/matrix/clear-cache', handleClearCacheRequest);
+  app.post('/api/clear-cache', handleClearCacheRequest);
 
   // ==========================================
   // ADMIN SERVER-SIDE ON-CHAIN CONTRACT EXECUTOR

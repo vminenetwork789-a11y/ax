@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { CONTRACT_ADDRESS } from '../contracts/config';
 import {
   ExternalLink,
@@ -9,6 +9,7 @@ import {
   Zap,
   LogOut,
   Shield,
+  Trash2,
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -27,6 +28,7 @@ interface HeaderProps {
   isAdminUser?: boolean;
   isAdminView?: boolean;
   onToggleAdminView?: () => void;
+  onClearCache?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -44,7 +46,55 @@ export const Header: React.FC<HeaderProps> = ({
   isAdminUser = false,
   isAdminView = false,
   onToggleAdminView,
+  onClearCache,
 }) => {
+  const [isClearingCache, setIsClearingCache] = useState(false);
+  const [clearSuccessMsg, setClearSuccessMsg] = useState<string | null>(null);
+
+  const handleClearCache = async () => {
+    if (isClearingCache) return;
+    setIsClearingCache(true);
+    setClearSuccessMsg(null);
+    try {
+      if (typeof window !== 'undefined') {
+        try {
+          const keysToRemove: string[] = [];
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (
+              k &&
+              (k.toLowerCase().includes('matrix') ||
+                k.toLowerCase().includes('tree') ||
+                k.toLowerCase().includes('cache') ||
+                k.toLowerCase().includes('f27_build'))
+            ) {
+              keysToRemove.push(k);
+            }
+          }
+          keysToRemove.forEach((k) => localStorage.removeItem(k));
+          sessionStorage.clear();
+        } catch {
+          // ignore
+        }
+      }
+
+      await fetch('/api/matrix/clear-cache', { method: 'POST' }).catch(() => {});
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('matrix:tree:refresh'));
+      }
+      onRefresh();
+      if (onClearCache) {
+        onClearCache();
+      }
+
+      setClearSuccessMsg(
+        language === 'th' ? 'ล้างแคชสำเร็จ!' : 'Cache cleared!'
+      );
+      setTimeout(() => setClearSuccessMsg(null), 3000);
+    } finally {
+      setTimeout(() => setIsClearingCache(false), 600);
+    }
+  };
   const shortAddress = account
     ? `${account.substring(0, 6)}...${account.substring(account.length - 4)}`
     : '';
@@ -100,6 +150,15 @@ export const Header: React.FC<HeaderProps> = ({
 
             {/* Mobile-only quick language & refresh controls on top-right */}
             <div className="flex md:hidden items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={handleClearCache}
+                disabled={isClearingCache}
+                className="p-2 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/35 text-rose-300 transition cursor-pointer disabled:opacity-50"
+                title={language === 'th' ? 'ล้างแคช' : 'Clear Cache'}
+              >
+                <Trash2 className={`w-3.5 h-3.5 ${isClearingCache ? 'animate-spin' : ''}`} />
+              </button>
               {account && (
                 <button
                   onClick={onRefresh}
@@ -121,6 +180,28 @@ export const Header: React.FC<HeaderProps> = ({
           {/* Action Toolbar: Clean single-line pills on mobile & desktop */}
           <div className="flex items-center justify-between md:justify-end gap-2 overflow-x-auto no-scrollbar pt-1 md:pt-0 border-t border-slate-800/60 md:border-t-0">
             <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+              {/* Clear Cache Button */}
+              <button
+                type="button"
+                onClick={handleClearCache}
+                disabled={isClearingCache}
+                className="text-[11px] sm:text-xs bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/35 text-rose-300 hover:text-rose-200 px-2.5 sm:px-3 py-1.5 rounded-xl font-bold transition duration-200 inline-flex items-center gap-1.5 shadow-sm whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-50"
+                title={
+                  language === 'th'
+                    ? 'ล้างแคชและดึงข้อมูลสดจาก Smart Contract 100%'
+                    : 'Clear local/server cache and resync'
+                }
+              >
+                <Trash2 className={`w-3.5 h-3.5 ${isClearingCache ? 'animate-spin' : ''}`} />
+                <span>
+                  {isClearingCache
+                    ? language === 'th'
+                      ? 'กำลังล้าง...'
+                      : 'Clearing...'
+                    : clearSuccessMsg || (language === 'th' ? 'ล้างแคช' : 'Clear Cache')}
+                </span>
+              </button>
+
               {/* Admin Control Center Toggle Button (Visible ONLY to Admin) */}
               {isAdminUser && onToggleAdminView && (
                 <button

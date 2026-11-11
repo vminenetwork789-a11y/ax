@@ -24,6 +24,7 @@ import {
   Copy,
   Check,
   Sparkles,
+  Trash2,
   RotateCcw,
   User,
   ZoomIn,
@@ -636,6 +637,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
   );
   const [isLiveSyncing, setIsLiveSyncing] = useState<boolean>(false);
   const isTreeSyncInFlightRef = useRef<boolean>(false);
+  const [isClearingCache, setIsClearingCache] = useState<boolean>(false);
 
   // Track newly arrived nodes to highlight & auto-extend in the Binary Tree
   const knownNodeIdsByRankRef = useRef<Map<number, Set<number>>>(new Map());
@@ -6203,6 +6205,51 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                   }`}
                 />
                 <span>{isLoadingTree || isLiveSyncing ? '...' : 'ดึงทันที'}</span>
+              </button>
+
+              {/* Instant Clear Cache Button */}
+              <button
+                type="button"
+                onClick={async () => {
+                  if (isClearingCache) return;
+                  setIsClearingCache(true);
+                  try {
+                    if (typeof window !== 'undefined') {
+                      try {
+                        const keysToRemove: string[] = [];
+                        for (let i = 0; i < localStorage.length; i++) {
+                          const k = localStorage.key(i);
+                          if (
+                            k &&
+                            (k.toLowerCase().includes('matrix') ||
+                              k.toLowerCase().includes('tree') ||
+                              k.toLowerCase().includes('cache') ||
+                              k.toLowerCase().includes('f27_build'))
+                          ) {
+                            keysToRemove.push(k);
+                          }
+                        }
+                        keysToRemove.forEach((k) => localStorage.removeItem(k));
+                        sessionStorage.clear();
+                      } catch {
+                        // ignore
+                      }
+                    }
+                    await fetch('/api/matrix/clear-cache', { method: 'POST' }).catch(() => {});
+                    window.dispatchEvent(new CustomEvent('matrix:tree:refresh'));
+                    await loadOnChainTree(selectedRank, { silent: false, forceSync: true });
+                  } finally {
+                    setTimeout(() => setIsClearingCache(false), 500);
+                  }
+                }}
+                disabled={isLoadingTree || isLiveSyncing || isClearingCache}
+                className="px-2.5 py-1 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/35 transition cursor-pointer flex items-center gap-1 font-semibold text-[11px] disabled:opacity-50"
+                title="ล้างแคชฐานข้อมูลและดึงข้อมูลสดจาก Smart Contract 100%"
+              >
+                <Trash2
+                  className={`w-3 h-3 ${isClearingCache ? 'animate-spin text-rose-400' : 'text-rose-400'}`}
+                />
+                <span>{isClearingCache ? 'กำลังล้าง...' : 'ล้างแคช'}</span>
               </button>
 
               {/* Last Sync Timestamp */}
