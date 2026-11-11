@@ -129,7 +129,7 @@ export const RegisterSection: React.FC<RegisterSectionProps> = ({
     return () => clearInterval(interval);
   }, [fetchQueueData, txSuccess]);
 
-  const totalCostUsdt = nodeCount * 5;
+  const totalCostUsdt = nodeCount * 10;
   const parsedAllowance = parseFloat(allowance || '0');
   const parsedBalance = parseFloat(usdtBalance || '0');
   const isAllowanceSufficient = parsedAllowance >= totalCostUsdt;
@@ -652,11 +652,11 @@ export const RegisterSection: React.FC<RegisterSectionProps> = ({
               onChange={(e) => setNodeCount(Number(e.target.value))}
               className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-amber-400 font-mono focus:outline-none focus:border-emerald-500"
             >
-              <option value={1}>1 โหนด (5 USDT - Auto)</option>
-              <option value={2}>2 โหนด (10 USDT - Auto Batch)</option>
-              <option value={3}>3 โหนด (15 USDT - Auto Batch)</option>
-              <option value={5}>5 โหนด (25 USDT - Auto Batch)</option>
-              <option value={10}>10 โหนด (50 USDT - Auto Batch)</option>
+              <option value={1}>1 โหนด (10 USDT - Auto)</option>
+              <option value={2}>2 โหนด (20 USDT - Auto Batch)</option>
+              <option value={3}>3 โหนด (30 USDT - Auto Batch)</option>
+              <option value={5}>5 โหนด (50 USDT - Auto Batch)</option>
+              <option value={10}>10 โหนด (100 USDT - Auto Batch)</option>
             </select>
           </div>
         </div>

@@ -98,7 +98,7 @@ export interface EnrichedBinaryNode {
   unilevelRewardAllNodes: number; // ยูนิเลเวล 15 ชั้น (ทุกผัง)
   upgradeRankPool: number; // Upgrade Rank Pool
   newAutoIdPool: number; // New Auto ID Pool (Vault 1-4)
-  newExtraIdPool: number; // New Extra ID Pool (Vault 5-27)
+  newExtraIdPool: number; // New Extra ID Pool (Vault 5-18)
   totalClonesCount: number; // จำนวนโคลนนิ่งทั้งหมด
   totalAutoIdCount: number; // จำนวน New Auto ID ทั้งหมด
   totalExtraIdCount: number; // จำนวน New Extra ID ทั้งหมด
@@ -111,13 +111,13 @@ export interface EnrichedBinaryNode {
   grossVault1To4FromLineage?: number; // ยอดสะสม Vault รวมทั้ง R1-R4 ก่อนหักออก Auto ID
   thisRankRemainingVault?: number; // ยอดคงเหลือจริงใน nodeUpgradeVault ของ Rank ปัจจุบัน
   vault1To4BreakdownText?: string; // รายละเอียดการสะสมและหัก Auto ID ข้าม Rank 1-3
-  vault4To27BreakdownText?: string; // รายละเอียดการสะสมและหัก Extra ID ข้าม Rank 4-27
+  vault4To27BreakdownText?: string; // รายละเอียดการสะสมและหัก Extra ID ข้าม Rank 4-18
   targetMainIdCurrentRank?: number; // สถานะ rank ปัจจุบันของ idหลักนั้น
   window5Start?: number; // Rank เริ่มต้นของ 5 rank ย้อนหลัง
   window5End?: number; // Rank สิ้นสุดของ 5 rank ย้อนหลัง
   window5DescriptionTh?: string; // ข้อความอธิบายช่วง 5 rank ย้อนหลัง
   r1MainId?: number; // รหัสหลักต้นสังกัดใน Rank 1 (เฉพาะโหนดที่มาจาก Rank 1 เท่านั้น)
-  isExtraLineage?: boolean; // เป็นรหัสหลักอิสระประเภท Extra ID (หรือโคลนที่เกิดจาก Extra ID) ใน Rank 2..27
+  isExtraLineage?: boolean; // เป็นรหัสหลักอิสระประเภท Extra ID (หรือโคลนที่เกิดจาก Extra ID) ใน Rank 2..18
   extraMainLabel?: string; // ชื่อรหัสหลักอิสระของ Extra ID เช่น "Extra R2-#3" (ไม่ซ้ำกับ Main # ใน Rank 1)
 }
 
@@ -166,7 +166,7 @@ function shortenWallet(addr?: string): string {
 // Build preview dataset matching all screenshots (including #1..#10 with #7 (7) and Clone #7 #10 #0 รอบ 1)
 function buildScreenshotPreviewNodes(rank: number): Map<number, EnrichedBinaryNode> {
   const unitPrice = RANK_PRICES_USDT[rank - 1] || 5;
-  const nextPrice = rank < 27 ? RANK_PRICES_USDT[rank] : unitPrice * 2;
+  const nextPrice = rank < 18 ? RANK_PRICES_USDT[rank] : unitPrice * 2;
   const scale = unitPrice / 5;
 
   const rawList: EnrichedBinaryNode[] = [
@@ -1134,7 +1134,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         };
 
         const unitPrice = RANK_PRICES_USDT[activeRank - 1] || 5;
-        const nextPrice = activeRank < 27 ? RANK_PRICES_USDT[activeRank] : unitPrice * 2;
+        const nextPrice = activeRank < 18 ? RANK_PRICES_USDT[activeRank] : unitPrice * 2;
         const directBonusUnit = unitPrice * 0.3; // 30%
         const unilevelBonusUnit = unitPrice * 0.02; // 2% per level (15 levels)
         const vaultUnit = unitPrice * 0.35; // 35%
@@ -1249,7 +1249,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
 
           try {
             const countsResults = await Promise.all(
-              Array.from({ length: 27 }, (_, i) =>
+              Array.from({ length: 18 }, (_, i) =>
                 contract
                   .totalNodesInRank(i + 1)
                   .then((v: bigint) => Number(v))
@@ -1315,7 +1315,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           }
         }
 
-        // Guarantee Root Node #1 is always present for Ranks 1..27
+        // Guarantee Root Node #1 is always present for Ranks 1..18
         if (!rawNodes.has(1)) {
           let fallbackRootOwner = '0x622E20082e63c7220c5AF0A77Cbc437a98505311';
           if (!loadedFromApi) {
@@ -1362,15 +1362,15 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           }
         }
 
-      // Fetch cross-rank snapshots for Ranks 1..7 (for Vault pools R1-3 & R4-27), all populated ranks (count > 1), and activeRank / activeRank + 1
+      // Fetch cross-rank snapshots for Ranks 1..7 (for Vault pools R1-3 & R4-18), all populated ranks (count > 1), and activeRank / activeRank + 1
       const ranksToSnapshot = new Set<number>([1, 2, 3, 4, 5, 6, 7]);
       ranksToSnapshot.add(activeRank);
-      if (activeRank < 27) {
+      if (activeRank < 18) {
         ranksToSnapshot.add(activeRank + 1);
       }
       Object.entries({ ...rankNodeCounts, ...fetchedRankCounts }).forEach(([rKey, countVal]) => {
         const rNum = Number(rKey);
-        if (rNum >= 1 && rNum <= 27 && Number(countVal) > 1) {
+        if (rNum >= 1 && rNum <= 18 && Number(countVal) > 1) {
           ranksToSnapshot.add(rNum);
         }
       });
@@ -1400,7 +1400,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             snapshotNodesByRank = snapData.nodesByRank;
             for (const [rKey, rArr] of Object.entries(snapData.nodesByRank)) {
               const rNum = Number(rKey);
-              if (rNum >= 1 && rNum <= 27 && Array.isArray(rArr) && rArr.length > 0) {
+              if (rNum >= 1 && rNum <= 18 && Array.isArray(rArr) && rArr.length > 0) {
                 ranksToSnapshot.add(rNum);
               }
             }
@@ -1533,7 +1533,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         })
       );
 
-      // สำหรับการวางตำแหน่ง Rank 2-27:
+      // สำหรับการวางตำแหน่ง Rank 2-18:
       // ตรวจสอบว่าผู้แนะนำตรง (Direct Sponsor ID เช่น ID #5) มีโหนดอยู่ใน Rank นั้นหรือยัง
       // หากผู้แนะนำยังไม่ได้อัปเกรดขึ้นมาถึง Rank นั้น ให้หาตำแหน่งว่างชั้นตื้นลงมาจากซ้ายไปขวา (BFS จาก Root #1)
       const snapR1ForPlacement = multiRankSnapshots.get(1);
@@ -1544,7 +1544,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         if (rNum < 1 || sMap.size <= 1) continue;
         const sIds = Array.from(sMap.keys()).sort((a, b) => a - b);
 
-        // 1. Resolve directSponsorNodeId for Extra IDs and Main IDs in Rank 2..27 from Rank 1 before checking tree placement
+        // 1. Resolve directSponsorNodeId for Extra IDs and Main IDs in Rank 2..18 from Rank 1 before checking tree placement
         if (rNum > 1 && snapR1ForPlacement && snapR1ForPlacement.size > 0) {
           const r1List = Array.from(snapR1ForPlacement.values()).sort((a, b) => a.id - b.id);
           for (const nid of sIds) {
@@ -1606,157 +1606,22 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           }
         }
 
-        // 2. Check if any node in Rank 1..27 is misplaced (e.g. Round 1 Clone or Extra ID not under its Direct Sponsor/Clone) or orphaned
+        // 2. Check if any node in Rank 1..18 is actually orphaned (missing parent link on-chain)
+        // Authentic on-chain parentId / leftChild / rightChild placements are always preserved.
         let needsReplay = false;
         const cloneSeqByOrig = new Map<number, number>();
         for (const nid of sIds) {
           const node = sMap.get(nid)!;
-          let nodeCloneRound = 0;
           if (node.isClone) {
             const origKey = node.originMainId || node.id;
             const nextSeq = (cloneSeqByOrig.get(origKey) || 0) + 1;
             cloneSeqByOrig.set(origKey, nextSeq);
-            nodeCloneRound = ((nextSeq - 1) % 2) + 1;
           }
           if (nid <= 1) continue;
           const p = sMap.get(node.parentId);
           if (!p || (p.leftChild !== node.id && p.rightChild !== node.id)) {
             needsReplay = true;
             break;
-          }
-          if (node.isClone && nodeCloneRound === 1) {
-            const origId = node.originMainId || node.id;
-            let origNode: RankNodeSnapshot | undefined = sMap.get(origId);
-            if (!origNode || origNode.isClone) {
-              for (const prevId of sIds) {
-                const prev = sMap.get(prevId);
-                if (
-                  prev &&
-                  !prev.isClone &&
-                  (prev.id === origId || (!prev.isExtraId && prev.originMainId === origId))
-                ) {
-                  origNode = prev;
-                  break;
-                }
-              }
-            }
-            const spMainId =
-              origId === 1 || origNode?.id === 1
-                ? 1
-                : origNode?.directSponsorNodeId || node.directSponsorNodeId || 1;
-            let spNodeInRank: RankNodeSnapshot | undefined;
-            for (const prevId of sIds) {
-              if (prevId >= nid) break;
-              const prev = sMap.get(prevId);
-              if (!prev || prev.isClone || prev.isExtraId) continue;
-              if (
-                spMainId === 1
-                  ? prev.id === 1
-                  : prev.id === spMainId || prev.originMainId === spMainId
-              ) {
-                spNodeInRank = prev;
-                break;
-              }
-            }
-            if (spNodeInRank) {
-              const spOrigTag = spNodeInRank.originMainId || spNodeInRank.id;
-              const isUnderSp =
-                p.id === spNodeInRank.id ||
-                (p.isClone &&
-                  ((p.originMainId || p.id) === spNodeInRank.id ||
-                    (p.originMainId || p.id) === spOrigTag));
-              if (!isUnderSp) {
-                const spHadOpenSlot = sIds.some((prevId) => {
-                  if (prevId >= nid) return false;
-                  const prev = sMap.get(prevId);
-                  if (!prev) return false;
-                  const isSpOrClone =
-                    prev.id === spNodeInRank!.id ||
-                    (prev.isClone &&
-                      ((prev.originMainId || prev.id) === spNodeInRank!.id ||
-                        (prev.originMainId || prev.id) === spOrigTag));
-                  if (!isSpOrClone) return false;
-                  const leftOpenAtTime =
-                    !prev.leftChild || prev.leftChild <= 0 || prev.leftChild > nid;
-                  const rightOpenAtTime =
-                    !prev.rightChild || prev.rightChild <= 0 || prev.rightChild > nid;
-                  return leftOpenAtTime || rightOpenAtTime;
-                });
-                if (spHadOpenSlot) {
-                  needsReplay = true;
-                  break;
-                }
-              }
-            }
-          } else if (node.isExtraId && !node.isClone) {
-            const spMainId = node.directSponsorNodeId > 0 ? node.directSponsorNodeId : 1;
-            let spNodeInRank: RankNodeSnapshot | undefined;
-            for (const prevId of sIds) {
-              if (prevId >= nid) break;
-              const prev = sMap.get(prevId);
-              if (!prev || prev.isClone || prev.isExtraId) continue;
-              if (spMainId === 1 ? prev.id === 1 : prev.originMainId === spMainId) {
-                spNodeInRank = prev;
-                break;
-              }
-            }
-            if (spNodeInRank) {
-              const spOrigTag = spNodeInRank.originMainId || spNodeInRank.id;
-              const isUnderSp =
-                p.id === spNodeInRank.id ||
-                (p.isClone &&
-                  ((p.originMainId || p.id) === spNodeInRank.id ||
-                    (p.originMainId || p.id) === spOrigTag));
-              if (!isUnderSp) {
-                needsReplay = true;
-                break;
-              }
-            }
-          } else if (!node.isClone && !node.isExtraId && rNum > 1) {
-            const spMainId = node.directSponsorNodeId > 0 ? node.directSponsorNodeId : 1;
-            if (spMainId > 1) {
-              const sponsorBefore = sIds.some((prevId) => {
-                if (prevId >= nid) return false;
-                const prev = sMap.get(prevId);
-                return Boolean(
-                  prev && !prev.isClone && !prev.isExtraId && prev.originMainId === spMainId
-                );
-              });
-              if (!sponsorBefore && p.isClone) {
-                needsReplay = true;
-                break;
-              }
-            }
-          }
-        }
-
-        if (!needsReplay && rNum > 1) {
-          const rightTriggerCountByOrig = new Map<number, number>();
-          const actualCloneCountByOrig = new Map<number, number>();
-          for (const node of sMap.values()) {
-            const origKey = node.isClone
-              ? node.originMainId || node.id
-              : node.isExtraId
-              ? node.id
-              : node.originMainId || node.id;
-            if (node.isClone) {
-              actualCloneCountByOrig.set(origKey, (actualCloneCountByOrig.get(origKey) || 0) + 1);
-            }
-            if (node.rightChild > 0 && sMap.has(node.rightChild)) {
-              rightTriggerCountByOrig.set(origKey, (rightTriggerCountByOrig.get(origKey) || 0) + 1);
-            }
-          }
-          for (const [origKey, trigCnt] of rightTriggerCountByOrig.entries()) {
-            if ((actualCloneCountByOrig.get(origKey) || 0) !== trigCnt) {
-              needsReplay = true;
-              break;
-            }
-          }
-          for (const [origKey, cloneCnt] of actualCloneCountByOrig.entries()) {
-            if ((rightTriggerCountByOrig.get(origKey) || 0) !== cloneCnt) {
-              needsReplay = true;
-              break;
-            }
           }
         }
 
@@ -1778,7 +1643,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           leftCountBeforeByMain.set(m.id, lc);
         }
 
-        // 3. Chronological replay of Rank 1..27 placements and right-child Rebirth Clone triggers
+        // 3. Chronological replay of Rank 1..18 placements and right-child Rebirth Clone triggers (only if orphaned)
         if (needsReplay) {
           const allSnaps = Array.from(sMap.values()).sort((a, b) => a.id - b.id);
           const rootSnap = sMap.get(1) || allSnaps[0];
@@ -1985,80 +1850,10 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             }
           }
         }
-
-        // Cap nodeVault by actual leftChild count in Rank rNum so moved leftChild doesn't leave phantom vault,
-        // and transfer reclaimed phantom vault to the main node that received the relocated leftChild
-        const rUnitVault = Number(((RANK_PRICES_USDT[rNum - 1] || 5) * 0.35).toFixed(4));
-        let reclaimedVault = 0;
-        const leftCountAfterByMain = new Map<number, number>();
-        for (const m of sMap.values()) {
-          if (m.isClone || m.isExtraId) continue;
-          let leftCount = 0;
-          const mOrig = m.originMainId || m.id;
-          for (const cand of sMap.values()) {
-            const cOrig = cand.originMainId || cand.id;
-            if (
-              (cand.id === m.id || (cand.isClone && (cOrig === m.id || cOrig === mOrig))) &&
-              cand.leftChild > 0 &&
-              sMap.has(cand.leftChild)
-            ) {
-              leftCount++;
-            }
-          }
-          leftCountAfterByMain.set(m.id, leftCount);
-          const maxPossible = Number((leftCount * rUnitVault).toFixed(4));
-          const curVault = Number(m.nodeVault || 0);
-          if (curVault > maxPossible) {
-            reclaimedVault = Number((reclaimedVault + (curVault - maxPossible)).toFixed(4));
-            m.nodeVault = maxPossible;
-            if (rNum === activeRank) {
-              onChainNodeVaultMap.set(m.id, maxPossible);
-            }
-          }
-        }
-
-        if (reclaimedVault > 0) {
-          for (const m of sMap.values()) {
-            if (m.isClone || m.isExtraId || reclaimedVault <= 0) continue;
-            const beforeLc = leftCountBeforeByMain.get(m.id) || 0;
-            const afterLc = leftCountAfterByMain.get(m.id) || 0;
-            let gainedCount = Math.max(0, afterLc - beforeLc);
-            if (gainedCount === 0 && !needsReplay) {
-              const mOrig = m.originMainId || m.id;
-              for (const cand of sMap.values()) {
-                const cOrig = cand.originMainId || cand.id;
-                if (cand.isClone && (cOrig === m.id || cOrig === mOrig) && cand.leftChild > 0) {
-                  const lcNode = sMap.get(cand.leftChild);
-                  if (lcNode && lcNode.isClone) {
-                    gainedCount++;
-                  }
-                }
-              }
-            }
-            if (gainedCount > 0) {
-              const gainedVault = Number((gainedCount * rUnitVault).toFixed(4));
-              const maxPossible = Number((afterLc * rUnitVault).toFixed(4));
-              const addVault = Math.min(reclaimedVault, gainedVault);
-              if (addVault > 0 && (m.nodeVault || 0) + addVault <= maxPossible + 1e-6) {
-                m.nodeVault = Number(((m.nodeVault || 0) + addVault).toFixed(4));
-                if (rNum === activeRank) {
-                  onChainNodeVaultMap.set(m.id, m.nodeVault);
-                }
-                reclaimedVault = Number(Math.max(0, reclaimedVault - addVault).toFixed(4));
-              }
-            }
-          }
-        }
       }
 
-      // Ensure Pool 3 (Vault R4-27) -> Auto Extra IDs in Rank 2..27 are reconciled even when RPC fallback is used
-      let hasOnChainExtraNodes = false;
-      for (const [rNum, sMap] of multiRankSnapshots.entries()) {
-        if (rNum >= 2 && Array.from(sMap.values()).some((sn) => sn.isExtraId && !sn.isClone)) {
-          hasOnChainExtraNodes = true;
-          break;
-        }
-      }
+      // Authentic on-chain Extra IDs and Clones are already created by the Smart Contract.
+      const hasOnChainExtraNodes = true;
       const snapR1Init = multiRankSnapshots.get(1);
       if (!hasOnChainExtraNodes && snapR1Init && snapR1Init.size > 0) {
         const initMainsByRank = new Map<number, Map<string, number[]>>();
@@ -2093,9 +1888,9 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           const r1Node = snapR1Init.get(r1Id)!;
           if (r1Node.isClone || r1Node.isExtraId) continue;
 
-          let curRank = r1Id === 1 ? 27 : 1;
+          let curRank = r1Id === 1 ? 18 : 1;
           if (r1Id !== 1) {
-            for (let r = 27; r >= 1; r--) {
+            for (let r = 18; r >= 1; r--) {
               const cid = getCorrespInit(r1Id, r1Node.owner, r);
               if (cid > 0 && multiRankSnapshots.get(r)?.has(cid)) {
                 curRank = r;
@@ -2105,8 +1900,8 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           }
           const win5Start = Math.max(1, curRank - 4);
           const eligibleSnaps: Array<{ rank: number; snapNode: RankNodeSnapshot }> = [];
-          for (let r = 4; r <= 27; r++) {
-            if (curRank === 27 || r < win5Start) {
+          for (let r = 4; r <= 18; r++) {
+            if (curRank === 18 || r < win5Start) {
               const cid = getCorrespInit(r1Id, r1Node.owner, r);
               const sn = cid > 0 ? multiRankSnapshots.get(r)?.get(cid) : undefined;
               if (sn) eligibleSnaps.push({ rank: r, snapNode: sn });
@@ -2114,7 +1909,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           }
           if (eligibleSnaps.length === 0) continue;
 
-          // เงื่อนไข Auto Extra ID: นำยอด New Extra ID Pool (รวมยอดเก่าคงเหลือสะสมใน R4-R27 ที่พ้นกรอบ 5 แรงค์ด้วยก่อนสร้าง Extra ID) มาลูปหาราคาแต่ละ Rank จาก Rank 27 ลงมาถึง Rank 2
+          // เงื่อนไข Auto Extra ID: นำยอด New Extra ID Pool (รวมยอดเก่าคงเหลือสะสมใน R4-R27 ที่พ้นกรอบ 5 แรงค์ด้วยก่อนสร้าง Extra ID) มาลูปหาราคาแต่ละ Rank จาก Rank 18 ลงมาถึง Rank 2
           const minR2Price = RANK_PRICES_USDT[1] || 10;
           let spawnedExtraInPass = true;
           let guard = 0;
@@ -2122,7 +1917,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             spawnedExtraInPass = false;
             guard++;
 
-            for (let targetR = 27; targetR >= 2; targetR--) {
+            for (let targetR = 18; targetR >= 2; targetR--) {
               const r4To27Avail = eligibleSnaps.reduce((s, item) => s + Number(item.snapNode.nodeVault || 0), 0);
               const availPool = Number(r4To27Avail.toFixed(4));
               if (availPool + 1e-6 < minR2Price) break;
@@ -2669,9 +2464,9 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
 
       // คำนวณสถานะ Rank ปัจจุบันของ Idหลักนั้นๆ (โดยอ้างอิงจาก Rank 1 Main ID `r1MainId` เท่านั้น แยกอิสระรายรหัสหลัก)
       const getMainIdCurrentRank = (r1MainId: number, ownerAddr: string): number => {
-        if (r1MainId === 1) return 27;
+        if (r1MainId === 1) return 18;
         let maxR = 1;
-        for (let r = 27; r >= 1; r--) {
+        for (let r = 18; r >= 1; r--) {
           const snap = multiRankSnapshots.get(r);
           if (snap) {
             const corresp = getCorrespondingMainIdInRank(1, r1MainId, ownerAddr, r);
@@ -2753,9 +2548,9 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         }
       }
 
-      // Count actual spawned Auto Extra IDs (!isClone && isExtraId) from Rank 27 down to Rank 1 per Rank 1 Main ID (`r1MainId`)
+      // Count actual spawned Auto Extra IDs (!isClone && isExtraId) from Rank 18 down to Rank 1 per Rank 1 Main ID (`r1MainId`)
       // and accumulate any left-child rewards from EXTRA IDs back to their directSponsor
-      for (let r = 27; r >= 1; r--) {
+      for (let r = 18; r >= 1; r--) {
         const snapR = multiRankSnapshots.get(r);
         if (!snapR) continue;
         const rPrice = RANK_PRICES_USDT[r - 1] || 10;
@@ -2939,14 +2734,14 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             );
           }
 
-          // Pre-calculate Pool 3 (New Extra ID Pool: รวมยอดเก่าคงเหลือ + Ranks 4..27 + เม็ดซ้าย Extra ก่อนสร้าง Extra ID) breakdown per Rank 1 Main ID (`r1Id`)
+          // Pre-calculate Pool 3 (New Extra ID Pool: รวมยอดเก่าคงเหลือ + Ranks 4..18 + เม็ดซ้าย Extra ก่อนสร้าง Extra ID) breakdown per Rank 1 Main ID (`r1Id`)
           let totalGross4To27 = 0;
           let totalRem4To27 = 0;
           const extraGrossParts: string[] = [];
           const extraRemParts: string[] = [];
 
-          for (let r = 4; r <= 27; r++) {
-            if (curRank < 27 && r >= window5Start) continue;
+          for (let r = 4; r <= 18; r++) {
+            if (curRank < 18 && r >= window5Start) continue;
             const snapR = multiRankSnapshots.get(r);
             if (!snapR) continue;
             const correspId = getCorrespondingMainIdInRank(1, r1Id, n1.owner, r);
@@ -2984,7 +2779,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           if (typeof repExtraBonus === 'number') {
             remainingExtraLeftBonus = repExtraBonus;
           } else {
-            // Smart Contract & Database rules: Extra ID costs are absorbed by R4..27 vaults first
+            // Smart Contract & Database rules: Extra ID costs are absorbed by R4..18 vaults first
             const deductedFromR4To27 = Math.max(0, Number((totalGross4To27 - totalRem4To27).toFixed(4)));
             const remainingCostForBonus = Math.max(0, Number((totalExtraCostForMain - deductedFromR4To27).toFixed(4)));
             const deductedFromExtraLeftBonus = Math.min(extraLeftVaultBonusGross, remainingCostForBonus);
@@ -3083,7 +2878,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           }
         }
 
-        // ผู้แนะนำใน Rank 2-27 ห้ามเปลี่ยน! ต้องยึดตามผู้แนะนำเดิมของรหัสหลักนั้นจาก Rank 1 (snap1) เสมอ
+        // ผู้แนะนำใน Rank 2-18 ห้ามเปลี่ยน! ต้องยึดตามผู้แนะนำเดิมของรหัสหลักนั้นจาก Rank 1 (snap1) เสมอ
         if (activeRank > 1 && snap1) {
           if (n) {
             const localOrigin = originMainIdMap.get(nodeId) || nodeId;
@@ -3208,7 +3003,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         const ownerKey = n.owner.toLowerCase();
         const firstMainOfOwner = ownerPrimaryNodeMap.get(ownerKey) || n.id;
 
-        // 1. Check if this node was spawned as an Auto New Main ID from Pool 2 (Rank 1..3 Vault >= 5 USDT)
+        // 1. Check if this node was spawned as an Auto New Main ID from Pool 2 (Rank 1..3 Vault >= 10 USDT)
         if (!n.isClone && !n.isExtraId && n.id > firstMainOfOwner) {
           const explicitSponsorId = onChainSponsorNodeMap.get(n.id) || 0;
           const isBackendTaggedAuto =
@@ -3302,7 +3097,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
               ? Boolean(parent.isExtraId)
               : Boolean(parent.isExtraId || parentMainNode?.isExtraId);
 
-            // กฎหลัก Rank 2-27: ห้ามเปลี่ยนข้อมูล ผู้แนะนำตรง (Direct Sponsor)
+            // กฎหลัก Rank 2-18: ห้ามเปลี่ยนข้อมูล ผู้แนะนำตรง (Direct Sponsor)
             // 30% ค่าแนะนำตรง (Direct Sponsor) ต้องจ่ายให้ ผู้แนะนำตรงของโหนดที่วาง (อ้างอิงที่ Rank 1 เสมอ)
             const isId1Clone =
               n.isClone &&
@@ -3403,7 +3198,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                 activeRank >= 4 &&
                 (parentCurRank === 27 || activeRank < parentWindow5Start)
               ) {
-                // พ้นกรอบ 5 rank ย้อนหลังใน Rank 4-27 (หรืออยู่ Rank 27) -> เข้า New Extra ID Pool
+                // พ้นกรอบ 5 rank ย้อนหลังใน Rank 4-18 (หรืออยู่ Rank 27) -> เข้า New Extra ID Pool
                 lineageExtraIdVault.set(
                   parentMainId,
                   Number(((lineageExtraIdVault.get(parentMainId) || 0) + vaultUnit).toFixed(4))
@@ -3798,7 +3593,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         if (isRootMainItself || isRootClone) {
           directUplineNodeId = 0;
         } else if (activeRank > 1 && !isExtraOrigin) {
-          // กฎหลัก Rank 2-27: ห้ามเปลี่ยนข้อมูล ผู้แนะนำตรง (Direct Sponsor) ต้องอ้างอิงที่ Rank 1 เสมอ (ทั้ง Main ID และ Clone)
+          // กฎหลัก Rank 2-18: ห้ามเปลี่ยนข้อมูล ผู้แนะนำตรง (Direct Sponsor) ต้องอ้างอิงที่ Rank 1 เสมอ (ทั้ง Main ID และ Clone)
           let r1FoundSponsor = 0;
           if (snap1) {
             const userR1 =
@@ -3860,7 +3655,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         const hasLeftChild = n.leftChild > 0;
         const vaultBalance = hasLeftChild ? vaultUnit : 0;
 
-        // สถานะรหัสหลัก (MANUAL ID vs AUTO ID) ต้องยึดตามรหัสหลักใน Rank 1 (`r1MainId`) เสมอ ไม่ใช่เลขลำดับโหนดใน Rank 2-27 (`n.id`)
+        // สถานะรหัสหลัก (MANUAL ID vs AUTO ID) ต้องยึดตามรหัสหลักใน Rank 1 (`r1MainId`) เสมอ ไม่ใช่เลขลำดับโหนดใน Rank 2-18 (`n.id`)
         const effectiveR1MainId = isExtraOrigin
           ? 0
           : r1MainId || (activeRank === 1 ? n.id : originMainId);
@@ -3989,7 +3784,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         // รวบรวมยอดสะสม Vault (35%) ในแต่ละ Rank สำหรับ Idหลักนั้นๆ
         const mainVaultByRank: Record<number, number> = {};
         if (!isExtraLineage) {
-          for (let r = 1; r <= 27; r++) {
+          for (let r = 1; r <= 18; r++) {
             const snap = multiRankSnapshots.get(r);
             if (snap) {
               const corresp = getCorrespondingMainIdInRank(1, targetMainId, node.owner, r);
@@ -4407,7 +4202,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
     const poolAlerts: PoolQueueNotification[] = [];
     const seenPoolKeys = new Set<string>();
 
-    // 1. Gather from perIdReportsMap (covers all Ranks 1..27 from backend database)
+    // 1. Gather from perIdReportsMap (covers all Ranks 1..18 from backend database)
     for (const rep of perIdReportsMap.values()) {
       const repMainId = Number(rep.id || 0);
       if (repMainId <= 0) continue;
@@ -4433,7 +4228,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             owner: ownerStr,
             costUsdt: 5,
             isMyWallet: Boolean(userLower && ownerStr.toLowerCase() === userLower),
-            noteTh: `แตกตัวอัตโนมัติจากกระปุก New Auto ID Pool (5 USDT) ของ Main ID #${spMain} → วางต่อสายใต้ #${item.parentId || 1} (${sideVal === 'LEFT' ? '↙ ขาซ้าย' : '↘ ขาขวา'})`,
+            noteTh: `แตกตัวอัตโนมัติจากกระปุก New Auto ID Pool (10 USDT) ของ Main ID #${spMain} → วางต่อสายใต้ #${item.parentId || 1} (${sideVal === 'LEFT' ? '↙ ขาซ้าย' : '↘ ขาขวา'})`,
           });
         }
       }
@@ -4494,8 +4289,8 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             isReady,
             isMyWallet: isMine,
             noteTh: isReady
-              ? `🚨 พร้อมออก Auto ID ทันที! Main ID #${repMainId} มีสะสมครบ ${autoBal.toFixed(2)} / 5.00 USDT`
-              : `⏳ กำลังสะสม Auto ID Pool: Main ID #${repMainId} สะสมแล้ว ${autoBal.toFixed(2)} / 5.00 USDT (ขาดอีก ${rem.toFixed(2)} USDT)`,
+              ? `🚨 พร้อมออก Auto ID ทันที! Main ID #${repMainId} มีสะสมครบ ${autoBal.toFixed(2)} / 10.00 USDT`
+              : `⏳ กำลังสะสม Auto ID Pool: Main ID #${repMainId} สะสมแล้ว ${autoBal.toFixed(2)} / 10.00 USDT (ขาดอีก ${rem.toFixed(2)} USDT)`,
           });
         }
 
@@ -4509,7 +4304,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           const extraLeftB = Number(rep.extraLeftVaultBonus || 0);
           const grossBeforeDeduct = Number(rep.newExtraIdPoolGross || extraBal);
           const oldParts: string[] = [];
-          if (oldR4To27 > 0) oldParts.push(`ยอดเก่าสะสม R4-27: ${oldR4To27.toFixed(2)}U`);
+          if (oldR4To27 > 0) oldParts.push(`ยอดเก่าสะสม R4-18: ${oldR4To27.toFixed(2)}U`);
           if (extraLeftB > 0) oldParts.push(`เม็ดซ้าย Extra: ${extraLeftB.toFixed(2)}U`);
           const oldDetailStr = oldParts.length > 0 ? ` [รวมยอดเก่า: ${oldParts.join(' + ')}]` : '';
 
@@ -4557,7 +4352,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             owner: n.owner,
             costUsdt: 5,
             isMyWallet: isMine,
-            noteTh: `แตกตัวอัตโนมัติจากกระปุก New Auto ID Pool (5 USDT) ของ Main ID #${spMain} → วางต่อสายใต้ #${n.parentId} (${sideVal === 'LEFT' ? '↙ ขาซ้าย' : '↘ ขาขวา'})`,
+            noteTh: `แตกตัวอัตโนมัติจากกระปุก New Auto ID Pool (10 USDT) ของ Main ID #${spMain} → วางต่อสายใต้ #${n.parentId} (${sideVal === 'LEFT' ? '↙ ขาซ้าย' : '↘ ขาขวา'})`,
           });
         }
       }
@@ -4606,8 +4401,8 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             isReady,
             isMyWallet: isMine,
             noteTh: isReady
-              ? `🚨 พร้อมออก Auto ID ทันที! Main ID #${mId} มีสะสมครบ ${autoBal.toFixed(2)} / 5.00 USDT`
-              : `⏳ กำลังสะสม Auto ID Pool: Main ID #${mId} สะสมแล้ว ${autoBal.toFixed(2)} / 5.00 USDT (ขาดอีก ${rem.toFixed(2)} USDT)`,
+              ? `🚨 พร้อมออก Auto ID ทันที! Main ID #${mId} มีสะสมครบ ${autoBal.toFixed(2)} / 10.00 USDT`
+              : `⏳ กำลังสะสม Auto ID Pool: Main ID #${mId} สะสมแล้ว ${autoBal.toFixed(2)} / 10.00 USDT (ขาดอีก ${rem.toFixed(2)} USDT)`,
           });
         }
         if (extraBal > 0.001 && !seenPoolKeys.has(`pool-extra-${mId}`)) {
@@ -4742,7 +4537,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             category: 'POOL_READY',
             title:
               newReadyPool.category === 'AUTO_POOL'
-                ? `⚡ กระปุก Auto ID ครบ 5 USDT! (Main #${newReadyPool.mainId})`
+                ? `⚡ กระปุก Auto ID ครบ 10 USDT! (Main #${newReadyPool.mainId})`
                 : `⚡ กระปุก Extra ID พร้อมออกรหัส! (Main #${newReadyPool.mainId})`,
             subtitle: newReadyPool.noteTh,
             sourceMainId: newReadyPool.mainId,
@@ -5907,7 +5702,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         {/* Row 4d: กล่องแจ้งเตือน Auto ID และ กล่องแจ้งเตือน Extra ID (ซ่อนเมื่อปิดระบบแจ้งเตือน) */}
         {isAutoExtraPopupEnabled && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-            {/* Box 1: กล่องแจ้งเตือน Auto ID (กรอบทอง • Rank 1 • 5 USDT) */}
+            {/* Box 1: กล่องแจ้งเตือน Auto ID (กรอบทอง • Rank 1 • 10 USDT) */}
             <div
               onClick={() => {
                 setAutoExtraAlertTab('auto');
@@ -6000,7 +5795,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                   </div>
                 ) : (
                   <div className="text-slate-400 truncate">
-                    ⏳ เมื่อกระปุก New Auto ID Pool สะสมครบ 5.00 USDT ระบบจะแจ้งเตือนและแตก Auto ID อัตโนมัติทันที
+                    ⏳ เมื่อกระปุก New Auto ID Pool สะสมครบ 10.00 USDT ระบบจะแจ้งเตือนและแตก Auto ID อัตโนมัติทันที
                   </div>
                 )}
               </div>
@@ -6630,7 +6425,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         </div>
       </div>
 
-      {/* 3b. Rank 2-27 Single-Node On-Chain Info Strip */}
+      {/* 3b. Rank 2-18 Single-Node On-Chain Info Strip */}
       {selectedRank >= 2 && totalNodesInRank <= 1 && viewMode === 'onchain' && (
         <div className="rounded-2xl bg-indigo-950/35 border border-indigo-500/35 px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2.5 text-xs">
           <div className="text-indigo-200 flex items-center gap-2 flex-wrap">
@@ -6778,7 +6573,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                     {language === 'th' ? '📝 ฟอร์มสมัครสมาชิก DApp' : '📝 Register DApp Node'}
                   </h3>
                   <p className="text-[11px] text-slate-400">
-                    {language === 'th' ? 'ผัง Rank 1 (5 USDT ต่อโหนด)' : 'Rank 1 Matrix (5 USDT / Node)'}
+                    {language === 'th' ? 'ผัง Rank 1 (10 USDT ต่อโหนด)' : 'Rank 1 Matrix (10 USDT / Node)'}
                   </p>
                 </div>
               </div>
@@ -7496,11 +7291,11 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                         const defaultPools = [
                           {
                             poolNumber: 1,
-                            titleTh: 'กองที่ 1 : r-13 (300 USDT)',
-                            requiredSelfRank: 13,
-                            hasSelfRank: currentMaxR >= 13,
+                            titleTh: 'กองที่ 1 : r-11 (500 USDT)',
+                            requiredSelfRank: 11,
+                            hasSelfRank: currentMaxR >= 11,
                             requiredDirectCount: 5,
-                            allowedDirectRanksLabel: 'r-10 หรือ r-11 หรือ r-12 หรือ r-13',
+                            allowedDirectRanksLabel: 'r-8 หรือ r-9 หรือ r-10 หรือ r-11',
                             qualifiedDirectCount: 0,
                             qualifiedDirectIds: [] as Array<{ id: number; currentMaxRank: number }>,
                             isQualified: false,
@@ -7509,11 +7304,11 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                           },
                           {
                             poolNumber: 2,
-                            titleTh: 'กองที่ 2 : r-20 (1,000 USDT)',
-                            requiredSelfRank: 20,
-                            hasSelfRank: currentMaxR >= 20,
+                            titleTh: 'กองที่ 2 : r-14 (1,000 USDT)',
+                            requiredSelfRank: 14,
+                            hasSelfRank: currentMaxR >= 14,
                             requiredDirectCount: 2,
-                            allowedDirectRanksLabel: 'r-17 หรือ r-18 หรือ r-19 หรือ r-20',
+                            allowedDirectRanksLabel: 'r-12 หรือ r-13 หรือ r-14',
                             qualifiedDirectCount: 0,
                             qualifiedDirectIds: [] as Array<{ id: number; currentMaxRank: number }>,
                             isQualified: false,
@@ -7522,11 +7317,11 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                           },
                           {
                             poolNumber: 3,
-                            titleTh: 'กองที่ 3 : r-24 (5,000 USDT)',
-                            requiredSelfRank: 24,
-                            hasSelfRank: currentMaxR >= 24,
+                            titleTh: 'กองที่ 3 : r-16 (3,000 USDT)',
+                            requiredSelfRank: 16,
+                            hasSelfRank: currentMaxR >= 16,
                             requiredDirectCount: 2,
-                            allowedDirectRanksLabel: 'r-22 หรือ r-23 หรือ r-24',
+                            allowedDirectRanksLabel: 'r-14 หรือ r-15 หรือ r-16',
                             qualifiedDirectCount: 0,
                             qualifiedDirectIds: [] as Array<{ id: number; currentMaxRank: number }>,
                             isQualified: false,
@@ -7535,11 +7330,11 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                           },
                           {
                             poolNumber: 4,
-                            titleTh: 'กองที่ 4 : r-27 (10,000 USDT)',
-                            requiredSelfRank: 27,
-                            hasSelfRank: currentMaxR >= 27,
+                            titleTh: 'กองที่ 4 : r-18 (5,000 USDT)',
+                            requiredSelfRank: 18,
+                            hasSelfRank: currentMaxR >= 18,
                             requiredDirectCount: 5,
-                            allowedDirectRanksLabel: 'r-25 หรือ r-26 หรือ r-27',
+                            allowedDirectRanksLabel: 'r-16 หรือ r-17 หรือ r-18',
                             qualifiedDirectCount: 0,
                             qualifiedDirectIds: [] as Array<{ id: number; currentMaxRank: number }>,
                             isQualified: false,
@@ -8930,12 +8725,12 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                 const fallbackFourPools = [
                   {
                     poolNumber: 1,
-                    titleTh: 'กองที่ 1 : r-13 (300 USDT)',
-                    targetRank: 13,
-                    targetRankPriceUsdt: 300,
-                    requiredSelfRank: 13,
+                    titleTh: 'กองที่ 1 : r-11 (500 USDT)',
+                    targetRank: 11,
+                    targetRankPriceUsdt: 500,
+                    requiredSelfRank: 11,
                     requiredDirectCount: 5,
-                    allowedDirectRanksLabel: 'r-10 หรือ r-11 หรือ r-12 หรือ r-13',
+                    allowedDirectRanksLabel: 'r-8 หรือ r-9 หรือ r-10 หรือ r-11',
                     sharePercentOfAllSell: 25,
                     poolTotalUsdt: Number((totalAllSellUsdt * 0.25).toFixed(2)),
                     poolOnChainUsdt: Number((onChainAllSellBal * 0.25).toFixed(2)),
@@ -8945,12 +8740,12 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                   },
                   {
                     poolNumber: 2,
-                    titleTh: 'กองที่ 2 : r-20 (1,000 USDT)',
-                    targetRank: 20,
+                    titleTh: 'กองที่ 2 : r-14 (1,000 USDT)',
+                    targetRank: 14,
                     targetRankPriceUsdt: 1000,
-                    requiredSelfRank: 20,
+                    requiredSelfRank: 14,
                     requiredDirectCount: 2,
-                    allowedDirectRanksLabel: 'r-17 หรือ r-18 หรือ r-19 หรือ r-20',
+                    allowedDirectRanksLabel: 'r-12 หรือ r-13 หรือ r-14',
                     sharePercentOfAllSell: 25,
                     poolTotalUsdt: Number((totalAllSellUsdt * 0.25).toFixed(2)),
                     poolOnChainUsdt: Number((onChainAllSellBal * 0.25).toFixed(2)),
@@ -8960,12 +8755,12 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                   },
                   {
                     poolNumber: 3,
-                    titleTh: 'กองที่ 3 : r-24 (5,000 USDT)',
-                    targetRank: 24,
-                    targetRankPriceUsdt: 5000,
-                    requiredSelfRank: 24,
+                    titleTh: 'กองที่ 3 : r-16 (3,000 USDT)',
+                    targetRank: 16,
+                    targetRankPriceUsdt: 3000,
+                    requiredSelfRank: 16,
                     requiredDirectCount: 2,
-                    allowedDirectRanksLabel: 'r-22 หรือ r-23 หรือ r-24',
+                    allowedDirectRanksLabel: 'r-14 หรือ r-15 หรือ r-16',
                     sharePercentOfAllSell: 25,
                     poolTotalUsdt: Number((totalAllSellUsdt * 0.25).toFixed(2)),
                     poolOnChainUsdt: Number((onChainAllSellBal * 0.25).toFixed(2)),
@@ -8975,12 +8770,12 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                   },
                   {
                     poolNumber: 4,
-                    titleTh: 'กองที่ 4 : r-27 (10,000 USDT)',
-                    targetRank: 27,
-                    targetRankPriceUsdt: 10000,
-                    requiredSelfRank: 27,
+                    titleTh: 'กองที่ 4 : r-18 (5,000 USDT)',
+                    targetRank: 18,
+                    targetRankPriceUsdt: 5000,
+                    requiredSelfRank: 18,
                     requiredDirectCount: 5,
-                    allowedDirectRanksLabel: 'r-25 หรือ r-26 หรือ r-27',
+                    allowedDirectRanksLabel: 'r-16 หรือ r-17 หรือ r-18',
                     sharePercentOfAllSell: 25,
                     poolTotalUsdt: Number((totalAllSellUsdt * 0.25).toFixed(2)),
                     poolOnChainUsdt: Number((onChainAllSellBal * 0.25).toFixed(2)),
@@ -9667,7 +9462,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                 : `🟡 แจ้งเตือน Auto ID ใหม่! (Auto ID #18 • R1-#18)`,
               subtitle: sample
                 ? sample.noteTh
-                : `แตกตัวอัตโนมัติจากกระปุก New Auto ID Pool (5 USDT) ของ Main ID #1 → วางต่อสายใต้ #9 (↙ ขาซ้าย)`,
+                : `แตกตัวอัตโนมัติจากกระปุก New Auto ID Pool (10 USDT) ของ Main ID #1 → วางต่อสายใต้ #9 (↙ ขาซ้าย)`,
               sourceMainId: sample ? sample.sourceMainId : 1,
               parentId: sample ? sample.parentId : 9,
               side: sample ? sample.side : 'LEFT',
@@ -9790,7 +9585,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                         🟡 สรุป Auto ID (Rank 1)
                       </span>
                       <span className="px-2 py-0.5 rounded bg-amber-400 text-slate-950 font-black text-[10px]">
-                        5 USDT / รหัส
+                        10 USDT / รหัส
                       </span>
                     </div>
                     <div className="flex items-center justify-between">
@@ -9855,7 +9650,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                     </div>
                     <div className="text-[11px] text-slate-300 space-y-1 leading-relaxed">
                       <div>
-                        • <strong className="text-amber-300">Auto ID (กรอบทอง)</strong>: แตกอัตโนมัติใน Rank 1 เมื่อกระปุก New Auto ID Pool สะสมครบ <strong>5.00 USDT</strong>
+                        • <strong className="text-amber-300">Auto ID (กรอบทอง)</strong>: แตกอัตโนมัติใน Rank 1 เมื่อกระปุก New Auto ID Pool สะสมครบ <strong>10.00 USDT</strong>
                       </div>
                       <div>
                         • <strong className="text-red-300">Extra ID (กรอบแดง)</strong>: รวมยอดเก่าคงเหลือ + ยอดใหม่ในกระปุก New Extra ID Pool ก่อนสร้าง Extra ID เมื่อครบราคาผัง R27→R2 (เริ่ม 10 USDT)
@@ -9954,7 +9749,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
 
                         {filteredAutoList.length === 0 ? (
                           <div className="text-slate-400 py-5 text-center font-sans">
-                            ยังไม่มีรายการ Auto ID ในหมวดที่เลือก (เมื่อกระปุก New Auto ID Pool ครบ 5.00 USDT ระบบจะออก Auto ID และแจ้งเตือนที่นี่ทันที)
+                            ยังไม่มีรายการ Auto ID ในหมวดที่เลือก (เมื่อกระปุก New Auto ID Pool ครบ 10.00 USDT ระบบจะออก Auto ID และแจ้งเตือนที่นี่ทันที)
                           </div>
                         ) : (
                           <>
@@ -9979,7 +9774,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                                       )}
                                     </div>
                                     <span className="text-emerald-400 font-extrabold text-[11px]">
-                                      หักกระปุก 5.00 USDT
+                                      หักกระปุก 10.00 USDT
                                     </span>
                                   </div>
 

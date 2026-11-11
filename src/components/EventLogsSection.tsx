@@ -52,7 +52,7 @@ function createBscReadProvider(rpcUrl = BSC_TESTNET_RPC) {
 }
 
 function getFallbackRewardUsdt(rank: number, rewardType: string, unpaidTiersCount?: number): string {
-  const rankNum = Math.min(Math.max(Number(rank) || 1, 1), 27);
+  const rankNum = Math.min(Math.max(Number(rank) || 1, 1), 18);
   const unitPrice = RANK_PRICES_USDT[rankNum - 1] || 5;
   const upper = String(rewardType || '').toUpperCase();
 
@@ -891,8 +891,8 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
                   ? '📡 ประวัติการกระจายรางวัลสด'
                   : '📡 Live Reward Events'
                 : language === 'th'
-                ? '🚀 ประวัติการอัพแรงค์ (Rank 2 - 27)'
-                : '🚀 Rank Upgrade History (Rank 2 - 27)'}
+                ? '🚀 ประวัติการอัพแรงค์ (Rank 2 - 18)'
+                : '🚀 Rank Upgrade History (Rank 2 - 18)'}
             </h3>
             <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
               Chain ID: 97 • Local Indexer DB
@@ -1360,7 +1360,7 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
               )}
             </div>
 
-            {/* Individual ID Selector Chips (#1 .. #27) */}
+            {/* Individual ID Selector Chips (#1 .. #18) */}
             <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-800/80">
               <span className="text-slate-400 text-[11px] mr-1 font-semibold">เลือกดูเฉพาะ ID:</span>
               <button
@@ -1522,7 +1522,7 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
                     </div>
 
                     <div className="bg-fuchsia-950/30 border border-fuchsia-500/30 rounded-lg p-2.5">
-                      <span className="text-slate-400 block text-[10px]">5. Auto Extra ID (R2-27)</span>
+                      <span className="text-slate-400 block text-[10px]">5. Auto Extra ID (R2-18)</span>
                       <span className="text-fuchsia-300 font-bold text-sm">
                         {rep.autoExtraIdsSpawned.length} รหัส
                       </span>
@@ -1597,7 +1597,7 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
 
                           <div className="bg-slate-900/70 border border-fuchsia-500/30 rounded-lg p-2.5 space-y-1.5">
                             <div className="font-bold text-fuchsia-300">
-                              ✨ รายการ Auto Extra ID (R2-27) ของ ID #{rep.id} ({rep.autoExtraIdsSpawned.length})
+                              ✨ รายการ Auto Extra ID (R2-18) ของ ID #{rep.id} ({rep.autoExtraIdsSpawned.length})
                             </div>
                             {rep.autoExtraIdsSpawned.length === 0 ? (
                               <div className="text-slate-500 text-[11px]">ยังไม่มี Auto Extra ID ที่เกิดจากรหัสนี้</div>

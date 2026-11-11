@@ -321,7 +321,7 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
   const handleExecuteAdminUpgrade = async (e: React.FormEvent) => {
     e.preventDefault();
     const raw = upgradeTarget.trim().replace(/^#/, '');
-    const targetRankNum = Math.min(27, Math.max(2, parseInt(upgradeRank, 10) || 2));
+    const targetRankNum = Math.min(18, Math.max(2, parseInt(upgradeRank, 10) || 2));
     if (!raw) return;
 
     if (upgradeExecutionMode === 'onchain') {
@@ -605,7 +605,7 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
             { id: 'autopools', label: '2. สั่งแตก Auto / Extra ID (4)' },
             { id: 'allsell', label: '3. จัดการโอนจ่าย AllSell 4%' },
             { id: 'database', label: '4. สัญญา & ซิงค์ Database' },
-            { id: 'members', label: '5. รายชื่อรหัสหลัก & ตรวจ 27 แรงค์' },
+            { id: 'members', label: '5. รายชื่อรหัสหลัก & ตรวจ 18 แรงค์' },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -746,7 +746,7 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs text-slate-400 mb-1">แรงค์เป้าหมาย (Rank 2 ถึง 27)</label>
+                    <label className="block text-xs text-slate-400 mb-1">แรงค์เป้าหมาย (Rank 2 ถึง 18)</label>
                     <select
                       value={upgradeRank}
                       onChange={(e) => setUpgradeRank(e.target.value)}
@@ -1049,7 +1049,7 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4">
               <div className="border-b border-slate-800 pb-3">
                 <h3 className="text-sm font-bold text-amber-300">
-                  8 & 9. สั่งประมวลผลกระปุก Pool 2 เพื่อแตก Auto ID (5 USDT) ในผัง Rank 1
+                  8 & 9. สั่งประมวลผลกระปุก Pool 2 เพื่อแตก Auto ID (10 USDT) ในผัง Rank 1
                 </h3>
                 <p className="text-[11px] font-mono text-slate-400 mt-0.5">
                   checkAndProcessAutoNewMainIdForNode(uint256 _mainNodeId) & checkAndProcessAutoNewMainId(address _user)
@@ -1119,7 +1119,7 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4">
               <div className="border-b border-slate-800 pb-3">
                 <h3 className="text-sm font-bold text-rose-300">
-                  10 & 11. สั่งประมวลผลกระปุก Pool 3 เพื่อแตก Extra ID (Rank 2–27)
+                  10 & 11. สั่งประมวลผลกระปุก Pool 3 เพื่อแตก Extra ID (Rank 2–18)
                 </h3>
                 <p className="text-[11px] font-mono text-slate-400 mt-0.5">
                   checkAndProcessAutoExtraIdForNode(address _user, uint8 _currentRank, uint256 _sponsorNodeId)
@@ -1143,7 +1143,7 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
                     <input
                       type="number"
                       min={2}
-                      max={27}
+                      max={18}
                       value={autoExtraRank}
                       onChange={(e) => setAutoExtraRank(e.target.value)}
                       className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-white"
@@ -1366,7 +1366,7 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
                 <span>หมวดที่ 4.1: จัดการที่อยู่ Smart Contract & ล้างแคชฐานข้อมูล</span>
               </h3>
               <span className="text-xs font-mono text-emerald-400">
-                รวม {overview?.stats?.totalNodesAllRanks ?? 0} โหนด (27 แรงค์)
+                รวม {overview?.stats?.totalNodesAllRanks ?? 0} โหนด (18 แรงค์)
               </span>
             </div>
 
@@ -1428,7 +1428,7 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
                     setActionStatus({
                       type: 'loading',
                       title: 'กำลังซิงค์ข้อมูลจาก Smart Contract...',
-                      message: 'ดึงโหนดและกระปุกสะสมทั้ง 27 แรงค์จากเชน',
+                      message: 'ดึงโหนดและกระปุกสะสมทั้ง 18 แรงค์จากเชน',
                     });
                     await fetch('/api/db/sync', { method: 'POST' });
                     await fetchAdminOverview();
@@ -1439,7 +1439,7 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
                     setActionStatus({
                       type: 'success',
                       title: 'ซิงค์ข้อมูลสำเร็จ!',
-                      message: 'อัปเดตฐานข้อมูลตรงกับบนเชนทั้ง 27 แรงค์เรียบร้อยแล้ว',
+                      message: 'อัปเดตฐานข้อมูลตรงกับบนเชนทั้ง 18 แรงค์เรียบร้อยแล้ว',
                     });
                   }}
                   className="py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer"
@@ -1534,11 +1534,11 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
               </button>
             </div>
 
-            {/* Quick Rank 1-27 Inspector */}
+            {/* Quick Rank 1-18 Inspector */}
             <div className="pt-3 border-t border-slate-800/80 space-y-2.5">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-semibold text-slate-300">
-                  ตรวจสอบข้อมูลรายแรงค์ (Rank 1–27 Inspector)
+                  ตรวจสอบข้อมูลรายแรงค์ (Rank 1–18 Inspector)
                 </span>
                 <select
                   value={inspectRankNum}
@@ -1625,7 +1625,7 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
               </thead>
               <tbody className="divide-y divide-slate-800/60 font-mono tabular-nums">
                 {filteredMainIds.map((m: any) => {
-                  const nextR = Math.min(27, (m.currentRank || 1) + 1);
+                  const nextR = Math.min(18, (m.currentRank || 1) + 1);
                   return (
                     <tr key={m.mainId} className="hover:bg-slate-800/40">
                       <td className="py-2.5 px-3 font-bold text-white">#{m.mainId}</td>
@@ -1680,7 +1680,7 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
                           >
                             ตั้งค่าอัปแรงค์ #{m.mainId}
                           </button>
-                          {m.currentRank < 27 && (
+                          {m.currentRank < 18 && (
                             <button
                               type="button"
                               onClick={() => onAdminUpgrade(String(m.mainId), nextR)}

@@ -870,7 +870,7 @@ export function useWeb3() {
       try {
         price = await matrixContract.rankPrice(1);
       } catch {
-        price = ethers.parseUnits('5', usdtDecimals);
+        price = ethers.parseUnits('10', usdtDecimals);
       }
 
       // 3. Verify USDT Balance
@@ -937,7 +937,7 @@ export function useWeb3() {
 
       setTxState((prev) => ({
         ...prev,
-        step: 'กำลังตรวจสอบการอนุมัติเหรียญ (USDT Allowance 5 USDT)...',
+        step: 'กำลังตรวจสอบการอนุมัติเหรียญ (USDT Allowance 10 USDT)...',
       }));
 
       let currentAllowance: bigint = BigInt(0);
@@ -992,7 +992,7 @@ export function useWeb3() {
         step:
           autoParentId > 0
             ? `ขั้นตอนที่ 2/2: ส่งลงตำแหน่ง (ต่อติดตัวผู้แนะนำตรง/โคลนนิ่ง) Parent #${autoParentId} (${sideLabel})... กรุณายืนยันใน MetaMask`
-            : `ขั้นตอนที่ 2/2: ส่งคำสั่งสมัครใต้ผู้แนะนำ #${sponsorNodeId} ค่าสมัคร 5 USDT... กรุณายืนยันใน MetaMask`,
+            : `ขั้นตอนที่ 2/2: ส่งคำสั่งสมัครใต้ผู้แนะนำ #${sponsorNodeId} ค่าสมัคร 10 USDT... กรุณายืนยันใน MetaMask`,
       }));
 
       let regTx;
@@ -1033,7 +1033,7 @@ export function useWeb3() {
         successMessage:
           autoParentId > 0
             ? `🎉 สมัครสมาชิกสำเร็จ! ลงตำแหน่งออโต้ที่ Parent #${autoParentId} (${sideLabel}) ภายใต้ผู้แนะนำ #${sponsorNodeId} (จองผ่าน FIFO Queue)`
-            : `🎉 สมัครสมาชิก FractalFlowMatrix27 (Rank 1 - 5 USDT) สำเร็จเรียบร้อย! (Sponsor Node ID: #${sponsorNodeId})`,
+            : `🎉 สมัครสมาชิก FractalFlowMatrix27 (Rank 1 - 10 USDT) สำเร็จเรียบร้อย! (Sponsor Node ID: #${sponsorNodeId})`,
       });
 
       await fetch('/api/db/sync', { method: 'POST' }).catch(() => {});
@@ -1095,14 +1095,14 @@ export function useWeb3() {
       try {
         unitPrice = await matrixContract.rankPrice(1);
       } catch {
-        unitPrice = ethers.parseUnits('5', usdtDecimals);
+        unitPrice = ethers.parseUnits('10', usdtDecimals);
       }
 
       const totalCost = unitPrice * BigInt(count);
 
       setTxState((prev) => ({
         ...prev,
-        step: `ตรวจสอบสิทธิ์ USDT Allowance สำหรับ ${count} โหนด (รวม ${count * 5} USDT)...`,
+        step: `ตรวจสอบสิทธิ์ USDT Allowance สำหรับ ${count} โหนด (รวม ${count * 10} USDT)...`,
       }));
 
       const currentAllowance = await usdtContract.allowance(userAddr, currentContract);
@@ -1250,6 +1250,41 @@ export function useWeb3() {
             usdtDecimals = 18;
           }
 
+          // 1. Fetch exact on-chain current rank directly from contract to avoid ErrStepByStep / ErrRankActive
+          let onChainCurrentRank = 1;
+          try {
+            if (mIdNum > 0 && typeof matrixContract.getMainIdCurrentRank === 'function') {
+              onChainCurrentRank = Number(await matrixContract.getMainIdCurrentRank(BigInt(mIdNum)));
+            } else if (typeof matrixContract.users === 'function') {
+              const uAcc = await matrixContract.users(userAddr);
+              onChainCurrentRank = Number(uAcc.currentMaxRank || 1);
+            }
+          } catch {
+            onChainCurrentRank = 1;
+          }
+
+          if (targetRank <= onChainCurrentRank) {
+            setTxState({
+              isLoading: false,
+              step: '',
+              txHash: null,
+              error: `รหัสหลัก #${mIdNum} อยู่ใน Rank ${onChainCurrentRank} บนบล็อกเชนเรียบร้อยแล้ว (ไม่สามารถอัปเกรดย้อนหลังได้)`,
+              successMessage: null,
+            });
+            return;
+          }
+
+          if (targetRank !== onChainCurrentRank + 1) {
+            setTxState({
+              isLoading: false,
+              step: '',
+              txHash: null,
+              error: `เงื่อนไข Smart Contract กำหนดให้อัปเกรดทีละ 1 ขั้นตามลำดับ (ปัจจุบันอยู่ Rank ${onChainCurrentRank} ต้องอัปเกรดสู่ Rank ${onChainCurrentRank + 1} ก่อน)`,
+              successMessage: null,
+            });
+            return;
+          }
+
           let targetPrice: bigint;
           try {
             targetPrice = await matrixContract.rankPrice(targetRank);
@@ -1277,8 +1312,16 @@ export function useWeb3() {
           const vaultDeductedBn = savedInVault > targetPrice ? targetPrice : savedInVault;
           const formattedVaultDeducted = Number(ethers.formatUnits(vaultDeductedBn, usdtDecimals)).toFixed(2);
 
-          // Pre-check staticCall before asking for USDT approval if possible, or check allowance first
+          // Verify user has sufficient USDT in wallet for the difference
           if (amountToPay > BigInt(0)) {
+            const currentUsdtBal: bigint = await usdtContract.balanceOf(userAddr).catch(() => BigInt(0));
+            if (currentUsdtBal < amountToPay) {
+              const formattedHave = Number(ethers.formatUnits(currentUsdtBal, usdtDecimals)).toFixed(2);
+              throw new Error(
+                `เหรียญ USDT ในกระเป๋าไม่เพียงพอสำหรับชำระส่วนต่าง: ต้องใช้ ${formattedDiffUsdt} USDT (หักจากกระปุกแล้ว ${formattedVaultDeducted} USDT) แต่ในกระเป๋ามีเพียง ${formattedHave} USDT`
+              );
+            }
+
             setTxState((prev) => ({
               ...prev,
               step: `ตรวจสอบสิทธิ์อนุมัติเหรียญ USDT สำหรับเงินส่วนต่าง ${formattedDiffUsdt} USDT (หักลบ Vault ${formattedVaultDeducted} USDT)...`,
@@ -1291,7 +1334,7 @@ export function useWeb3() {
                 step: `ขั้นตอนที่ 1/2: กรุณากดยืนยันอนุมัติวงเงินส่วนต่าง ${formattedDiffUsdt} USDT ใน MetaMask...`,
               }));
               const approveTx = await usdtContract.approve(currentContract, ethers.MaxUint256, {
-                gasLimit: 100000n,
+                gasLimit: 120000n,
               });
               setTxState((prev) => ({
                 ...prev,
@@ -1304,6 +1347,7 @@ export function useWeb3() {
           }
 
           let upgradeTx: any = null;
+          const gasSettings = { gasLimit: 1200000n }; // Headroom for clone cascading and extra ID checks
 
           if (mIdNum > 0 && typeof matrixContract.upgradeRankForMainId === 'function') {
             await matrixContract.upgradeRankForMainId.staticCall(BigInt(mIdNum), Number(targetRank));
@@ -1311,14 +1355,28 @@ export function useWeb3() {
               ...prev,
               step: `กำลังส่งคำสั่งอัปเกรดแรงค์ ${targetRank} สำหรับรหัสหลัก #${mIdNum}... กรุณายืนยันใน MetaMask`,
             }));
-            upgradeTx = await matrixContract.upgradeRankForMainId(BigInt(mIdNum), Number(targetRank));
+            try {
+              const estimatedGas = await matrixContract.upgradeRankForMainId.estimateGas(BigInt(mIdNum), Number(targetRank));
+              upgradeTx = await matrixContract.upgradeRankForMainId(BigInt(mIdNum), Number(targetRank), {
+                gasLimit: (estimatedGas * 13n) / 10n + 50000n,
+              });
+            } catch {
+              upgradeTx = await matrixContract.upgradeRankForMainId(BigInt(mIdNum), Number(targetRank), gasSettings);
+            }
           } else {
             await matrixContract.upgradeRank.staticCall(Number(targetRank));
             setTxState((prev) => ({
               ...prev,
               step: `กำลังส่งคำสั่งอัปเกรดแรงค์ ${targetRank}... กรุณายืนยันใน MetaMask`,
             }));
-            upgradeTx = await matrixContract.upgradeRank(Number(targetRank));
+            try {
+              const estimatedGas = await matrixContract.upgradeRank.estimateGas(Number(targetRank));
+              upgradeTx = await matrixContract.upgradeRank(Number(targetRank), {
+                gasLimit: (estimatedGas * 13n) / 10n + 50000n,
+              });
+            } catch {
+              upgradeTx = await matrixContract.upgradeRank(Number(targetRank), gasSettings);
+            }
           }
 
           setTxState((prev) => ({
@@ -1505,12 +1563,12 @@ export function useWeb3() {
 
   // 4B. Process Auto Extra ID - Scoped to Main ID (Idหลักนั้นๆ)
   const handleProcessAutoExtraId = async (currentRank = 2, targetMainId?: number | string) => {
-    if (currentRank < 2 || currentRank > 27) {
+    if (currentRank < 2 || currentRank > 18) {
       setTxState({
         isLoading: false,
         step: '',
         txHash: null,
-        error: 'Auto Extra ID รองรับเฉพาะ Rank 2 ถึง Rank 27',
+        error: 'Auto Extra ID รองรับเฉพาะ Rank 2 ถึง Rank 18',
         successMessage: null,
       });
       return;
@@ -1707,8 +1765,8 @@ export function useWeb3() {
 
   const inspectRankData = useCallback(
     async (rank: number) => {
-      const rankNum = Math.min(Math.max(Number(rank) || 1, 1), 27);
-      const nextPriceNum = rankNum < 27 ? RANK_PRICES_USDT[rankNum] : 0;
+      const rankNum = Math.min(Math.max(Number(rank) || 1, 1), 18);
+      const nextPriceNum = rankNum < 18 ? RANK_PRICES_USDT[rankNum] : 0;
       const currentContract = contractAddressRef.current || CONTRACT_ADDRESS;
 
       // 1. Read from our Database first (/api/matrix/inspect-rank)

@@ -135,7 +135,7 @@ function getFiveRankWindow(currentRank: number): [number, number] {
  * Pure calculator function that takes a target Main ID and a prospective rank,
  * simulates the exact FractalFlowMatrix27 binary placement, 5-rank sliding window,
  * 35% left-branch vault accumulation, 100% right-branch rebirth clone cascade,
- * and R27 -> R2 Extra ID generation loop, returning the complete path and events.
+ * and R18 -> R2 Extra ID generation loop, returning the complete path and events.
  */
 export function calculateMatrixUpgradePath(
   multiRankSnapshots: Map<number, Map<number, SimRawNode>>,
@@ -144,11 +144,11 @@ export function calculateMatrixUpgradePath(
   perIdReportsMap?: Map<number, any>
 ): UpgradePathCalculationResult {
   const targetMainId = Math.max(1, Math.floor(targetMainIdInput || 2));
-  const prospectiveRank = Math.min(27, Math.max(2, Math.floor(prospectiveRankInput || 10)));
+  const prospectiveRank = Math.min(18, Math.max(2, Math.floor(prospectiveRankInput || 10)));
 
   // Deep-clone all 27 rank maps so simulation never mutates live UI state
   const simRanks = new Map<number, Map<number, SimRawNode>>();
-  for (let r = 1; r <= 27; r++) {
+  for (let r = 1; r <= 18; r++) {
     const srcMap = multiRankSnapshots.get(r);
     const clonedMap = new Map<number, SimRawNode>();
     if (srcMap) {
@@ -251,9 +251,9 @@ export function calculateMatrixUpgradePath(
   };
 
   const getMainCurrentRank = (r1Main: number): number => {
-    if (r1Main === 1) return 27;
+    if (r1Main === 1) return 18;
     let maxR = 1;
-    for (let r = 2; r <= 27; r++) {
+    for (let r = 2; r <= 18; r++) {
       if (getCorrespondingNodeInRank(r1Main, r) > 0) {
         maxR = r;
       }
@@ -263,7 +263,7 @@ export function calculateMatrixUpgradePath(
 
   // Track Extra ID left-child 35% bonus per R1 Main ID (`mainIdExtraPoolBonus`)
   const extraLeftBonusByMain = new Map<number, number>();
-  for (let r = 27; r >= 1; r--) {
+  for (let r = 18; r >= 1; r--) {
     const snapR = simRanks.get(r)!;
     const price = RANK_PRICES_USDT[r - 1] || 10;
     for (const sn of snapR.values()) {
@@ -283,8 +283,8 @@ export function calculateMatrixUpgradePath(
     }
   }
   // Subtract already-deducted Extra ID left-child bonus on-chain
-  // กฎเหล็ก Smart Contract: ต้นทุน Extra ID (totalExtraCost) จะถูกหักออกจากยอดสะสม R4..27 ก่อนเสมอ (deductedFromR4To27)
-  // ส่วนที่เกินจาก R4..27 เท่านั้นจึงจะนำมาหักออกจาก grossBonus (เม็ดซ้าย Extra ID)
+  // กฎเหล็ก Smart Contract: ต้นทุน Extra ID (totalExtraCost) จะถูกหักออกจากยอดสะสม R4..18 ก่อนเสมอ (deductedFromR4To27)
+  // ส่วนที่เกินจาก R4..18 เท่านั้นจึงจะนำมาหักออกจาก grossBonus (เม็ดซ้าย Extra ID)
   for (const r1Node of r1Map.values()) {
     if (r1Node.isClone || r1Node.isExtraId) continue;
     const mId = r1Node.id;
@@ -298,7 +298,7 @@ export function calculateMatrixUpgradePath(
 
     const grossBonus = extraLeftBonusByMain.get(mId) || 0;
     let totalExtraCost = 0;
-    for (let r = 2; r <= 27; r++) {
+    for (let r = 2; r <= 18; r++) {
       const snapR = simRanks.get(r)!;
       const price = RANK_PRICES_USDT[r - 1] || 10;
       for (const sn of snapR.values()) {
@@ -313,8 +313,8 @@ export function calculateMatrixUpgradePath(
     const [w5Start] = getFiveRankWindow(curRank);
     let grossR4To27 = 0;
     let remR4To27 = 0;
-    for (let r = 4; r <= 27; r++) {
-      if (curRank === 27 || r < w5Start) {
+    for (let r = 4; r <= 18; r++) {
+      if (curRank === 18 || r < w5Start) {
         const snapR = simRanks.get(r)!;
         const nId = getCorrespondingNodeInRank(mId, r);
         if (nId > 0) {
@@ -357,7 +357,7 @@ export function calculateMatrixUpgradePath(
 
   const calcUpgradeRankPool = (r1Main: number): number => {
     const curRank = getMainCurrentRank(r1Main);
-    if (curRank >= 27) return 0;
+    if (curRank >= 18) return 0;
     const [w5Start, w5End] = getFiveRankWindow(curRank);
     let total = 0;
     for (let r = w5Start; r <= w5End; r++) {
@@ -374,8 +374,8 @@ export function calculateMatrixUpgradePath(
     const curRank = getMainCurrentRank(r1Main);
     const [w5Start] = getFiveRankWindow(curRank);
     let total = extraLeftBonusByMain.get(r1Main) || 0;
-    for (let r = 4; r <= 27; r++) {
-      if (curRank === 27 || r < w5Start) {
+    for (let r = 4; r <= 18; r++) {
+      if (curRank === 18 || r < w5Start) {
         const nId = getCorrespondingNodeInRank(r1Main, r);
         if (nId > 0) {
           const n = simRanks.get(r)?.get(nId);
@@ -410,7 +410,7 @@ export function calculateMatrixUpgradePath(
     if (rem > 1e-6) {
       const curRank = getMainCurrentRank(r1Main);
       const [w5Start] = getFiveRankWindow(curRank);
-      const endR = curRank === 27 ? 27 : w5Start > 4 ? w5Start - 1 : 4;
+      const endR = curRank === 18 ? 27 : w5Start > 4 ? w5Start - 1 : 4;
       deductVaultRange(r1Main, 4, endR, rem);
     }
   };
@@ -695,7 +695,7 @@ export function calculateMatrixUpgradePath(
         ownerMainId: r1Main,
         parentId: spot.parentId,
         side: spot.isLeft ? 'LEFT' : 'RIGHT',
-        descriptionTh: `กระปุก Auto ID ของ Main #${r1Main} ครบ 5.00 U → แตก Auto ID R1-#${autoNode.id} วางใต้ R1-#${spot.parentId} (${spot.isLeft ? 'ซ้าย' : 'ขวา'})`,
+        descriptionTh: `กระปุก Auto ID ของ Main #${r1Main} ครบ 10.00 U → แตก Auto ID R1-#${autoNode.id} วางใต้ R1-#${spot.parentId} (${spot.isLeft ? 'ซ้าย' : 'ขวา'})`,
       };
       stepChainEvents.push(autoEv);
       allAutoIdEvents.push(autoEv);
@@ -725,7 +725,7 @@ export function calculateMatrixUpgradePath(
 
     for (let pass = 0; pass < 10; pass++) {
       let spawned = false;
-      for (let targetRank = 27; targetRank >= 2; targetRank--) {
+      for (let targetRank = 18; targetRank >= 2; targetRank--) {
         const poolBefore = calcExtraIdPool(r1Main);
         const price = RANK_PRICES_USDT[targetRank - 1] || 10;
         if (poolBefore + 1e-6 < price) continue;
@@ -760,7 +760,7 @@ export function calculateMatrixUpgradePath(
           poolBeforeUsdt: poolBefore,
           deductedUsdt: price,
           poolAfterUsdt: poolAfter,
-          triggeredByNote: `ลูป R27→R2 พบยอดสะสม ${poolBefore.toFixed(2)} U >= ${price.toFixed(2)} U (R${targetRank})`,
+          triggeredByNote: `ลูป R18→R2 พบยอดสะสม ${poolBefore.toFixed(2)} U >= ${price.toFixed(2)} U (R${targetRank})`,
         };
         stepExtraEvents.push(ev);
         allExtraIdEvents.push(ev);
@@ -910,8 +910,8 @@ export function calculateMatrixUpgradePath(
     sponsorFinalRank,
     targetWindow5Range: getFiveRankWindow(targetFinalRank),
     sponsorWindow5Range: getFiveRankWindow(sponsorFinalRank),
-    targetNextRankPriceUsdt: targetFinalRank < 27 ? (RANK_PRICES_USDT[targetFinalRank] || 0) : 0,
-    sponsorNextRankPriceUsdt: sponsorFinalRank < 27 ? (RANK_PRICES_USDT[sponsorFinalRank] || 0) : 0,
+    targetNextRankPriceUsdt: targetFinalRank < 18 ? (RANK_PRICES_USDT[targetFinalRank] || 0) : 0,
+    sponsorNextRankPriceUsdt: sponsorFinalRank < 18 ? (RANK_PRICES_USDT[sponsorFinalRank] || 0) : 0,
     finalSponsorAutoPoolUsdt: calcAutoIdPool(sponsorMainId),
     finalSponsorExtraPoolUsdt: calcExtraIdPool(sponsorMainId),
     finalTargetAutoPoolUsdt: calcAutoIdPool(targetMainId),
@@ -959,13 +959,13 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
     setTargetMainId(safeId);
     // Automatically set prospectiveRank to at least currentOnChainRank + 1 if needed
     let maxR = 1;
-    for (let r = 2; r <= 27; r++) {
+    for (let r = 2; r <= 18; r++) {
       const snap = multiRankSnapshots.get(r);
       if (snap && Array.from(snap.values()).some((n) => !n.isClone && !n.isExtraId && n.originMainId === safeId)) {
         maxR = r;
       }
     }
-    if (prospectiveRank <= maxR && maxR < 27) {
+    if (prospectiveRank <= maxR && maxR < 18) {
       setProspectiveRank(maxR + 1);
     }
   };
@@ -1009,7 +1009,7 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
             parentId: cr.parentId,
             side: cr.side,
             rankPriceUsdt: 5,
-            costOrDeduction: 'หัก 5.00 U จาก Auto Pool (R1-3)',
+            costOrDeduction: 'หัก 10.00 U จาก Auto Pool (R1-3)',
             descriptionTh: cr.descriptionTh,
           });
         } else if (cr.type === 'CLONE') {
@@ -1081,7 +1081,7 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
             </h3>
           </div>
           <p className="text-xs text-slate-400">
-            คำนวณเส้นทางการวางสายไบนารี่ ยอดสะสมเข้ากระปุก 35% ลูป R27→R2 สำหรับแตก Extra ID และปฏิกิริยาโคลนต่อเนื่องตามกฎ Smart Contract ปัจจุบัน
+            คำนวณเส้นทางการวางสายไบนารี่ ยอดสะสมเข้ากระปุก 35% ลูป R18→R2 สำหรับแตก Extra ID และปฏิกิริยาโคลนต่อเนื่องตามกฎ Smart Contract ปัจจุบัน
           </p>
         </div>
 
@@ -1167,9 +1167,9 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
           </div>
           <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
             {[
-              Math.min(27, calculation.currentOnChainRank + 1),
-              Math.min(27, calculation.currentOnChainRank + 2),
-              Math.min(27, calculation.currentOnChainRank + 3),
+              Math.min(18, calculation.currentOnChainRank + 1),
+              Math.min(18, calculation.currentOnChainRank + 2),
+              Math.min(18, calculation.currentOnChainRank + 3),
               15,
               20,
               27,
@@ -1237,7 +1237,7 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
             Main ID #{calculation.targetMainId} อยู่ใน Rank {calculation.currentOnChainRank} บนบล็อกเชนเรียบร้อยแล้ว
           </div>
           <p className="text-xs text-slate-400">
-            กรุณาเลือก Rank เป้าหมายตั้งแต่ <strong className="text-white">Rank {Math.min(27, calculation.currentOnChainRank + 1)}</strong> ขึ้นไป เพื่อคำนวณเส้นทางอัพเกรดและการเกิด Extra ID ล่วงหน้า
+            กรุณาเลือก Rank เป้าหมายตั้งแต่ <strong className="text-white">Rank {Math.min(18, calculation.currentOnChainRank + 1)}</strong> ขึ้นไป เพื่อคำนวณเส้นทางอัพเกรดและการเกิด Extra ID ล่วงหน้า
           </p>
         </div>
       ) : (
@@ -1303,7 +1303,7 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
                   </div>
 
                   {/* Next Rank progress after simulation */}
-                  {calculation.targetFinalRank < 27 && (
+                  {calculation.targetFinalRank < 18 && (
                     <div className="pt-0.5 space-y-0.5 text-[10px]">
                       <div className="flex items-center justify-between text-slate-400">
                         <span>สะสมสำหรับ Rank {calculation.targetFinalRank + 1} ต่อไป:</span>
@@ -1329,20 +1329,20 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
             <div className="rounded-lg bg-slate-950 border border-amber-500/30 p-2.5 space-y-1">
               <div className="flex items-center justify-between text-amber-300 font-bold">
                 <span>🤖 สรุปยอด Auto ID Pool (Rank 1-3)</span>
-                <span className="text-[10px] text-slate-400 font-normal">เกณฑ์: ครบ 5.00 U แตก 1 Auto ID</span>
+                <span className="text-[10px] text-slate-400 font-normal">เกณฑ์: ครบ 10.00 U แตก 1 Auto ID</span>
               </div>
               <div className="space-y-1 font-mono text-[11px] pt-1 border-t border-slate-800/80">
                 <div className="flex items-center justify-between">
                   <span className="text-slate-300">Main #{calculation.sponsorMainId} (Sponsor):</span>
                   <span className="text-amber-300 font-bold">
-                    สะสม {calculation.finalSponsorAutoPoolUsdt.toFixed(2)} / 5.00 U
+                    สะสม {calculation.finalSponsorAutoPoolUsdt.toFixed(2)} / 10.00 U
                     {calculation.sponsorAutoIdEvents.length > 0 ? (
                       <span className="text-emerald-400 ml-1">(แตกใหม่ +{calculation.sponsorAutoIdEvents.length} รหัส)</span>
                     ) : (
                       <span className="text-slate-400 font-normal text-[10px] ml-1">
                         {calculation.finalSponsorAutoPoolUsdt >= 5
                           ? ''
-                          : `(ขาดอีก ${(5.0 - calculation.finalSponsorAutoPoolUsdt).toFixed(2)} U)`}
+                          : `(ขาดอีก ${(10.0 - calculation.finalSponsorAutoPoolUsdt).toFixed(2)} U)`}
                       </span>
                     )}
                   </span>
@@ -1350,14 +1350,14 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
                 <div className="flex items-center justify-between">
                   <span className="text-slate-300">Main #{calculation.targetMainId} (Target):</span>
                   <span className="text-amber-300 font-bold">
-                    สะสม {calculation.finalTargetAutoPoolUsdt.toFixed(2)} / 5.00 U
+                    สะสม {calculation.finalTargetAutoPoolUsdt.toFixed(2)} / 10.00 U
                     {calculation.targetAutoIdEvents.length > 0 ? (
                       <span className="text-emerald-400 ml-1">(แตกใหม่ +{calculation.targetAutoIdEvents.length} รหัส)</span>
                     ) : (
                       <span className="text-slate-400 font-normal text-[10px] ml-1">
                         {calculation.finalTargetAutoPoolUsdt >= 5
                           ? ''
-                          : `(ขาดอีก ${(5.0 - calculation.finalTargetAutoPoolUsdt).toFixed(2)} U)`}
+                          : `(ขาดอีก ${(10.0 - calculation.finalTargetAutoPoolUsdt).toFixed(2)} U)`}
                       </span>
                     )}
                   </span>
@@ -1369,7 +1369,7 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
             <div className="rounded-lg bg-slate-950 border border-fuchsia-500/30 p-2.5 space-y-1">
               <div className="flex items-center justify-between text-fuchsia-300 font-bold">
                 <span>⚡ สรุปยอด Extra ID Pool (Rank 4-27)</span>
-                <span className="text-[10px] text-slate-400 font-normal">เกณฑ์: ลูป R27→R2 แตก Extra ID</span>
+                <span className="text-[10px] text-slate-400 font-normal">เกณฑ์: ลูป R18→R2 แตก Extra ID</span>
               </div>
               <div className="space-y-1 font-mono text-[11px] pt-1 border-t border-slate-800/80">
                 <div className="flex items-center justify-between">
@@ -1572,7 +1572,7 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
                                     <span className="font-bold text-amber-300">
                                       🤖 Main #{ae.ownerMainId} เกิด Auto ID ที่ Rank 1
                                     </span>
-                                    <span className="text-rose-300 font-bold">-5.00 U</span>
+                                    <span className="text-rose-300 font-bold">-10.00 U</span>
                                   </div>
                                   <div className="text-[11px] text-slate-300">
                                     โหนดใหม่:{' '}

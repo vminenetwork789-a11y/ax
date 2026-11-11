@@ -10,9 +10,8 @@ export type RewardType =
   | 'FAMILY_POOL_OVERFLOW';
 
 export const RANK_PRICES_USDT: number[] = [
-  5, 10, 20, 30, 40, 50, 60, 70, 80, 90,
-  100, 200, 300, 400, 500, 600, 700, 800, 900, 1000,
-  2000, 3000, 4000, 5000, 6000, 8000, 10000,
+  10, 20, 30, 40, 50, 60, 80, 100, 200, 300,
+  500, 700, 900, 1000, 2000, 3000, 4000, 5000,
 ];
 
 export interface UserAccountModel {
@@ -70,10 +69,10 @@ export const inMemoryDB = {
         owner: '0x7Ab09d1a90CA26a0E0eBF06758de668C848D700D',
         sponsor: null,
         sponsorMainNodeId: '0',
-        currentMaxRank: 27,
+        currentMaxRank: 18,
         createdAt: new Date(Date.now() - 86400000 * 10).toISOString(),
         updatedAt: new Date().toISOString(),
-        vaults: Array.from({ length: 27 }, (_, i) => ({
+        vaults: Array.from({ length: 18 }, (_, i) => ({
           id: `v-root-${i + 1}`,
           owner: '0x7Ab09d1a90CA26a0E0eBF06758de668C848D700D',
           rank: i + 1,
@@ -214,7 +213,7 @@ export async function registerUserAccount(owner: string, sponsor?: string, spons
       currentMaxRank: 1,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      vaults: Array.from({ length: 27 }, (_, i) => ({
+      vaults: Array.from({ length: 18 }, (_, i) => ({
         id: `v-${owner}-${i + 1}`,
         owner,
         rank: i + 1,

@@ -114,7 +114,7 @@ export const UserProfileCard: React.FC<UserProfileCardProps> = ({
             id="statRank"
             className="text-base sm:text-xl font-bold text-emerald-400 mt-1.5 sm:mt-2 font-mono tabular-nums truncate"
           >
-            Rank {profile?.currentMaxRank || 1} / 27
+            Rank {profile?.currentMaxRank || 1} / 18
           </h3>
         </div>
 

@@ -189,8 +189,8 @@ export const FAQSection: React.FC<FAQSectionProps> = ({
         category: 'ranks',
         questionTh: 'Upgrade Vault (35%) สะสมอย่างไร และนำไปอัปเกรดระดับ Rank ได้อย่างไร?',
         questionEn: 'How does the Upgrade Vault (35%) accumulate and trigger rank upgrades?',
-        tagsTh: ['Upgrade Vault', 'Rank 1-27', 'สะสมเงิน', 'อัปเกรด'],
-        tagsEn: ['Upgrade Vault', 'Rank 1-27', 'Accumulation', 'Upgrade'],
+        tagsTh: ['Upgrade Vault', 'Rank 1-18', 'สะสมเงิน', 'อัปเกรด'],
+        tagsEn: ['Upgrade Vault', 'Rank 1-18', 'Accumulation', 'Upgrade'],
         answerTh: (
           <div className="space-y-3 text-slate-300 leading-relaxed text-sm">
             <p>
@@ -200,7 +200,7 @@ export const FAQSection: React.FC<FAQSectionProps> = ({
             <div className="p-3 bg-slate-950/60 rounded-xl border border-slate-700/50 text-xs space-y-1.5">
               <div className="flex justify-between text-slate-300">
                 <span>ราคาเริ่มต้น Rank 1:</span>
-                <span className="text-emerald-400 font-mono font-semibold">5.00 USDT</span>
+                <span className="text-emerald-400 font-mono font-semibold">10.00 USDT</span>
               </div>
               <div className="flex justify-between text-slate-300">
                 <span>ราคาอัปเกรด Rank 2:</span>
@@ -208,7 +208,7 @@ export const FAQSection: React.FC<FAQSectionProps> = ({
               </div>
               <div className="flex justify-between text-slate-300">
                 <span>จำนวนระดับ Rank ทั้งหมด:</span>
-                <span className="text-indigo-400 font-mono font-semibold">27 Ranks (สูงสุด 10,000 USDT)</span>
+                <span className="text-indigo-400 font-mono font-semibold">18 Ranks (สูงสุด 5,000 USDT)</span>
               </div>
             </div>
             <p className="text-xs text-slate-400">
@@ -225,7 +225,7 @@ export const FAQSection: React.FC<FAQSectionProps> = ({
             <div className="p-3 bg-slate-950/60 rounded-xl border border-slate-700/50 text-xs space-y-1.5">
               <div className="flex justify-between text-slate-300">
                 <span>Rank 1 Entry Fee:</span>
-                <span className="text-emerald-400 font-mono font-semibold">5.00 USDT</span>
+                <span className="text-emerald-400 font-mono font-semibold">10.00 USDT</span>
               </div>
               <div className="flex justify-between text-slate-300">
                 <span>Rank 2 Upgrade Cost:</span>
@@ -233,7 +233,7 @@ export const FAQSection: React.FC<FAQSectionProps> = ({
               </div>
               <div className="flex justify-between text-slate-300">
                 <span>Total Supported Ranks:</span>
-                <span className="text-indigo-400 font-mono font-semibold">27 Ranks (Up to 10,000 USDT)</span>
+                <span className="text-indigo-400 font-mono font-semibold">18 Ranks (Up to 5,000 USDT)</span>
               </div>
             </div>
             <p className="text-xs text-slate-400">
@@ -279,21 +279,21 @@ export const FAQSection: React.FC<FAQSectionProps> = ({
                   <strong>นิยาม:</strong> รหัสใน Rank 1 ถึง 3 ที่หลุดพ้นจากช่วง 5 rank ย้อนหลังของรหัสหลักนั้นแล้ว
                 </span>
                 <span className="text-slate-400">
-                  เมื่อสะสมครบ 5.00 USDT ปลดล็อกสิทธิ์สร้าง <strong>Auto New Main ID</strong> ใหม่ได้ทันที (เงินแยก ไม่ใช้เหรียญในกระเป๋า)
+                  เมื่อสะสมครบ 10.00 USDT ปลดล็อกสิทธิ์สร้าง <strong>Auto New Main ID</strong> ใหม่ได้ทันที (เงินแยก ไม่ใช้เหรียญในกระเป๋า)
                 </span>
               </div>
 
               <div className="p-3 rounded-lg bg-slate-950/70 border border-cyan-500/30">
                 <span className="text-cyan-400 font-bold block mb-1">
-                  3. New Extra ID Pool: ยอดสะสม Vault (35%) ใน Rank 4 ถึง 27
+                  3. New Extra ID Pool: ยอดสะสม Vault (35%) ใน Rank 4 ถึง 18
                 </span>
                 <span className="text-slate-300 block mb-1">
                   <strong>สูตร:</strong>
-                  <br />• สถานะ rank ปัจจุบันต่ำกว่า 27: ยอดสะสม Vault (35%) ใน Rank 4 ถึง 27 ลบด้วย 5 rank ย้อนหลังของรหัสหลักนั้น
-                  <br />• สถานะ rank ปัจจุบันเท่ากับ 27: ยอดสะสม Vault (35%) ใน Rank 4 ถึง 27 ทั้งหมด
+                  <br />• สถานะ rank ปัจจุบันต่ำกว่า 18: ยอดสะสม Vault (35%) ใน Rank 4 ถึง 18 ลบด้วย 5 rank ย้อนหลังของรหัสหลักนั้น
+                  <br />• สถานะ rank ปัจจุบันเท่ากับ 18: ยอดสะสม Vault (35%) ใน Rank 4 ถึง 18 ทั้งหมด
                 </span>
                 <span className="text-slate-400">
-                  <strong>การเกิด:</strong> นำยอด <strong>New Extra ID Pool</strong> มาลูปหาราคาแต่ละ Rank จาก <strong>Rank 27 ลงมาถึง Rank 2</strong> เมื่อยอดสะสมครบตามราคาของ Rank ใด จะปลดล็อกสร้าง <strong>Auto Extra ID</strong> ใน Rank นั้นทันที
+                  <strong>การเกิด:</strong> นำยอด <strong>New Extra ID Pool</strong> มาลูปหาราคาแต่ละ Rank จาก <strong>Rank 18 ลงมาถึง Rank 2</strong> เมื่อยอดสะสมครบตามราคาของ Rank ใด จะปลดล็อกสร้าง <strong>Auto Extra ID</strong> ใน Rank นั้นทันที
                 </span>
               </div>
             </div>
@@ -314,11 +314,11 @@ export const FAQSection: React.FC<FAQSectionProps> = ({
               </div>
               <div className="p-3 rounded-lg bg-slate-950/70 border border-yellow-500/30">
                 <span className="text-yellow-400 font-bold block mb-1">2. New Auto ID Pool</span>
-                <span>Vault (35%) in Rank 1 to 3 minus 5 ranks backwards. Unlocks +1 Auto New Main ID upon reaching 5.00 USDT (separate funds, not wallet balance).</span>
+                <span>Vault (35%) in Rank 1 to 3 minus 5 ranks backwards. Unlocks +1 Auto New Main ID upon reaching 10.00 USDT (separate funds, not wallet balance).</span>
               </div>
               <div className="p-3 rounded-lg bg-slate-950/70 border border-cyan-500/30">
                 <span className="text-cyan-400 font-bold block mb-1">3. New Extra ID Pool</span>
-                <span>If current rank &lt; 27: Vault (35%) in Rank 4 to 27 minus 5 ranks backwards. If current rank == 27: Vault (35%) in Rank 4 to 27 in full. Unlocks Auto Extra ID in Rank 2-27 when reaching target rank price.</span>
+                <span>If current rank &lt; 27: Vault (35%) in Rank 4 to 18 minus 5 ranks backwards. If current rank == 18: Vault (35%) in Rank 4 to 18 in full. Unlocks Auto Extra ID in Rank 2-18 when reaching target rank price.</span>
               </div>
             </div>
           </div>
@@ -327,10 +327,10 @@ export const FAQSection: React.FC<FAQSectionProps> = ({
       {
         id: 'main-vs-extra-id',
         category: 'ranks',
-        questionTh: 'Main ID และ Auto Extra ID (Rank 2-27) แตกต่างกันอย่างไร?',
-        questionEn: 'What is the distinction between Main ID and Auto Extra ID (Rank 2-27)?',
-        tagsTh: ['Main ID', 'Auto Extra ID', 'Rank 2-27'],
-        tagsEn: ['Main ID', 'Auto Extra ID', 'Rank 2-27'],
+        questionTh: 'Main ID และ Auto Extra ID (Rank 2-18) แตกต่างกันอย่างไร?',
+        questionEn: 'What is the distinction between Main ID and Auto Extra ID (Rank 2-18)?',
+        tagsTh: ['Main ID', 'Auto Extra ID', 'Rank 2-18'],
+        tagsEn: ['Main ID', 'Auto Extra ID', 'Rank 2-18'],
         answerTh: (
           <div className="space-y-3 text-slate-300 leading-relaxed text-sm">
             <p>
@@ -344,9 +344,9 @@ export const FAQSection: React.FC<FAQSectionProps> = ({
                 </span>
               </div>
               <div className="p-2.5 rounded-lg bg-slate-950/60 border border-fuchsia-500/30">
-                <span className="text-fuchsia-300 font-semibold block mb-0.5">⭐ Auto Extra ID (Rank 2 ถึง Rank 27):</span>
+                <span className="text-fuchsia-300 font-semibold block mb-0.5">⭐ Auto Extra ID (Rank 2 ถึง Rank 18):</span>
                 <span>
-                  <strong>การเกิด:</strong> สะสมครบตาม ราคา Rank เป้าหมาย ปลดล็อกสร้าง Auto Extra ID ใน Rank 2-27 เพื่อสร้างสายงานแยกคู่ขนานและรับผลตอบแทนทวีคูณในแต่ละ Rank
+                  <strong>การเกิด:</strong> สะสมครบตาม ราคา Rank เป้าหมาย ปลดล็อกสร้าง Auto Extra ID ใน Rank 2-18 เพื่อสร้างสายงานแยกคู่ขนานและรับผลตอบแทนทวีคูณในแต่ละ Rank
                 </span>
               </div>
             </div>
@@ -365,9 +365,9 @@ export const FAQSection: React.FC<FAQSectionProps> = ({
                 </span>
               </div>
               <div className="p-2.5 rounded-lg bg-slate-950/60 border border-fuchsia-500/30">
-                <span className="text-fuchsia-300 font-semibold block mb-0.5">⭐ Auto Extra ID (Rank 2 to 27):</span>
+                <span className="text-fuchsia-300 font-semibold block mb-0.5">⭐ Auto Extra ID (Rank 2 to 18):</span>
                 <span>
-                  Unlocks Auto Extra ID in Rank 2-27 once New Extra ID Pool accumulates the target Rank price, allowing automated Extra ID nodes to build independent sub-matrices.
+                  Unlocks Auto Extra ID in Rank 2-18 once New Extra ID Pool accumulates the target Rank price, allowing automated Extra ID nodes to build independent sub-matrices.
                 </span>
               </div>
             </div>
@@ -457,7 +457,7 @@ export const FAQSection: React.FC<FAQSectionProps> = ({
               </div>
               <div className="bg-slate-950/60 p-2.5 rounded-lg border border-emerald-500/20">
                 <span className="font-semibold text-emerald-400 block">2. USDT (BEP-20)</span>
-                <span className="text-slate-400">ใช้สำหรับการสมัครสมาชิกและการอัปเกรด Rank โดยเริ่มต้นที่ 5 USDT สำหรับ Rank 1</span>
+                <span className="text-slate-400">ใช้สำหรับการสมัครสมาชิกและการอัปเกรด Rank โดยเริ่มต้นที่ 10 USDT สำหรับ Rank 1</span>
               </div>
             </div>
           </div>
@@ -475,7 +475,7 @@ export const FAQSection: React.FC<FAQSectionProps> = ({
               </div>
               <div className="bg-slate-950/60 p-2.5 rounded-lg border border-emerald-500/20">
                 <span className="font-semibold text-emerald-400 block">2. USDT (BEP-20)</span>
-                <span className="text-slate-400">Used for entry fees and rank upgrades (e.g. 5 USDT for Rank 1).</span>
+                <span className="text-slate-400">Used for entry fees and rank upgrades (e.g. 10 USDT for Rank 1).</span>
               </div>
             </div>
           </div>

@@ -138,7 +138,7 @@ export const RankInspectorAndAdminPanel: React.FC<RankInspectorAndAdminPanelProp
   const handleAdminSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!adminUserAddr) return;
-    const parsedRank = Math.min(27, Math.max(2, parseInt(adminTargetRankText.replace(/[^0-9]/g, ''), 10) || 2));
+    const parsedRank = Math.min(18, Math.max(2, parseInt(adminTargetRankText.replace(/[^0-9]/g, ''), 10) || 2));
     setAdminTargetRankText(String(parsedRank));
     onAdminUpgrade(adminUserAddr.trim(), parsedRank);
   };
@@ -335,7 +335,7 @@ export const RankInspectorAndAdminPanel: React.FC<RankInspectorAndAdminPanelProp
           <div className="grid grid-cols-2 gap-2">
             <div>
               <label className="block text-[10px] uppercase font-semibold text-slate-400 mb-1">
-                Target Rank (2-27)
+                Target Rank (2-18)
               </label>
               <input
                 type="text"
@@ -343,7 +343,7 @@ export const RankInspectorAndAdminPanel: React.FC<RankInspectorAndAdminPanelProp
                 id="adminTargetRank"
                 value={adminTargetRankText}
                 onChange={(e) => setAdminTargetRankText(e.target.value)}
-                placeholder="เช่น 2 - 27"
+                placeholder="เช่น 2 - 18"
                 className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-emerald-500 font-mono"
               />
             </div>

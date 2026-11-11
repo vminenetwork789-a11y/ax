@@ -1,9 +1,10 @@
 export const DEFAULT_CONTRACT_ADDRESS =
-  import.meta.env?.VITE_CONTRACT_ADDRESS || '0x3B69efbd1f615cD31E326497555BFA56a194F935';
+  import.meta.env?.VITE_CONTRACT_ADDRESS || '0xE6ef0985E12C5BC580A231DCc6d977CcEdE716d1';
 export const DEFAULT_USDT_ADDRESS =
   import.meta.env?.VITE_USDT_ADDRESS || '0x05f24E1F598DF1aE8d0B424ce978f8ea33bB752b';
 
 const LEGACY_CONTRACT_ADDRESSES = new Set([
+  '0xda9da3b56b75f5d59ac0b17b402e79dd3dddffba',
   '0x104d65034b00f0db59497036208f3b798b4c10cc',
   '0x0742e9581217cc8cd6de2aa80b7ce9ad881deee3',
   '0xc5cf23d0cead13a08b3b3d968a052b956a64fbc6',
@@ -38,6 +39,8 @@ const LEGACY_CONTRACT_ADDRESSES = new Set([
   '0x36932dca76922f8f05513710db89238258e61378',
   '0xee087e0318a8ac20229892bbc63d2fe43809234d',
   '0x982a87f726cc1044a546fa853a425e6f445bca3d',
+  '0x3b69efbd1f615cd31e326497555bfa56a194f935',
+  '0x792cd37f508b97e4f86d8747fe7888a281dd1158',
 ]);
 
 const LEGACY_USDT_ADDRESSES = new Set([
@@ -132,13 +135,12 @@ export function clearDynamicContractConfig() {
   }
 }
 
-export const MAX_RANK = 27;
+export const MAX_RANK = 18;
 export const MAX_LEVELS = 15;
 
 export const RANK_PRICES_USDT: number[] = [
-  5, 10, 20, 30, 40, 50, 60, 70, 80, 90,
-  100, 200, 300, 400, 500, 600, 700, 800, 900, 1000,
-  2000, 3000, 4000, 5000, 6000, 8000, 10000,
+  10, 20, 30, 40, 50, 60, 80, 100, 200, 300,
+  500, 700, 900, 1000, 2000, 3000, 4000, 5000,
 ];
 
 export interface NetworkConfig {
@@ -315,12 +317,13 @@ export interface RankDefinition {
   vaultPercent: number; // 35%
   allSellPercent: number; // 4%
   botPercent: number; // 1%
-  tierGroup: 'Starter (1-10)' | 'Growth (11-20)' | 'Whale (21-27)';
+  tierGroup: 'Starter (1-6)' | 'Growth (7-12)' | 'Whale (13-18)';
 }
 
 export const RANK_DEFINITIONS: RankDefinition[] = RANK_PRICES_USDT.map((price, idx) => {
   const rank = idx + 1;
-  const tierGroup = rank <= 10 ? 'Starter (1-10)' : rank <= 20 ? 'Growth (11-20)' : 'Whale (21-27)';
+  const tierGroup: 'Starter (1-6)' | 'Growth (7-12)' | 'Whale (13-18)' =
+    rank <= 6 ? 'Starter (1-6)' : rank <= 12 ? 'Growth (7-12)' : 'Whale (13-18)';
   return {
     rank,
     nameEn: `Rank ${rank} Matrix`,

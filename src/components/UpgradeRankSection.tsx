@@ -42,9 +42,9 @@ export const UpgradeRankSection: React.FC<UpgradeRankSectionProps> = ({
   window5Start = Math.max(1, (currentRank || 1) - 4),
   window5End = currentRank || 1,
 }) => {
-  const nextStepRank = Math.min(Math.max(2, (currentRank || 1) + 1), 27);
+  const nextStepRank = Math.min(Math.max(2, (currentRank || 1) + 1), 18);
   const [selectedRank, setSelectedRank] = useState<number>(nextStepRank);
-  const [tierGroupTab, setTierGroupTab] = useState<'Starter (1-10)' | 'Growth (11-20)' | 'Whale (21-27)'>('Starter (1-10)');
+  const [tierGroupTab, setTierGroupTab] = useState<'Starter (1-6)' | 'Growth (7-12)' | 'Whale (13-18)'>('Starter (1-6)');
   const [showAutoIdInfo, setShowAutoIdInfo] = useState<boolean>(false);
   const [upgradeLogs, setUpgradeLogs] = useState<RankUpgradeLog[]>([]);
   const [historyFilter, setHistoryFilter] = useState<'all' | 'mainId'>('all');
@@ -90,11 +90,11 @@ export const UpgradeRankSection: React.FC<UpgradeRankSectionProps> = ({
   }, [fetchUpgradeHistory, currentRank, selectedMainId]);
 
   useEffect(() => {
-    const nextR = Math.min(Math.max(2, (currentRank || 1) + 1), 27);
+    const nextR = Math.min(Math.max(2, (currentRank || 1) + 1), 18);
     setSelectedRank(nextR);
-    if (nextR <= 10) setTierGroupTab('Starter (1-10)');
-    else if (nextR <= 20) setTierGroupTab('Growth (11-20)');
-    else setTierGroupTab('Whale (21-27)');
+    if (nextR <= 6) setTierGroupTab('Starter (1-6)');
+    else if (nextR <= 12) setTierGroupTab('Growth (7-12)');
+    else setTierGroupTab('Whale (13-18)');
   }, [currentRank, selectedMainId]);
 
   const targetRankDef = RANK_DEFINITIONS.find((r) => r.rank === selectedRank);
@@ -105,10 +105,10 @@ export const UpgradeRankSection: React.FC<UpgradeRankSectionProps> = ({
 
   const visibleRanks = RANK_DEFINITIONS.filter((r) => r.rank >= 2 && r.tierGroup === tierGroupTab);
 
-  // เงื่อนไข Auto Extra ID: นำยอด New Extra ID Pool มาลูปหาราคาแต่ละ Rank จาก Rank 27 ลงมาถึง Rank 2
+  // เงื่อนไข Auto Extra ID: นำยอด New Extra ID Pool มาลูปหาราคาแต่ละ Rank จาก Rank 18 ลงมาถึง Rank 2
   const { targetExtraRank, targetExtraPrice, isExtraReady } = React.useMemo(() => {
     const poolBal = Number(newExtraIdPool || 0);
-    for (let r = 27; r >= 2; r--) {
+    for (let r = 18; r >= 2; r--) {
       const def = RANK_DEFINITIONS.find((d) => d.rank === r);
       const price = def?.priceUSDT || 10;
       if (poolBal + 1e-6 >= price) {
@@ -120,7 +120,7 @@ export const UpgradeRankSection: React.FC<UpgradeRankSectionProps> = ({
     return { targetExtraRank: 2, targetExtraPrice: minPrice, isExtraReady: false };
   }, [newExtraIdPool]);
 
-  const isMainReady = (newAutoIdPool || 0) >= 5.0;
+  const isMainReady = (newAutoIdPool || 0) >= 10.0;
 
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 sm:p-6 shadow-xl relative overflow-hidden space-y-4">
@@ -131,7 +131,7 @@ export const UpgradeRankSection: React.FC<UpgradeRankSectionProps> = ({
         <div>
           <div className="flex items-center gap-2">
             <span className="text-base sm:text-lg font-bold text-indigo-400">
-              {language === 'th' ? '🚀 อัปเกรดแรงค์ 2 - 27' : '🚀 Rank Progression (Rank 2 - 27)'}
+              {language === 'th' ? '🚀 อัปเกรดแรงค์ 2 - 27' : '🚀 Rank Progression (Rank 2 - 18)'}
             </span>
           </div>
           <p className="text-[11px] text-slate-400 mt-0.5">
@@ -146,7 +146,7 @@ export const UpgradeRankSection: React.FC<UpgradeRankSectionProps> = ({
             {language === 'th' ? `สถานะ ID #${selectedMainId}:` : `ID #${selectedMainId} Rank:`}
           </span>
           <span className="text-xs font-mono font-bold px-2.5 py-1 rounded-lg bg-slate-800 text-emerald-400 border border-slate-700">
-            Rank {currentRank || 1} / 27
+            Rank {currentRank || 1} / 18
           </span>
         </div>
       </div>
@@ -316,11 +316,11 @@ export const UpgradeRankSection: React.FC<UpgradeRankSectionProps> = ({
             <span className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-semibold ${
               isMainReady ? 'bg-yellow-500/20 text-yellow-300 border border-yellow-400/40' : 'bg-slate-800 text-slate-400'
             }`}>
-              {isMainReady ? '✓ พร้อมออกรหัส' : `ขาด ${(Math.max(0, 5.0 - newAutoIdPool)).toFixed(2)} U`}
+              {isMainReady ? '✓ พร้อมออกรหัส' : `ขาด ${(Math.max(0, 10.0 - newAutoIdPool)).toFixed(2)} U`}
             </span>
           </div>
           <div className="font-mono text-lg font-extrabold text-yellow-300">
-            {newAutoIdPool.toFixed(2)} <span className="text-xs font-normal text-slate-400">/ 5.00 USDT</span>
+            {newAutoIdPool.toFixed(2)} <span className="text-xs font-normal text-slate-400">/ 10.00 USDT</span>
           </div>
           <div className="text-[10px] text-slate-400 leading-tight">
             {language === 'th'
@@ -344,15 +344,15 @@ export const UpgradeRankSection: React.FC<UpgradeRankSectionProps> = ({
           </div>
           <div className="text-[10px] text-slate-400 leading-tight">
             {language === 'th'
-              ? `เงื่อนไข Auto Extra ID: นำยอด New Extra ID Pool มาลูปหาราคาแต่ละ Rank จาก Rank 27 ลงมาถึง Rank 2 (เป้าหมาย R${targetExtraRank}: ${targetExtraPrice} USDT)`
-              : `Loops New Extra ID Pool from Rank 27 down to Rank 2 to match Rank price (Target R${targetExtraRank}: ${targetExtraPrice} USDT)`}
+              ? `เงื่อนไข Auto Extra ID: นำยอด New Extra ID Pool มาลูปหาราคาแต่ละ Rank จาก Rank 18 ลงมาถึง Rank 2 (เป้าหมาย R${targetExtraRank}: ${targetExtraPrice} USDT)`
+              : `Loops New Extra ID Pool from Rank 18 down to Rank 2 to match Rank price (Target R${targetExtraRank}: ${targetExtraPrice} USDT)`}
           </div>
         </div>
       </div>
 
       {/* Tier Group Tabs (Ranks 2-10, 11-20, 21-27) */}
       <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
-        {(['Starter (1-10)', 'Growth (11-20)', 'Whale (21-27)'] as const).map((group) => (
+        {(['Starter (1-6)', 'Growth (7-12)', 'Whale (13-18)'] as const).map((group) => (
           <button
             key={group}
             type="button"
@@ -433,13 +433,13 @@ export const UpgradeRankSection: React.FC<UpgradeRankSectionProps> = ({
       {/* Selected Rank Action Summary & Smart Contract Auto-ID Triggers */}
       {targetRankDef && (
         <div className="bg-slate-950/90 border border-slate-800/90 rounded-xl p-4 space-y-3">
-          {currentRank >= 27 ? (
+          {currentRank >= 18 ? (
             <div className="p-3 bg-amber-500/10 border border-amber-500/30 text-amber-300 rounded-xl text-xs font-bold flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
               <span>
                 {language === 'th'
-                  ? `👑 รหัสหลัก #${selectedMainId} อยู่ใน Rank สูงสุด (Rank 27 - Max Rank) เรียบร้อยแล้ว`
-                  : `👑 Main ID #${selectedMainId} is already at Max Rank (Rank 27)`}
+                  ? `👑 รหัสหลัก #${selectedMainId} อยู่ใน Rank สูงสุด (Rank 18 - Max Rank) เรียบร้อยแล้ว`
+                  : `👑 Main ID #${selectedMainId} is already at Max Rank (Rank 18)`}
               </span>
             </div>
           ) : currentRank >= targetRankDef.rank ? (
@@ -454,12 +454,12 @@ export const UpgradeRankSection: React.FC<UpgradeRankSectionProps> = ({
               </div>
               <button
                 type="button"
-                onClick={() => setSelectedRank(Math.min(27, currentRank + 1))}
+                onClick={() => setSelectedRank(Math.min(18, currentRank + 1))}
                 className="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs transition cursor-pointer shadow"
               >
                 {language === 'th'
-                  ? `สลับไป Next Step (Rank ${Math.min(27, currentRank + 1)})`
-                  : `Switch to Next Step (Rank ${Math.min(27, currentRank + 1)})`}
+                  ? `สลับไป Next Step (Rank ${Math.min(18, currentRank + 1)})`
+                  : `Switch to Next Step (Rank ${Math.min(18, currentRank + 1)})`}
               </button>
             </div>
           ) : (
@@ -561,12 +561,12 @@ export const UpgradeRankSection: React.FC<UpgradeRankSectionProps> = ({
                     title={
                       isMainReady
                         ? `กดเพื่อสร้าง Auto New Main ID สำหรับรหัสหลัก #${selectedMainId} ทันที`
-                        : `ยอดสะสม New Auto ID Pool ปัจจุบัน ${(newAutoIdPool || 0).toFixed(2)}/5.00 USDT (ยังไม่ถึงเกณฑ์ 5.00 USDT)`
+                        : `ยอดสะสม New Auto ID Pool ปัจจุบัน ${(newAutoIdPool || 0).toFixed(2)}/10.00 USDT (ยังไม่ถึงเกณฑ์ 10.00 USDT)`
                     }
                   >
                     <span className={`w-2 h-2 rounded-full ${isMainReady ? 'bg-amber-400 animate-pulse' : 'bg-slate-500'}`} />
                     <span>
-                      + Auto New Main ID ({(newAutoIdPool || 0).toFixed(2)}/5.00 U)
+                      + Auto New Main ID ({(newAutoIdPool || 0).toFixed(2)}/10.00 U)
                     </span>
                   </button>
 
@@ -581,15 +581,15 @@ export const UpgradeRankSection: React.FC<UpgradeRankSectionProps> = ({
                     }`}
                     title={
                       isExtraReady
-                        ? `ปลดล็อกสิทธิ์แล้ว! นำยอด New Extra ID Pool ลูปจาก Rank 27 ลงมาถึง Rank 2 พบราคาตรงกับ Rank ${targetExtraRank} (${targetExtraPrice} USDT) กดเพื่อสร้าง Auto Extra ID ทันที`
-                        : `เงื่อนไข Auto Extra ID: นำยอด New Extra ID Pool มาลูปหาราคาแต่ละ Rank จาก Rank 27 ลงมาถึง Rank 2 (ขั้นต่ำ Rank 2 = 10 USDT, ปัจจุบันมี ${(newExtraIdPool || 0).toFixed(2)} USDT)`
+                        ? `ปลดล็อกสิทธิ์แล้ว! นำยอด New Extra ID Pool ลูปจาก Rank 18 ลงมาถึง Rank 2 พบราคาตรงกับ Rank ${targetExtraRank} (${targetExtraPrice} USDT) กดเพื่อสร้าง Auto Extra ID ทันที`
+                        : `เงื่อนไข Auto Extra ID: นำยอด New Extra ID Pool มาลูปหาราคาแต่ละ Rank จาก Rank 18 ลงมาถึง Rank 2 (ขั้นต่ำ Rank 2 = 10 USDT, ปัจจุบันมี ${(newExtraIdPool || 0).toFixed(2)} USDT)`
                     }
                   >
                     <span className={`w-2 h-2 rounded-full ${isExtraReady ? 'bg-cyan-400 animate-pulse' : 'bg-slate-500'}`} />
                     <span>
                       {isExtraReady
-                        ? `🔓 ปลดล็อก + Auto Extra ID (ลูป R27→R2 ได้ R${targetExtraRank}: ${(newExtraIdPool || 0).toFixed(2)}/${targetExtraPrice} U)`
-                        : `+ Auto Extra ID (ลูป R27→R2 • R${targetExtraRank}: ${(newExtraIdPool || 0).toFixed(2)}/${targetExtraPrice} U)`}
+                        ? `🔓 ปลดล็อก + Auto Extra ID (ลูป R18→R2 ได้ R${targetExtraRank}: ${(newExtraIdPool || 0).toFixed(2)}/${targetExtraPrice} U)`
+                        : `+ Auto Extra ID (ลูป R18→R2 • R${targetExtraRank}: ${(newExtraIdPool || 0).toFixed(2)}/${targetExtraPrice} U)`}
                     </span>
                   </button>
                 </div>
@@ -612,12 +612,12 @@ export const UpgradeRankSection: React.FC<UpgradeRankSectionProps> = ({
                       <strong className="text-amber-400">1. Upgrade Rank Pool:</strong> ยอดสะสม Vault (35%) ของ 5 rank ย้อนหลัง (ของ ID #{selectedMainId} ปัจจุบันคือ R{window5Start} - R{window5End}) ถูกนำมาใช้ปลดล็อกอัปเกรดสู่แรงค์ถัดไปโดยอัตโนมัติ
                     </li>
                     <li>
-                      <strong className="text-yellow-400">2. New Auto ID Pool:</strong> ยอดสะสม Vault (35%) ใน Rank 1 ถึง 3 ลบด้วย 5 rank ย้อนหลังของรหัสหลักนั้น (สะสมครบ 5.00 USDT ปลดล็อกสิทธิ์สร้าง Auto New Main ID ทันที เงินแยก ไม่ใช้เหรียญในกระเป๋า)
+                      <strong className="text-yellow-400">2. New Auto ID Pool:</strong> ยอดสะสม Vault (35%) ใน Rank 1 ถึง 3 ลบด้วย 5 rank ย้อนหลังของรหัสหลักนั้น (สะสมครบ 10.00 USDT ปลดล็อกสิทธิ์สร้าง Auto New Main ID ทันที เงินแยก ไม่ใช้เหรียญในกระเป๋า)
                     </li>
                     <li>
                       <strong className="text-cyan-400">3. New Extra ID Pool (เงื่อนไขการเกิด Auto Extra ID):</strong>
                       <span className="block mt-0.5 text-slate-200">
-                        • <strong className="text-cyan-300">การเกิด:</strong> นำยอด New Extra ID Pool มาลูปหาราคาแต่ละ Rank จาก <strong>Rank 27 ลงมาถึง Rank 2</strong> เมื่อยอดสะสมถึงราคาของ Rank ใดจะปลดล็อกสร้าง Auto Extra ID ใน Rank นั้นทันที
+                        • <strong className="text-cyan-300">การเกิด:</strong> นำยอด New Extra ID Pool มาลูปหาราคาแต่ละ Rank จาก <strong>Rank 18 ลงมาถึง Rank 2</strong> เมื่อยอดสะสมถึงราคาของ Rank ใดจะปลดล็อกสร้าง Auto Extra ID ใน Rank นั้นทันที
                       </span>
                       <span className="block text-slate-200">
                         • <strong className="text-emerald-300">การใช้เงิน:</strong> ใช้เงินจาก Pool ของรหัสหลักนั้นโดยตรง ไม่หักเหรียญ USDT ในกระเป๋าส่วนตัว

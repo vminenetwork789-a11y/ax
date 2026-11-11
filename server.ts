@@ -162,10 +162,34 @@ export function broadcastAllMatrixUpdates() {
 dotenv.config();
 
 // Prevent transient public RPC errors from crashing the server process in production
-process.on('unhandledRejection', (reason) => {
+process.on('unhandledRejection', (reason: any) => {
+  const reasonStr = reason ? (reason.stack || reason.message || String(reason)) : '';
+  // Silently ignore benign ethers/RPC cancellation during provider teardown or network drops
+  if (
+    reasonStr.includes('provider destroyed') ||
+    reasonStr.includes('cancelled request') ||
+    reasonStr.includes('eth_unsubscribe') ||
+    reasonStr.includes('UNSUPPORTED_OPERATION') ||
+    reasonStr.includes('WebSocket is not open') ||
+    reasonStr.includes('connection reset') ||
+    reasonStr.includes('ECONNRESET') ||
+    reasonStr.includes('ETIMEDOUT')
+  ) {
+    return;
+  }
   console.warn('[Process Guard] Unhandled Rejection:', reason);
 });
-process.on('uncaughtException', (err) => {
+process.on('uncaughtException', (err: any) => {
+  const errStr = err ? (err.stack || err.message || String(err)) : '';
+  if (
+    errStr.includes('provider destroyed') ||
+    errStr.includes('cancelled request') ||
+    errStr.includes('eth_unsubscribe') ||
+    errStr.includes('UNSUPPORTED_OPERATION') ||
+    errStr.includes('WebSocket is not open')
+  ) {
+    return;
+  }
   console.warn('[Process Guard] Uncaught Exception:', err);
 });
 
@@ -185,7 +209,7 @@ const DEFAULT_SYSTEM_CONFIG = {
   contractAddress:
     process.env.OVERRIDE_CONTRACT_ADDRESS ||
     process.env.CONTRACT_ADDRESS ||
-    '0x3B69efbd1f615cD31E326497555BFA56a194F935',
+    '0xE6ef0985E12C5BC580A231DCc6d977CcEdE716d1',
   usdtAddress: process.env.USDT_ADDRESS || '0x05f24E1F598DF1aE8d0B424ce978f8ea33bB752b',
   chainId: Number(process.env.CHAIN_ID || 97),
   networkName: process.env.NETWORK_NAME || 'BNB Smart Chain Testnet',
@@ -195,6 +219,7 @@ const DEFAULT_SYSTEM_CONFIG = {
 };
 
 const SERVER_LEGACY_CONTRACTS = new Set([
+  '0xda9da3b56b75f5d59ac0b17b402e79dd3dddffba',
   '0x104d65034b00f0db59497036208f3b798b4c10cc',
   '0x0742e9581217cc8cd6de2aa80b7ce9ad881deee3',
   '0xc5cf23d0cead13a08b3b3d968a052b956a64fbc6',
@@ -229,6 +254,8 @@ const SERVER_LEGACY_CONTRACTS = new Set([
   '0x36932dca76922f8f05513710db89238258e61378',
   '0xee087e0318a8ac20229892bbc63d2fe43809234d',
   '0x982a87f726cc1044a546fa853a425e6f445bca3d',
+  '0x3b69efbd1f615cd31e326497555bfa56a194f935',
+  '0x792cd37f508b97e4f86d8747fe7888a281dd1158',
 ]);
 
 const SERVER_LEGACY_USDT = new Set([
@@ -238,9 +265,7 @@ const SERVER_LEGACY_USDT = new Set([
 // ==========================================
 // POSTGRESQL POOL & INTEGRATION
 // ==========================================
-const PG_DATABASE_URL =
-  process.env.DATABASE_URL ||
-  'postgresql://user:Siriphong2541%40@187.124.138.252:32772/Aunza';
+const PG_DATABASE_URL = process.env.DATABASE_URL || '';
 
 let pgPool: pg.Pool | null = null;
 let pgConnected = false;
@@ -248,6 +273,11 @@ let pgLastError: string | null = null;
 let pgTablesCount: Record<string, number> = {};
 
 function initPostgresPool() {
+  if (!PG_DATABASE_URL) {
+    pgConnected = false;
+    pgLastError = 'Using local JSON Matrix DB (DATABASE_URL not configured)';
+    return;
+  }
   try {
     pgPool = new Pool({
       connectionString: PG_DATABASE_URL,
@@ -258,14 +288,12 @@ function initPostgresPool() {
     });
 
     pgPool.on('error', (err: Error) => {
-      console.warn('⚠️ [PostgreSQL Pool Error]:', err.message);
       pgConnected = false;
       pgLastError = err.message;
     });
 
     pgPool.query('SELECT current_database(), current_user, version()', (err, res) => {
       if (err) {
-        console.warn('⚠️ [PostgreSQL] Initial connection test failed:', err.message);
         pgConnected = false;
         pgLastError = err.message;
       } else {
@@ -278,7 +306,7 @@ function initPostgresPool() {
       }
     });
   } catch (err: any) {
-    console.warn('⚠️ [PostgreSQL] Failed to initialize pool:', err?.message || err);
+    pgConnected = false;
     pgLastError = err?.message || String(err);
   }
 }
@@ -377,7 +405,7 @@ async function recordPostgresActivity(activity: {
 async function syncAllMatrixDBToPostgres() {
   if (!pgPool || !pgConnected) return;
   try {
-    for (let r = 1; r <= 27; r++) {
+    for (let r = 1; r <= 18; r++) {
       const rNodes = matrixDB.nodesByRank[r] || [];
       if (rNodes.length <= 1 && r > 1) continue;
       for (const n of rNodes) {
@@ -563,9 +591,8 @@ type RewardType =
   | 'DIRECT_ID1_CLONE_FAMILY_POOL';
 
 const RANK_PRICES_USDT: number[] = [
-  5, 10, 20, 30, 40, 50, 60, 70, 80, 90,
-  100, 200, 300, 400, 500, 600, 700, 800, 900, 1000,
-  2000, 3000, 4000, 5000, 6000, 8000, 10000,
+  10, 20, 30, 40, 50, 60, 80, 100, 200, 300,
+  500, 700, 900, 1000, 2000, 3000, 4000, 5000,
 ];
 
 interface UserVaultModel {
@@ -683,7 +710,7 @@ const MATRIX_DB_FILE_PATH = path.resolve(__dirname, 'prisma/matrix-db.json');
 
 function createEmptyMatrixDB(contractAddr = CONTRACT_ADDRESS, usdtAddr = USDT_ADDRESS): PersistentMatrixDatabase {
   const defaultCounts: Record<number, number> = {};
-  for (let r = 1; r <= 27; r++) defaultCounts[r] = 1;
+  for (let r = 1; r <= 18; r++) defaultCounts[r] = 1;
   return {
     contractAddress: contractAddr,
     usdtAddress: usdtAddr,
@@ -713,11 +740,43 @@ function loadMatrixDBFromDisk(): PersistentMatrixDatabase {
         parsed.contractAddress &&
         parsed.contractAddress.toLowerCase() === CONTRACT_ADDRESS.toLowerCase()
       ) {
-        return {
+        let strippedAny = false;
+        if (parsed.nodesByRank) {
+          for (let r = 1; r <= 18; r++) {
+            const rList = parsed.nodesByRank[r];
+            if (!Array.isArray(rList)) continue;
+            const realNodes = rList.filter((n) => !n.isSyntheticExtra);
+            if (realNodes.length !== rList.length) {
+              strippedAny = true;
+            }
+            const realIds = new Set(realNodes.map((n) => n.id));
+            for (const n of realNodes) {
+              if (n.leftChild > 0 && !realIds.has(n.leftChild)) n.leftChild = 0;
+              if (n.rightChild > 0 && !realIds.has(n.rightChild)) n.rightChild = 0;
+              if (n.rawNodeVault !== undefined && n.rawNodeVault >= 0) {
+                n.nodeVault = Number(n.rawNodeVault);
+                n.reconciledBaseVault = Number(n.rawNodeVault);
+              }
+            }
+            parsed.nodesByRank[r] = realNodes;
+            if (parsed.rankCounts) {
+              parsed.rankCounts[r] = Math.max(1, realNodes.length);
+            }
+          }
+        }
+        const loaded = {
           ...createEmptyMatrixDB(CONTRACT_ADDRESS, USDT_ADDRESS),
           ...parsed,
           upgradeLogs: Array.isArray(parsed.upgradeLogs) ? parsed.upgradeLogs : [],
         };
+        if (strippedAny) {
+          try {
+            fs.writeFileSync(MATRIX_DB_FILE_PATH, JSON.stringify(loaded, null, 2), 'utf8');
+          } catch {
+            // Non-blocking
+          }
+        }
+        return loaded;
       }
     }
   } catch (err) {
@@ -765,7 +824,7 @@ function ensurePersistentNodeTimestamps() {
   let missingAny = false;
   const seenTimes = new Set<string>();
   const staleCutoffMs = 1793900000000; // Refresh any legacy hardcoded Nov 5 (1793853600000) timestamps
-  for (let r = 1; r <= 27; r++) {
+  for (let r = 1; r <= 18; r++) {
     for (const n of matrixDB.nodesByRank[r] || []) {
       const tMs = n.createdAt ? new Date(n.createdAt).getTime() : 0;
       if (!n.createdAt || !tMs || tMs <= staleCutoffMs || seenTimes.has(n.createdAt)) {
@@ -780,7 +839,7 @@ function ensurePersistentNodeTimestamps() {
 
   // Build a deterministic chronological sequence across all ranks anchored to current time
   const orderedNodes: IndexedTreeNode[] = [];
-  for (let r = 1; r <= 27; r++) {
+  for (let r = 1; r <= 18; r++) {
     const rList = (matrixDB.nodesByRank[r] || []).slice().sort((a, b) => a.id - b.id);
     for (const n of rList) {
       orderedNodes.push(n);
@@ -825,7 +884,7 @@ function rebuildDatabaseRewardLogsFromNodes() {
   const reconstructed: RewardLogModel[] = [...liveTxEvents];
   const baseBlock = matrixDB.lastSyncedBlock || 99850000;
 
-  for (let rankNum = 1; rankNum <= 27; rankNum++) {
+  for (let rankNum = 1; rankNum <= 18; rankNum++) {
     const rNodes = matrixDB.nodesByRank[rankNum] || [];
     if (rNodes.length <= 1) continue;
 
@@ -925,7 +984,7 @@ function rebuildDatabaseRewardLogsFromNodes() {
       const eventTime =
         child.createdAt ||
         new Date(
-          Date.now() - (Math.max(0, rNodes.length - id) * 2000 + Math.max(0, 27 - rankNum) * 1000)
+          Date.now() - (Math.max(0, rNodes.length - id) * 2000 + Math.max(0, 18 - rankNum) * 1000)
         ).toISOString();
 
       const parentOrigin = nodesMap.get(parent.originMainId || parent.id) || parent;
@@ -1213,7 +1272,7 @@ function rebuildDatabaseUpgradeLogsFromNodes() {
   const baseBlock = matrixDB.lastSyncedBlock || 140018600;
   const upgrades: UpgradeLogModel[] = [];
 
-  for (let rankNum = 2; rankNum <= 27; rankNum++) {
+  for (let rankNum = 2; rankNum <= 18; rankNum++) {
     const rNodes = matrixDB.nodesByRank[rankNum] || [];
     if (rNodes.length <= 1) continue; // Only Root #1 exists in this rank
 
@@ -1327,7 +1386,7 @@ function rebuildDatabaseUpgradeLogsFromNodes() {
           new Date(
             Date.now() -
               Math.max(0, rNodes.length - node.id) * 2000 -
-              Math.max(0, 27 - rankNum) * 1000
+              Math.max(0, 18 - rankNum) * 1000
           ).toISOString(),
       });
     }
@@ -1362,7 +1421,7 @@ async function registerUserAccount(owner: string, sponsor?: string, sponsorMainN
     currentMaxRank: 1,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-    vaults: Array.from({ length: 27 }, (_, i) => ({
+    vaults: Array.from({ length: 18 }, (_, i) => ({
       id: `v-${owner}-${i + 1}`,
       owner,
       rank: i + 1,
@@ -1560,7 +1619,8 @@ function reconcileRankTreeLinks(nodes: IndexedTreeNode[]): IndexedTreeNode[] {
       }
     }
 
-    // 2. Check if any node in Rank 1..27 is misplaced (e.g. Round 1 Clone or Extra ID not under its Direct Sponsor/Clone) or orphaned
+    // 2. Check if any node in Rank 1..27 is actually orphaned (missing parent link on-chain)
+    // Authentic on-chain parentId / leftChild / rightChild placements are always preserved.
     let needsReplay = false;
     for (const n of nodes) {
       if (n.id <= 1) continue;
@@ -1568,120 +1628,6 @@ function reconcileRankTreeLinks(nodes: IndexedTreeNode[]): IndexedTreeNode[] {
       if (!p || (p.leftChild !== n.id && p.rightChild !== n.id)) {
         needsReplay = true;
         break;
-      }
-      if (n.isClone && n.cloneRound === 1) {
-        const origId = n.originMainId || n.id;
-        const origNode =
-          nodes.find(
-            (prev) =>
-              !prev.isClone &&
-              (prev.id === origId || (!prev.isExtraId && prev.originMainId === origId))
-          ) || byId.get(origId);
-        const spMainId =
-          origId === 1 || origNode?.id === 1
-            ? 1
-            : origNode?.directSponsorNodeId || n.directSponsorNodeId || 1;
-        const spNodeInRank = nodes.find(
-          (prev) =>
-            prev.id < n.id &&
-            !prev.isClone &&
-            !prev.isExtraId &&
-            (spMainId === 1 ? prev.id === 1 : prev.originMainId === spMainId)
-        );
-        if (spNodeInRank) {
-          const spOrigTag = spNodeInRank.originMainId || spNodeInRank.id;
-          const isUnderSp =
-            p.id === spNodeInRank.id ||
-            (p.isClone &&
-              ((p.originMainId || p.id) === spNodeInRank.id ||
-                (p.originMainId || p.id) === spOrigTag));
-          if (!isUnderSp) {
-            const spHadOpenSlot = nodes.some((prev) => {
-              if (prev.id >= n.id) return false;
-              const isSpOrClone =
-                prev.id === spNodeInRank.id ||
-                (prev.isClone &&
-                  ((prev.originMainId || prev.id) === spNodeInRank.id ||
-                    (prev.originMainId || prev.id) === spOrigTag));
-              if (!isSpOrClone) return false;
-              const leftOpenAtTime = !prev.leftChild || prev.leftChild <= 0 || prev.leftChild > n.id;
-              const rightOpenAtTime =
-                !prev.rightChild || prev.rightChild <= 0 || prev.rightChild > n.id;
-              return leftOpenAtTime || rightOpenAtTime;
-            });
-            if (spHadOpenSlot) {
-              needsReplay = true;
-              break;
-            }
-          }
-        }
-      } else if (n.isExtraId && !n.isClone) {
-        const spMainId = n.directSponsorNodeId > 0 ? n.directSponsorNodeId : 1;
-        const spNodeInRank = nodes.find(
-          (prev) =>
-            prev.id < n.id &&
-            !prev.isClone &&
-            !prev.isExtraId &&
-            (spMainId === 1 ? prev.id === 1 : prev.originMainId === spMainId)
-        );
-        if (spNodeInRank) {
-          const spOrigTag = spNodeInRank.originMainId || spNodeInRank.id;
-          const isUnderSp =
-            p.id === spNodeInRank.id ||
-            (p.isClone &&
-              ((p.originMainId || p.id) === spNodeInRank.id ||
-                (p.originMainId || p.id) === spOrigTag));
-          if (!isUnderSp) {
-            needsReplay = true;
-            break;
-          }
-        }
-      } else if (!n.isClone && !n.isExtraId && rankNum > 1) {
-        const spMainId = n.directSponsorNodeId > 0 ? n.directSponsorNodeId : 1;
-        if (spMainId > 1) {
-          const sponsorBefore = nodes.some(
-            (prev) =>
-              prev.id < n.id &&
-              !prev.isClone &&
-              !prev.isExtraId &&
-              prev.originMainId === spMainId
-          );
-          if (!sponsorBefore && p.isClone) {
-            needsReplay = true;
-            break;
-          }
-        }
-      }
-    }
-
-    if (!needsReplay && rankNum > 1) {
-      // Also verify that every origin's filled rightChild count matches its placed clone count
-      const rightTriggerCountByOrig = new Map<number, number>();
-      const actualCloneCountByOrig = new Map<number, number>();
-      for (const n of nodes) {
-        const origKey = n.isClone
-          ? n.originMainId || n.id
-          : n.isExtraId
-          ? n.id
-          : n.originMainId || n.id;
-        if (n.isClone) {
-          actualCloneCountByOrig.set(origKey, (actualCloneCountByOrig.get(origKey) || 0) + 1);
-        }
-        if (n.rightChild > 0 && byId.has(n.rightChild)) {
-          rightTriggerCountByOrig.set(origKey, (rightTriggerCountByOrig.get(origKey) || 0) + 1);
-        }
-      }
-      for (const [origKey, trigCnt] of rightTriggerCountByOrig.entries()) {
-        if ((actualCloneCountByOrig.get(origKey) || 0) !== trigCnt) {
-          needsReplay = true;
-          break;
-        }
-      }
-      for (const [origKey, cloneCnt] of actualCloneCountByOrig.entries()) {
-        if ((rightTriggerCountByOrig.get(origKey) || 0) !== cloneCnt) {
-          needsReplay = true;
-          break;
-        }
       }
     }
 
@@ -1848,65 +1794,11 @@ function reconcileRankTreeLinks(nodes: IndexedTreeNode[]): IndexedTreeNode[] {
       }
     }
 
-    // Reconcile nodeVault in Rank 1..27 so any parent whose leftChild was moved doesn't retain phantom vault,
-    // and transfer reclaimed phantom vault to the main node whose clone/node received that relocated leftChild
-    const rUnitVault = Number(((RANK_PRICES_USDT[rankNum - 1] || 5) * 0.35).toFixed(4));
-    let reclaimedVault = 0;
-    const leftCountAfterByMain = new Map<number, number>();
+    // Preserve authentic on-chain nodeVault (nodeUpgradeVault) values directly from the contract
     for (const m of nodes) {
-      if (m.isClone || m.isExtraId) continue;
-      let leftCount = 0;
-      const mOrig = m.originMainId || m.id;
-      for (const cand of nodes) {
-        const cOrig = cand.originMainId || cand.id;
-        if (
-          (cand.id === m.id || (cand.isClone && (cOrig === m.id || cOrig === mOrig))) &&
-          cand.leftChild > 0 &&
-          byId.has(cand.leftChild)
-        ) {
-          leftCount++;
-        }
-      }
-      leftCountAfterByMain.set(m.id, leftCount);
-      const maxPossibleVault = Number((leftCount * rUnitVault).toFixed(4));
-      const curVault = Number(m.nodeVault || 0);
-      if (curVault > maxPossibleVault) {
-        reclaimedVault = Number((reclaimedVault + (curVault - maxPossibleVault)).toFixed(4));
-        m.nodeVault = maxPossibleVault;
-      }
-      if ((m.rawNodeVault || 0) > maxPossibleVault) m.rawNodeVault = maxPossibleVault;
-      if ((m.reconciledBaseVault || 0) > maxPossibleVault) m.reconciledBaseVault = maxPossibleVault;
-    }
-
-    if (reclaimedVault > 0) {
-      for (const m of nodes) {
-        if (m.isClone || m.isExtraId || reclaimedVault <= 0) continue;
-        const beforeLc = leftCountBeforeByMain.get(m.id) || 0;
-        const afterLc = leftCountAfterByMain.get(m.id) || 0;
-        let gainedCount = Math.max(0, afterLc - beforeLc);
-        if (gainedCount === 0 && !needsReplay) {
-          const mOrig = m.originMainId || m.id;
-          for (const cand of nodes) {
-            const cOrig = cand.originMainId || cand.id;
-            if (cand.isClone && (cOrig === m.id || cOrig === mOrig) && cand.leftChild > 0) {
-              const lcNode = byId.get(cand.leftChild);
-              if (lcNode && lcNode.isClone && lcNode.cloneRound === 1) {
-                gainedCount++;
-              }
-            }
-          }
-        }
-        if (gainedCount > 0) {
-          const gainedVault = Number((gainedCount * rUnitVault).toFixed(4));
-          const maxPossibleVault = Number((afterLc * rUnitVault).toFixed(4));
-          const addVault = Math.min(reclaimedVault, gainedVault);
-          if (addVault > 0 && (m.nodeVault || 0) + addVault <= maxPossibleVault + 1e-6) {
-            m.nodeVault = Number(((m.nodeVault || 0) + addVault).toFixed(4));
-            m.rawNodeVault = Number(((m.rawNodeVault || 0) + addVault).toFixed(4));
-            m.reconciledBaseVault = Number(((m.reconciledBaseVault || 0) + addVault).toFixed(4));
-            reclaimedVault = Number(Math.max(0, reclaimedVault - addVault).toFixed(4));
-          }
-        }
+      if (m.rawNodeVault !== undefined && m.rawNodeVault >= 0) {
+        m.nodeVault = Number(m.rawNodeVault);
+        m.reconciledBaseVault = Number(m.rawNodeVault);
       }
     }
   }
@@ -2066,7 +1958,7 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
   if (r1Nodes.length === 0) return autoMainSourceMap;
 
   // Ensure every clone in Ranks 1..27 has a valid non-clone originMainId, cloneSequence, and cloneRound
-  for (let r = 1; r <= 27; r++) {
+  for (let r = 1; r <= 18; r++) {
     const rList = matrixDB.nodesByRank[r] || [];
     if (rList.length === 0) continue;
     const sortedR = [...rList].sort((a, b) => a.id - b.id);
@@ -2205,9 +2097,9 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
   }
 
   const getMainCurrentRank = (r1MainId: number): number => {
-    if (r1MainId === 1) return 27;
+    if (r1MainId === 1) return 18;
     let cur = 1;
-    for (let r = 27; r >= 2; r--) {
+    for (let r = 18; r >= 2; r--) {
       const rList = matrixDB.nodesByRank[r] || [];
       if (rList.some((x) => !x.isClone && !x.isExtraId && x.originMainId === r1MainId)) {
         cur = r;
@@ -2443,7 +2335,7 @@ function reconcileAutoExtraIdsAcrossRanks(): Array<{
   }> = [];
 
   // 1. Strip any previously synthesized Auto IDs / Extra IDs / Clones and restore base vaults on Rank 1..27 nodes
-  for (let r = 1; r <= 27; r++) {
+  for (let r = 1; r <= 18; r++) {
     const rList = matrixDB.nodesByRank[r];
     if (!Array.isArray(rList) || rList.length === 0) continue;
     const realNodes = rList.filter((n) => !n.isSyntheticExtra);
@@ -2461,286 +2353,12 @@ function reconcileAutoExtraIdsAcrossRanks(): Array<{
     matrixDB.rankCounts[r] = Math.max(1, matrixDB.nodesByRank[r].length);
   }
 
-  // Reconcile real on-chain Rank 1 Auto Main IDs first
-  const realAutoMainSourceMap = reconcileRank1AutoMainIds();
+  // Reconcile real on-chain Rank 1 Auto Main IDs
+  reconcileRank1AutoMainIds();
 
-  const r1Nodes = matrixDB.nodesByRank[1] || [];
-  if (r1Nodes.length === 0) return createdExtraNodes;
-
-  const r1Mains = r1Nodes.filter((n) => !n.isClone && !n.isExtraId).sort((a, b) => a.id - b.id);
-
-  // Note: Main IDs that used their accumulated vaults to upgrade ranks legitimately have 0.00 nodeVault on-chain.
-  // We do not restore cleared vaults or synthesize phantom nodes. Only authentic on-chain state is preserved.
-
-  for (const r1Main of r1Mains) {
-    const ownerKey = (r1Main.owner || '').toLowerCase();
-    const ownerR1Mains = r1Mains.filter((n) => (n.owner || '').toLowerCase() === ownerKey);
-    const mainIdx = Math.max(0, ownerR1Mains.findIndex((m) => m.id === r1Main.id));
-
-    const getCorrespMainInRank = (targetRank: number): IndexedTreeNode | undefined => {
-      const rList = matrixDB.nodesByRank[targetRank] || [];
-      if (targetRank === 1 || r1Main.id === 1) {
-        return rList.find((n) => n.id === r1Main.id);
-      }
-      return rList.find((n) => !n.isClone && !n.isExtraId && n.originMainId === r1Main.id);
-    };
-
-    let currentRank = r1Main.id === 1 ? 27 : 1;
-    if (r1Main.id !== 1) {
-      for (let r = 27; r >= 1; r--) {
-        if (getCorrespMainInRank(r)) {
-          currentRank = r;
-          break;
-        }
-      }
-    }
-
-    const window5Start = Math.max(1, currentRank - 4);
-    const eligiblePool3Nodes: IndexedTreeNode[] = [];
-    for (let r = 4; r <= 27; r++) {
-      if (currentRank === 27 || r < window5Start) {
-        const mNode = getCorrespMainInRank(r);
-        if (mNode) {
-          eligiblePool3Nodes.push(mNode);
-        }
-      }
-    }
-
-    // เงื่อนไข Auto Extra ID: นำยอด New Extra ID Pool (รวมยอดเก่าสะสมจากทุกแรงค์ใน R4-R27 ที่พ้นกรอบ 5 แรงค์ + โบนัสเม็ดซ้าย Extra ID ก่อนสร้าง Extra ID) มาลูปหาราคาแต่ละ Rank จาก Rank 27 ลงมาถึง Rank 2
-    // และกรณี EXTRA ID มีเม็ดซ้าย: Vault (35%) จะถูกส่งกลับที่ New Extra ID Pool ของ directSponsor
-    let extraLeftPoolBonus = 0;
-    for (let r = 2; r <= 27; r++) {
-      const rList = matrixDB.nodesByRank[r] || [];
-      const correspMain = getCorrespMainInRank(r);
-      if (!correspMain) continue;
-      const rUnitVault = Number(((RANK_PRICES_USDT[r - 1] || 10) * 0.35).toFixed(4));
-      const maxRealExtraIdInRank = rList.reduce(
-        (m, x) => (!x.isSyntheticExtra && x.isExtraId ? Math.max(m, x.id) : m),
-        0
-      );
-      for (const n of rList) {
-        if (n.isSyntheticExtra) continue;
-        const nOrig = !n.isClone
-          ? n
-          : rList.find(
-              (x) =>
-                !x.isClone &&
-                (x.owner || '').toLowerCase() === (n.owner || '').toLowerCase() &&
-                (x.originMainId === n.originMainId || x.id === n.originMainId)
-            ) || n;
-        const isExtraLineage = !n.isClone ? Boolean(n.isExtraId) : Boolean(n.isExtraId || nOrig.isExtraId);
-        if (isExtraLineage && n.leftChild > 0 && n.leftChild > maxRealExtraIdInRank) {
-          const spId =
-            nOrig.directSponsorNodeId > 0
-              ? nOrig.directSponsorNodeId
-              : n.directSponsorNodeId > 0
-              ? n.directSponsorNodeId
-              : 1;
-          if (spId === correspMain.id) {
-            extraLeftPoolBonus = Number((extraLeftPoolBonus + rUnitVault).toFixed(4));
-          }
-        }
-      }
-    }
-
-    if (eligiblePool3Nodes.length === 0 && extraLeftPoolBonus <= 0) continue;
-
-    const minRank2Price = RANK_PRICES_USDT[1] || 10;
-    let spawnedInPass = true;
-    let safety = 0;
-
-    while (spawnedInPass && safety < 50) {
-      spawnedInPass = false;
-      safety++;
-
-      for (let targetRank = 27; targetRank >= 2; targetRank--) {
-        const r4To27Bal = eligiblePool3Nodes.reduce((sum, n) => sum + Number(n.nodeVault || 0), 0);
-        const availExtraPool = Number((extraLeftPoolBonus + r4To27Bal).toFixed(4));
-        if (availExtraPool + 1e-6 < minRank2Price) break;
-
-        const targetPrice = RANK_PRICES_USDT[targetRank - 1] || 10;
-        if (availExtraPool + 1e-6 < targetPrice) continue;
-
-        const targetMainInRank = getCorrespMainInRank(targetRank);
-        if (!targetMainInRank) continue;
-
-        // Deduct targetPrice from oldest balances first (รวมยอดเก่าหักก่อน: extraLeftPoolBonus -> ยอดสะสม R4..27 เรียงจากแรงค์เก่าไปแรงค์ใหม่)
-        let remToDeduct = targetPrice;
-        if (extraLeftPoolBonus > 1e-6) {
-          const dBonus = Math.min(extraLeftPoolBonus, remToDeduct);
-          extraLeftPoolBonus = Number(Math.max(0, extraLeftPoolBonus - dBonus).toFixed(4));
-          remToDeduct = Number(Math.max(0, remToDeduct - dBonus).toFixed(4));
-        }
-        for (const pNode of eligiblePool3Nodes) {
-          if (remToDeduct <= 1e-6) break;
-          const v = Number(pNode.nodeVault || 0);
-          if (v <= 1e-6) continue;
-          const deduct = Math.min(v, remToDeduct);
-          pNode.nodeVault = Number(Math.max(0, v - deduct).toFixed(4));
-          remToDeduct = Number(Math.max(0, remToDeduct - deduct).toFixed(4));
-        }
-
-        if (!matrixDB.nodesByRank[targetRank]) {
-          matrixDB.nodesByRank[targetRank] = [];
-        }
-        const targetRankNodes = matrixDB.nodesByRank[targetRank];
-        const r1SponsorId = r1Main.directSponsorNodeId > 0 ? r1Main.directSponsorNodeId : 1;
-        const sponsorNodeInTarget = targetRankNodes.find(
-          (n) =>
-            !n.isClone &&
-            !n.isExtraId &&
-            (r1SponsorId === 1 ? n.id === 1 : n.originMainId === r1SponsorId)
-        );
-        const placement = sponsorNodeInTarget
-          ? findExtraIdPlacementInRankNodes(targetRankNodes, sponsorNodeInTarget.id)
-          : findShallowestLeftToRightSlotInRankNodes(targetRankNodes, 1);
-        const maxId = targetRankNodes.reduce((m, n) => Math.max(m, n.id), 0);
-        const newExtraId = maxId + 1;
-
-        const newExtraNode: IndexedTreeNode = {
-          id: newExtraId,
-          rank: targetRank,
-          owner: r1Main.owner,
-          directSponsor: r1Main.directSponsor || r1Main.owner,
-          parentId: placement.parentId,
-          leftChild: 0,
-          rightChild: 0,
-          isClone: false,
-          isExtraId: true,
-          isSyntheticExtra: true,
-          originMainId: newExtraId,
-          cloneRound: 0,
-          directSponsorNodeId: r1SponsorId,
-          nodeVault: 0,
-          rawNodeVault: 0,
-        };
-
-        targetRankNodes.push(newExtraNode);
-        const parentNode = targetRankNodes.find((n) => n.id === placement.parentId);
-        const rightSlotTriggerQueue: IndexedTreeNode[] = [];
-
-        if (parentNode) {
-          if (placement.isLeft) {
-            parentNode.leftChild = newExtraId;
-            const pMainNode = !parentNode.isClone
-              ? parentNode
-              : targetRankNodes.find(
-                  (x) =>
-                    !x.isClone &&
-                    (x.owner || '').toLowerCase() === (parentNode.owner || '').toLowerCase() &&
-                    (x.originMainId === parentNode.originMainId || x.id === parentNode.originMainId)
-                ) || parentNode;
-            const vaultAdd = Number((targetPrice * 0.35).toFixed(4));
-            const isParentExtraLineage = !parentNode.isClone
-              ? Boolean(parentNode.isExtraId)
-              : Boolean(parentNode.isExtraId || pMainNode.isExtraId);
-            if (isParentExtraLineage) {
-              // เม็ดซ้ายของ EXTRA ID: Vault (35%) จะถูกส่งกลับที่ New Extra ID Pool ของ directSponsor
-              const spId =
-                pMainNode.directSponsorNodeId > 0
-                  ? pMainNode.directSponsorNodeId
-                  : parentNode.directSponsorNodeId > 0
-                  ? parentNode.directSponsorNodeId
-                  : targetMainInRank.id;
-              if (spId === targetMainInRank.id) {
-                extraLeftPoolBonus = Number((extraLeftPoolBonus + vaultAdd).toFixed(4));
-              }
-            } else {
-              pMainNode.nodeVault = Number(((pMainNode.nodeVault || 0) + vaultAdd).toFixed(4));
-            }
-          } else {
-            parentNode.rightChild = newExtraId;
-            // ลงฝั่งขวา (100% Rebirth Trigger) -> สั่งเกิดโคลนนิ่งของ parentNode ทันที!
-            rightSlotTriggerQueue.push(parentNode);
-          }
-        }
-
-        // ประมวลผลการแตกโคลนนิ่ง (100% Rebirth) เมื่อมีโหนดลงฝั่งขวา (รวมถึงกรณีโคลนไปลงฝั่งขวาต่อเป็นลูกโซ่)
-        let cloneSafety = 0;
-        while (rightSlotTriggerQueue.length > 0 && cloneSafety < 25) {
-          cloneSafety++;
-          const triggerParent = rightSlotTriggerQueue.shift()!;
-          const clonePlacement = findClonePlacementInRankNodes(targetRankNodes, triggerParent);
-          const nextCloneId = targetRankNodes.reduce((m, n) => Math.max(m, n.id), 0) + 1;
-          const originNode =
-            targetRankNodes.find((n) => n.id === clonePlacement.cloneOriginMainId) || triggerParent;
-
-          const newCloneNode: IndexedTreeNode = {
-            id: nextCloneId,
-            rank: targetRank,
-            owner: triggerParent.owner,
-            directSponsor: originNode.directSponsor || triggerParent.directSponsor || triggerParent.owner,
-            parentId: clonePlacement.parentId,
-            leftChild: 0,
-            rightChild: 0,
-            isClone: true,
-            isExtraId: false,
-            isSyntheticExtra: true,
-            originMainId: clonePlacement.cloneOriginMainId,
-            cloneRound: clonePlacement.cloneRound,
-            directSponsorNodeId: clonePlacement.targetSponsorNodeId,
-            nodeVault: 0,
-            rawNodeVault: 0,
-          };
-
-          targetRankNodes.push(newCloneNode);
-          const cloneParent = targetRankNodes.find((n) => n.id === clonePlacement.parentId);
-          if (cloneParent) {
-            if (clonePlacement.isLeft) {
-              cloneParent.leftChild = nextCloneId;
-              const cpMainNode = !cloneParent.isClone
-                ? cloneParent
-                : targetRankNodes.find(
-                    (x) =>
-                      !x.isClone &&
-                      (x.owner || '').toLowerCase() === (cloneParent.owner || '').toLowerCase() &&
-                      (x.originMainId === cloneParent.originMainId || x.id === cloneParent.originMainId)
-                  ) || cloneParent;
-              const vaultAdd = Number((targetPrice * 0.35).toFixed(4));
-              const isCloneParentExtraLineage = !cloneParent.isClone
-                ? Boolean(cloneParent.isExtraId)
-                : Boolean(cloneParent.isExtraId || cpMainNode.isExtraId);
-              if (isCloneParentExtraLineage) {
-                // เม็ดซ้ายของ EXTRA ID: Vault (35%) จะถูกส่งกลับที่ New Extra ID Pool ของ directSponsor
-                const spId =
-                  cpMainNode.directSponsorNodeId > 0
-                    ? cpMainNode.directSponsorNodeId
-                    : cloneParent.directSponsorNodeId > 0
-                    ? cloneParent.directSponsorNodeId
-                    : targetMainInRank.id;
-                if (spId === targetMainInRank.id) {
-                  extraLeftPoolBonus = Number((extraLeftPoolBonus + vaultAdd).toFixed(4));
-                }
-              } else {
-                cpMainNode.nodeVault = Number(((cpMainNode.nodeVault || 0) + vaultAdd).toFixed(4));
-              }
-            } else {
-              cloneParent.rightChild = nextCloneId;
-              rightSlotTriggerQueue.push(cloneParent);
-            }
-          }
-        }
-
-        matrixDB.nodesByRank[targetRank] = reconcileRankTreeLinks(targetRankNodes);
-        matrixDB.rankCounts[targetRank] = Math.max(
-          matrixDB.rankCounts[targetRank] || 1,
-          targetRankNodes.length
-        );
-
-        createdExtraNodes.push({
-          mainId: r1Main.id,
-          targetRank,
-          nodeId: newExtraId,
-          parentId: placement.parentId,
-          isLeft: placement.isLeft,
-          deductedUsdt: targetPrice,
-        });
-
-        spawnedInPass = true;
-      }
-    }
-  }
-
+  // Do NOT synthesize phantom/fake Extra IDs or Clones off-chain.
+  // The Smart Contract (0xE6ef0985E12C5BC580A231DCc6d977CcEdE716d1) already executes
+  // _processExtraIdPool and _processAutoNewIdPool directly on-chain and creates real nodes.
   return createdExtraNodes;
 }
 
@@ -2758,7 +2376,7 @@ async function createMatrixNodeData(params: {
   const { nodeId, rank, owner, sponsor, parentId, isLeft, isClone, isExtraId, origin } = params;
   const strNodeId = nodeId.toString();
   const strParentId = parentId.toString();
-  const rankNum = Math.min(Math.max(Number(rank) || 1, 1), 27);
+  const rankNum = Math.min(Math.max(Number(rank) || 1, 1), 18);
   const numNodeId = Number(nodeId);
   const numParentId = Number(parentId) || 0;
 
@@ -2884,9 +2502,9 @@ async function getUserProfileWithVaults(owner: string) {
     const ownedR1 = r1Nodes.filter((n) => n.owner.toLowerCase() === key);
     if (ownedR1.length > 0) {
       const firstMain = ownedR1.find((n) => !n.isClone && !n.isExtraId) || ownedR1[0];
-      let maxRank = firstMain.id === 1 ? 27 : 1;
+      let maxRank = firstMain.id === 1 ? 18 : 1;
       if (firstMain.id !== 1) {
-        for (let r = 27; r >= 2; r--) {
+        for (let r = 18; r >= 2; r--) {
           const rList = matrixDB.nodesByRank[r] || [];
           if (
             rList.some(
@@ -2901,7 +2519,7 @@ async function getUserProfileWithVaults(owner: string) {
       const sponsorAddr = firstMain.directSponsor || ethers.ZeroAddress;
       const sponsorMainId = firstMain.directSponsorNodeId > 0 ? String(firstMain.directSponsorNodeId) : '1';
 
-      const dbVaults: UserVaultModel[] = Array.from({ length: 27 }, (_, idx) => {
+      const dbVaults: UserVaultModel[] = Array.from({ length: 18 }, (_, idx) => {
         const r = idx + 1;
         const rNodes = (matrixDB.nodesByRank[r] || []).filter((n) => n.owner.toLowerCase() === key);
         const rMains = rNodes.filter((n) => !n.isClone && !n.isExtraId);
@@ -2941,7 +2559,7 @@ async function getUserProfileWithVaults(owner: string) {
         owner,
         sponsor: sponsorAddr,
         sponsorMainNodeId: sponsorMainId,
-        currentMaxRank: firstMain.id === 1 ? 27 : maxRank,
+        currentMaxRank: firstMain.id === 1 ? 18 : maxRank,
         createdAt: matrixDB.lastSyncedAt || new Date().toISOString(),
         updatedAt: matrixDB.lastSyncedAt || new Date().toISOString(),
         vaults: dbVaults,
@@ -3086,15 +2704,354 @@ async function simulateFindPlacement(rank: number, sponsorAddress: string, _roun
 }
 
 // ==========================================
-// 3. BLOCKCHAIN EVENT LISTENER (Database-First Polling Mode)
+// 3. BLOCKCHAIN WEBSOCKET EVENT LISTENER & HYBRID BOT ENGINE (Ethers.js v6)
 // ==========================================
-function startEventListener() {
+const WSS_ENDPOINTS = [
+  process.env.WSS_URL || 'wss://bsc-testnet-rpc.publicnode.com',
+  'wss://bsc-testnet.publicnode.com',
+].filter(Boolean);
+
+const BOT_HTTP_RPC_URL =
+  process.env.HTTP_RPC_URL || 'https://data-seed-prebsc-1-s1.bnbchain.org:8545';
+const BOT_PRIVATE_KEY = process.env.BOT_PRIVATE_KEY || '';
+const INITIAL_RECONNECT_DELAY_MS = Number(process.env.INITIAL_RECONNECT_DELAY_MS || 2000);
+const MAX_RECONNECT_DELAY_MS = Number(process.env.MAX_RECONNECT_DELAY_MS || 60000);
+const HEARTBEAT_INTERVAL_MS = Number(process.env.HEARTBEAT_INTERVAL_MS || 30000);
+const HEARTBEAT_TIMEOUT_MS = 10000;
+
+const WS_BOT_ABI = [
+  'event CloneQueued(uint8 indexed rank, uint256 indexed parentId, uint256 pendingCount)',
+  'event NodeCreated(uint8 indexed rank, uint256 indexed nodeId, address indexed owner, address directSponsor, uint256 parentId, bool isLeft, bool isClone, bool isExtraId)',
+  'event RewardDistributed(uint256 indexed fromNodeId, uint256 indexed toNodeId, address indexed recipient, uint8 rank, string rewardType, uint256 amount)',
+  'event RankUpgraded(address indexed user, uint8 fromRank, uint8 toRank, uint256 newNodeId, bool isAutoUpgrade)',
+  'event AutoNewMainIdCreated(address indexed user, uint256 count, uint256 vaultDiff)',
+  'event AutoExtraIdCreated(address indexed user, uint8 indexed rank, uint256 nodeId)',
+  'function getPendingCloneCount() external view returns (uint256)',
+  'function processCloneQueue(uint256 _maxIterations) external',
+  'function processPendingExtraIdQueue(uint256 _r1MainId, uint8 _maxBatch) external returns (uint8 processed)',
+  'function checkAndProcessAutoNewMainIdForNode(uint256 _mainNodeId) external',
+  'function checkAndProcessAutoExtraIdForNode(address _user, uint8 _currentRank, uint256 _sponsorNodeId) external',
+];
+
+let wsBotProvider: ethers.WebSocketProvider | null = null;
+let wsBotContract: ethers.Contract | null = null;
+let wsHeartbeatTimer: NodeJS.Timeout | null = null;
+let wsReconnectTimer: NodeJS.Timeout | null = null;
+let wsReconnectAttempts = 0;
+let wsEndpointIndex = 0;
+let wsIsReconnecting = false;
+let wsIsProcessingQueue = false;
+let wsLastHeartbeatBlock = 0;
+let wsLastHeartbeatAt: string | null = null;
+let wsConnectedAt: string | null = null;
+let wsLastDisconnectReason: string | null = null;
+let wsTotalEventsReceived = 0;
+let wsRecentEvents: Array<{
+  event: string;
+  details: string;
+  timestamp: string;
+}> = [];
+
+function recordWsBotEvent(event: string, details: string) {
+  wsTotalEventsReceived += 1;
+  wsRecentEvents = [
+    { event, details, timestamp: new Date().toISOString() },
+    ...wsRecentEvents.slice(0, 29),
+  ];
+}
+
+function getBotHttpProvider(): ethers.JsonRpcProvider {
+  const fetchReq = new ethers.FetchRequest(BOT_HTTP_RPC_URL);
+  fetchReq.timeout = 12000;
+  return new ethers.JsonRpcProvider(
+    fetchReq,
+    { chainId: 97, name: 'bnbt' },
+    { staticNetwork: true, polling: false, batchMaxCount: 1 }
+  );
+}
+
+/**
+ * ล้างตัวดักฟังเก่า (removeAllListeners) และทำลายโซเก็ตเก่า (wsProvider.destroy())
+ * เพื่อป้องกันปัญหาหน่วยความจำรั่วไหล (Memory Leak) เมื่อต่อสายใหม่หลายครั้ง
+ */
+async function cleanupWebSocket(): Promise<void> {
+  if (wsHeartbeatTimer) {
+    clearInterval(wsHeartbeatTimer);
+    wsHeartbeatTimer = null;
+  }
+
+  if (wsBotContract) {
+    try {
+      (wsBotContract as any).removeAllListeners?.()?.catch?.(() => {});
+    } catch {
+      // ignore
+    }
+    wsBotContract = null;
+  }
+
+  if (wsBotProvider) {
+    try {
+      // Safely attach .catch to any pending requests to avoid unhandledRejection when destroy() cancels them
+      const reqs = (wsBotProvider as any)._requests;
+      if (reqs && typeof reqs.values === 'function') {
+        for (const r of reqs.values()) {
+          if (r && r.promise && typeof r.promise.catch === 'function') {
+            r.promise.catch(() => {});
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    try {
+      const rawWs = (wsBotProvider as any).websocket;
+      if (rawWs) {
+        if (typeof rawWs.removeAllListeners === 'function') {
+          rawWs.removeAllListeners();
+        }
+        rawWs.onerror = () => {};
+        rawWs.onclose = () => {};
+      }
+    } catch {
+      // ignore
+    }
+
+    try {
+      await wsBotProvider.destroy().catch?.(() => {});
+    } catch {
+      // ignore destroy errors on already-closed socket
+    }
+    wsBotProvider = null;
+  }
+  eventListenerActive = false;
+}
+
+/**
+ * สมการ Exponential Backoff พร้อมค่าสุ่ม (Jitter 0-1000ms):
+ * t = min(MAX_RECONNECT_DELAY_MS, INITIAL_RECONNECT_DELAY_MS * 2^attempt) + jitter
+ */
+function scheduleReconnect(reason: string): void {
+  if (wsIsReconnecting) return;
+  wsIsReconnecting = true;
+  wsLastDisconnectReason = reason;
+
+  if (wsReconnectTimer) {
+    clearTimeout(wsReconnectTimer);
+    wsReconnectTimer = null;
+  }
+
+  const baseDelay = Math.min(
+    MAX_RECONNECT_DELAY_MS,
+    INITIAL_RECONNECT_DELAY_MS * Math.pow(2, wsReconnectAttempts)
+  );
+  const jitter = Math.floor(Math.random() * 1000);
+  const totalDelayMs = baseDelay + jitter;
+
+  wsReconnectAttempts += 1;
+  wsEndpointIndex = (wsEndpointIndex + 1) % WSS_ENDPOINTS.length;
+
+  console.warn(
+    `⚠️ [WS-Bot] สาย WebSocket หลุด (${reason}) | เตรียมต่อสายใหม่ครั้งที่ #${wsReconnectAttempts} ในอีก ${(
+      totalDelayMs / 1000
+    ).toFixed(2)} วินาที (Base: ${baseDelay}ms + Jitter: ${jitter}ms)`
+  );
+
+  wsReconnectTimer = setTimeout(() => {
+    wsIsReconnecting = false;
+    startEventListener().catch(() => {});
+  }, totalDelayMs);
+}
+
+/**
+ * ระบบส่งสัญญาณเลี้ยงสาย (Heartbeat / Ping-Pong Check) ทุกๆ 30 วินาที
+ * เพื่อป้องกัน Idle Timeout และตรวจจับกรณีสายค้าง (Silent Drop)
+ */
+function startWsHeartbeat(): void {
+  if (wsHeartbeatTimer) {
+    clearInterval(wsHeartbeatTimer);
+  }
+
+  wsHeartbeatTimer = setInterval(async () => {
+    if (!wsBotProvider || wsIsReconnecting) return;
+    try {
+      const blockNumber = await Promise.race<number>([
+        wsBotProvider.getBlockNumber(),
+        new Promise<number>((_, reject) =>
+          setTimeout(() => reject(new Error('Heartbeat getBlockNumber timeout')), HEARTBEAT_TIMEOUT_MS)
+        ),
+      ]);
+      wsLastHeartbeatBlock = blockNumber;
+      wsLastHeartbeatAt = new Date().toISOString();
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      console.warn(`❌ [WS-Bot Heartbeat] ตรวจพบสายค้าง (Silent Drop): ${msg}`);
+      await cleanupWebSocket();
+      scheduleReconnect(`Heartbeat Timeout (${msg})`);
+    }
+  }, HEARTBEAT_INTERVAL_MS);
+}
+
+/**
+ * ตรวจสอบคิวโคลนตกค้าง (getPendingCloneCount / processCloneQueue) ผ่าน HTTP Provider สำรอง
+ * และซิงค์ฐานข้อมูลผังไบนารี่ทันที
+ */
+async function checkAndProcessBotCloneQueue(triggerReason: string): Promise<void> {
+  if (wsIsProcessingQueue) return;
+  wsIsProcessingQueue = true;
+  try {
+    const httpProvider = getBotHttpProvider();
+    const readContract = new ethers.Contract(CONTRACT_ADDRESS, WS_BOT_ABI, httpProvider);
+
+    let pendingCount = 0n;
+    try {
+      pendingCount = await readContract.getPendingCloneCount();
+    } catch {
+      pendingCount = 0n;
+    }
+
+    if (pendingCount > 0n && BOT_PRIVATE_KEY && BOT_PRIVATE_KEY.length >= 64) {
+      const botSigner = new ethers.Wallet(BOT_PRIVATE_KEY, httpProvider);
+      const writeContract = new ethers.Contract(CONTRACT_ADDRESS, WS_BOT_ABI, botSigner);
+      const batchSize = pendingCount > 5n ? 5n : pendingCount;
+      console.log(
+        `🚀 [WS-Bot] (${triggerReason}) ส่งธุรกรรม processCloneQueue(${batchSize.toString()}) ผ่าน HTTP Provider...`
+      );
+      const tx = await writeContract.processCloneQueue(batchSize);
+      await tx.wait(1);
+      recordWsBotEvent('processCloneQueue', `TX: ${tx.hash} (Batch: ${batchSize.toString()})`);
+    }
+
+    // ซิงค์ข้อมูลบล็อกเชนลงฐานข้อมูลทันทีเพื่อให้หน้าเว็บอัปเดตแบบเรียลไทม์
+    if (triggerMatrixDatabaseSync) {
+      await triggerMatrixDatabaseSync(CONTRACT_ADDRESS, false);
+    }
+  } catch (err: any) {
+    // fallback to standard sync
+    if (triggerMatrixDatabaseSync) {
+      triggerMatrixDatabaseSync(CONTRACT_ADDRESS, false).catch(() => {});
+    }
+  } finally {
+    wsIsProcessingQueue = false;
+  }
+}
+
+let triggerMatrixDatabaseSync: ((targetContract?: string, force?: boolean) => Promise<void>) | null = null;
+
+async function startEventListener(): Promise<void> {
   if (!CONTRACT_ADDRESS) return;
-  // Public BSC Testnet RPCs drop eth_newFilter / eth_getFilterChanges and cause Ethers v6
-  // FilterIdSubscriber.#poll to log "@TODO Error: request timeout (code=TIMEOUT, version=6.17.0)".
-  // Real-time indexing is handled reliably by the 6-second syncAllMatrixDatabase loop.
-  eventListenerActive = true;
-  console.log(`🟢 Blockchain Sync Indexer active for: ${CONTRACT_ADDRESS} (Database-First Polling Mode)`);
+
+  if (wsReconnectTimer) {
+    clearTimeout(wsReconnectTimer);
+    wsReconnectTimer = null;
+  }
+  wsIsReconnecting = false;
+
+  await cleanupWebSocket();
+
+  const activeWssUrl = WSS_ENDPOINTS[wsEndpointIndex % WSS_ENDPOINTS.length];
+  try {
+    wsBotProvider = new ethers.WebSocketProvider(activeWssUrl, {
+      chainId: 97,
+      name: 'bnbt',
+    });
+
+    // Suppress unhandled provider-level errors
+    wsBotProvider.on('error', (err: any) => {
+      const msg = err?.message || String(err ?? 'unknown');
+      wsLastDisconnectReason = `Provider Error: ${msg}`;
+    });
+
+    const rawWs = (wsBotProvider as any).websocket;
+    const onSocketClose = async (code?: unknown) => {
+      await cleanupWebSocket();
+      scheduleReconnect(`WebSocket Close (code=${String(code ?? 'unknown')})`);
+    };
+    const onSocketError = (err?: any) => {
+      const msg = err?.message || String(err ?? 'unknown');
+      wsLastDisconnectReason = `Socket Error: ${msg}`;
+    };
+
+    if (rawWs) {
+      if (typeof rawWs.on === 'function') {
+        rawWs.on('close', onSocketClose);
+        rawWs.on('error', onSocketError);
+      } else if (typeof rawWs.addEventListener === 'function') {
+        rawWs.addEventListener('close', onSocketClose);
+        rawWs.addEventListener('error', onSocketError);
+      }
+    }
+
+    // ยืนยันว่าเชื่อมต่อสำเร็จด้วยการดึงเลขบล็อกแรก
+    const initialBlock = await Promise.race<number>([
+      wsBotProvider.getBlockNumber(),
+      new Promise<number>((_, reject) =>
+        setTimeout(() => reject(new Error('WebSocket initial handshake timeout')), 12000)
+      ),
+    ]);
+
+    // รีเซ็ตตัวนับ reconnectAttempts เป็น 0 ทันทีเมื่อเชื่อมต่อสำเร็จ
+    wsReconnectAttempts = 0;
+    wsLastHeartbeatBlock = initialBlock;
+    wsLastHeartbeatAt = new Date().toISOString();
+    wsConnectedAt = wsLastHeartbeatAt;
+    eventListenerActive = true;
+
+    console.log(
+      `🟢 [WS-Bot] เชื่อมต่อ WebSocket (${activeWssUrl}) สำเร็จที่บล็อก #${initialBlock} สำหรับสัญญา ${CONTRACT_ADDRESS}`
+    );
+
+    wsBotContract = new ethers.Contract(CONTRACT_ADDRESS, WS_BOT_ABI, wsBotProvider);
+
+    wsBotContract.on('CloneQueued', (rank: bigint, parentId: bigint, pendingCount: bigint) => {
+      const details = `Rank ${rank.toString()} | Parent #${parentId.toString()} | Pending: ${pendingCount.toString()}`;
+      recordWsBotEvent('CloneQueued', details);
+      checkAndProcessBotCloneQueue(`CloneQueued(R${rank},#${parentId})`).catch(() => {});
+    });
+
+    wsBotContract.on(
+      'NodeCreated',
+      (
+        rank: bigint,
+        nodeId: bigint,
+        owner: string,
+        _directSponsor: string,
+        parentId: bigint,
+        isLeft: boolean,
+        isClone: boolean,
+        isExtraId: boolean
+      ) => {
+        const leg = isLeft ? 'LEFT' : 'RIGHT';
+        const kind = isExtraId ? 'EXTRA_ID' : isClone ? 'CLONE' : 'MAIN';
+        recordWsBotEvent(
+          'NodeCreated',
+          `R${rank.toString()} #${nodeId.toString()} (${kind}) -> Parent #${parentId.toString()} [${leg}] (${owner.slice(0, 8)}...)`
+        );
+        checkAndProcessBotCloneQueue(`NodeCreated(R${rank},#${nodeId},${leg})`).catch(() => {});
+      }
+    );
+
+    wsBotContract.on(
+      'RankUpgraded',
+      (user: string, fromRank: bigint, toRank: bigint, newNodeId: bigint, isAutoUpgrade: boolean) => {
+        recordWsBotEvent(
+          'RankUpgraded',
+          `${user.slice(0, 8)}... R${fromRank.toString()}->R${toRank.toString()} (#${newNodeId.toString()}, auto=${isAutoUpgrade})`
+        );
+        checkAndProcessBotCloneQueue(`RankUpgraded(R${toRank},#${newNodeId})`).catch(() => {});
+      }
+    );
+
+    // เริ่ม Heartbeat ดึงเลขบล็อกทุกๆ 30 วินาที
+    startWsHeartbeat();
+
+    // วิ่งเช็คคิวตกค้างและซิงค์ข้อมูลทันทีหลังจากเชื่อมต่อสำเร็จ
+    checkAndProcessBotCloneQueue('RECONNECT_RECOVERY').catch(() => {});
+  } catch (err: any) {
+    const msg = err?.message || String(err);
+    await cleanupWebSocket();
+    scheduleReconnect(`Handshake Error (${msg})`);
+  }
 }
 
 // ==========================================
@@ -3990,6 +3947,21 @@ async function startApp() {
         tableCounts: pgTablesCount,
         lastError: pgLastError,
       },
+      wsBot: {
+        connected: eventListenerActive && wsBotProvider !== null,
+        activeWssUrl: WSS_ENDPOINTS[wsEndpointIndex % WSS_ENDPOINTS.length],
+        fallbackHttpRpcUrl: BOT_HTTP_RPC_URL,
+        reconnectAttempts: wsReconnectAttempts,
+        initialReconnectDelayMs: INITIAL_RECONNECT_DELAY_MS,
+        maxReconnectDelayMs: MAX_RECONNECT_DELAY_MS,
+        heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
+        lastHeartbeatBlock: wsLastHeartbeatBlock,
+        lastHeartbeatAt: wsLastHeartbeatAt,
+        connectedAt: wsConnectedAt,
+        lastDisconnectReason: wsLastDisconnectReason,
+        totalEventsReceived: wsTotalEventsReceived,
+        recentEvents: wsRecentEvents,
+      },
       contractAddress: CONTRACT_ADDRESS,
       usdtAddress: USDT_ADDRESS,
       network: activeSystemConfig.networkName || 'BNB Smart Chain Testnet',
@@ -4002,6 +3974,57 @@ async function startApp() {
       totalNodesRank1: matrixDB.rankCounts[1] || (matrixDB.nodesByRank[1]?.length ?? 1),
       serverTime: new Date().toISOString(),
     });
+  });
+
+  app.get('/api/ws-bot/status', (_req: Request, res: Response) => {
+    res.json({
+      success: true,
+      connected: eventListenerActive && wsBotProvider !== null,
+      contractAddress: CONTRACT_ADDRESS,
+      activeWssUrl: WSS_ENDPOINTS[wsEndpointIndex % WSS_ENDPOINTS.length],
+      fallbackHttpRpcUrl: BOT_HTTP_RPC_URL,
+      hasBotPrivateKey: Boolean(BOT_PRIVATE_KEY && BOT_PRIVATE_KEY.length >= 64),
+      reconnectAttempts: wsReconnectAttempts,
+      isReconnecting: wsIsReconnecting,
+      isProcessingQueue: wsIsProcessingQueue,
+      initialReconnectDelayMs: INITIAL_RECONNECT_DELAY_MS,
+      maxReconnectDelayMs: MAX_RECONNECT_DELAY_MS,
+      heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
+      lastHeartbeatBlock: wsLastHeartbeatBlock,
+      lastHeartbeatAt: wsLastHeartbeatAt,
+      connectedAt: wsConnectedAt,
+      lastDisconnectReason: wsLastDisconnectReason,
+      totalEventsReceived: wsTotalEventsReceived,
+      recentEvents: wsRecentEvents,
+    });
+  });
+
+  app.post('/api/ws-bot/reconnect', async (_req: Request, res: Response) => {
+    try {
+      wsReconnectAttempts = 0;
+      await startEventListener();
+      res.json({
+        success: true,
+        message: 'สั่งเชื่อมต่อ WebSocketProvider ใหม่และรีเซ็ตตัวนับ Exponential Backoff เรียบร้อยแล้ว',
+        connected: eventListenerActive && wsBotProvider !== null,
+        lastHeartbeatBlock: wsLastHeartbeatBlock,
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || String(err) });
+    }
+  });
+
+  app.post('/api/ws-bot/trigger-check', async (_req: Request, res: Response) => {
+    try {
+      await checkAndProcessBotCloneQueue('MANUAL_API_TRIGGER');
+      res.json({
+        success: true,
+        message: 'ตรวจสอบคิวโคลน (getPendingCloneCount) และซิงค์ข้อมูลผ่าน HTTP Provider สำเร็จ',
+        lastSyncedBlock: matrixDB.lastSyncedBlock,
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || String(err) });
+    }
   });
 
   app.get('/api/db/postgres', async (_req: Request, res: Response) => {
@@ -4024,7 +4047,7 @@ async function startApp() {
       version: 'v2.7.0 (Solidity ^0.8.20)',
       contractAddress: CONTRACT_ADDRESS,
       usdtAddress: USDT_ADDRESS,
-      maxRank: 27,
+      maxRank: 18,
       maxLevels: 15,
       network: {
         name: 'BNB Smart Chain Testnet',
@@ -4130,7 +4153,7 @@ async function startApp() {
     targetContract: string = CONTRACT_ADDRESS,
     forceRefresh = false
   ): Promise<IndexedTreeNode[]> {
-    const rankNum = Math.min(Math.max(Number(rank) || 1, 1), 27);
+    const rankNum = Math.min(Math.max(Number(rank) || 1, 1), 18);
     const cacheKey = `${targetContract.toLowerCase()}:${rankNum}`;
     const now = Date.now();
 
@@ -4410,6 +4433,7 @@ async function startApp() {
     return syncPromise;
   }
 
+  triggerMatrixDatabaseSync = syncAllMatrixDatabase;
   async function syncAllMatrixDatabase(targetContract: string = CONTRACT_ADDRESS, force = false): Promise<void> {
     if (fullSyncInFlight && !force) return fullSyncInFlight;
 
@@ -4437,7 +4461,7 @@ async function startApp() {
         if (familyAddr && ethers.isAddress(familyAddr)) matrixDB.systemWallets.familyPool = familyAddr;
 
         const countsResults = await Promise.all(
-          Array.from({ length: 27 }, (_, i) =>
+          Array.from({ length: 18 }, (_, i) =>
             contract
               .totalNodesInRank(i + 1)
               .then((v: bigint) => Number(v))
@@ -4484,7 +4508,7 @@ async function startApp() {
 
         // Populate Root Node #1 for any remaining ranks 6..27 that have count == 1
         const rootOwner = matrixDB.nodesByRank[1]?.[0]?.owner || matrixDB.systemWallets.rootOwner;
-        for (let r = 1; r <= 27; r++) {
+        for (let r = 1; r <= 18; r++) {
           if (!matrixDB.nodesByRank[r] || matrixDB.nodesByRank[r].length === 0) {
             matrixDB.nodesByRank[r] = [
               {
@@ -4541,10 +4565,10 @@ async function startApp() {
       .map((n) => n.id);
     const mainIdxInOwner = Math.max(0, r1OwnerMains.indexOf(mainIdNum));
 
-    let currentRank = mainIdNum === 1 ? 27 : 1;
+    let currentRank = mainIdNum === 1 ? 18 : 1;
     const vaultsByRank: Record<number, number> = {};
 
-    for (let r = 1; r <= 27; r++) {
+    for (let r = 1; r <= 18; r++) {
       const rNodes = matrixDB.nodesByRank[r] || [];
       if (r === 1) {
         vaultsByRank[1] = Number(targetNode?.nodeVault || 0);
@@ -4561,7 +4585,7 @@ async function startApp() {
       }
     }
 
-    if (mainIdNum === 1) currentRank = 27;
+    if (mainIdNum === 1) currentRank = 18;
     const window5Start = Math.max(1, currentRank - 4);
     const window5End = currentRank;
 
@@ -4570,17 +4594,17 @@ async function startApp() {
     let r4To27OutsideWindow = 0;
     let grossR4To27OutsideWindow = 0;
 
-    for (let r = 1; r <= 27; r++) {
+    for (let r = 1; r <= 18; r++) {
       const v = vaultsByRank[r] || 0;
       const inWindow5 = r >= window5Start && r <= window5End;
-      if (inWindow5 && currentRank < 27) {
+      if (inWindow5 && currentRank < 18) {
         upgradeRankPool += v;
       }
       if (r >= 1 && r <= 3 && !inWindow5) {
         newAutoIdPool += v;
       }
       if (r >= 4 && r <= 27) {
-        if (currentRank === 27 || !inWindow5) {
+        if (currentRank === 18 || !inWindow5) {
           r4To27OutsideWindow += v;
           const rNodes = matrixDB.nodesByRank[r] || [];
           const correspNode =
@@ -4628,7 +4652,7 @@ async function startApp() {
     let totalExtraIdCount = 0;
     let extraIdDeductedTotalUsdt = 0;
     let extraLeftVaultBonusGross = 0;
-    for (let r = 1; r <= 27; r++) {
+    for (let r = 1; r <= 18; r++) {
       const rNodes = matrixDB.nodesByRank[r] || [];
       const correspondingNode =
         r === 1
@@ -4860,7 +4884,7 @@ async function startApp() {
         const totalInRank = Math.max(rList.length, nodeId, 1);
         const stepsBack = Math.max(0, totalInRank - nodeId);
         return new Date(
-          Date.now() - stepsBack * 2000 - Math.max(0, 27 - rankNum) * 1000
+          Date.now() - stepsBack * 2000 - Math.max(0, 18 - rankNum) * 1000
         ).toISOString();
       };
 
@@ -5073,7 +5097,7 @@ async function startApp() {
 
         const rankNodesList: PerIdReport['rankNodesList'] = [];
         if (!r1Node.isClone && !r1Node.isExtraId) {
-          for (let r = 1; r <= 27; r++) {
+          for (let r = 1; r <= 18; r++) {
             const rList = matrixDB.nodesByRank[r] || [];
             const mInR =
               r === 1
@@ -5267,7 +5291,7 @@ async function startApp() {
         }
       }
 
-      for (let rankNum = 1; rankNum <= 27; rankNum++) {
+      for (let rankNum = 1; rankNum <= 18; rankNum++) {
         const rNodes = matrixDB.nodesByRank[rankNum] || [];
         if (rNodes.length <= 1) continue;
         const nodesMap = new Map<number, IndexedTreeNode>();
@@ -5390,7 +5414,7 @@ async function startApp() {
         timestamp: string;
       }> = [];
 
-      for (let rankNum = 1; rankNum <= 27; rankNum++) {
+      for (let rankNum = 1; rankNum <= 18; rankNum++) {
         const rNodes = matrixDB.nodesByRank[rankNum] || [];
         if (rNodes.length <= 1) continue;
 
@@ -5819,7 +5843,7 @@ async function startApp() {
             0
           ).toFixed(2)
         );
-        const autoDeduct = Number((rep.autoIdsSpawned.length * 5.0).toFixed(2));
+        const autoDeduct = Number((rep.autoIdsSpawned.length * 10.0).toFixed(2));
         const upDeduct = Number(
           Math.max(0, rep.vault35DeductedTotalUsdt - extraDeduct - autoDeduct).toFixed(2)
         );
@@ -5910,7 +5934,7 @@ async function startApp() {
             amountUsdt: 5.0,
             poolType: 'AUTO_ID_POOL',
             poolLabelTh: 'Auto ID Pool',
-            descriptionTh: `หัก 5.00 USDT จาก Auto ID Pool สร้าง ${sp.label} วางผัง Rank 1`,
+            descriptionTh: `หัก 10.00 USDT จาก Auto ID Pool สร้าง ${sp.label} วางผัง Rank 1`,
             note: `สร้าง Auto ID สำเร็จ (ID #${sp.id})`,
             poolBalanceAfterUsdt: 0,
             balanceAfterUsdt: 0,
@@ -6020,47 +6044,47 @@ async function startApp() {
       const ALLSELL_FOUR_POOL_DEFS = [
         {
           poolNumber: 1,
-          key: 'pool1_r13',
-          titleTh: 'กองที่ 1 : r-13 (300 USDT)',
-          targetRank: 13,
-          targetRankPriceUsdt: 300,
-          requiredSelfRank: 13,
+          key: 'pool1_r11',
+          titleTh: 'กองที่ 1 : r-11 (500 USDT)',
+          targetRank: 11,
+          targetRankPriceUsdt: 500,
+          requiredSelfRank: 11,
           requiredDirectCount: 5,
-          allowedDirectRanks: [10, 11, 12, 13],
-          allowedDirectRanksLabel: 'r-10 หรือ r-11 หรือ r-12 หรือ r-13',
+          allowedDirectRanks: [8, 9, 10, 11],
+          allowedDirectRanksLabel: 'r-8 หรือ r-9 หรือ r-10 หรือ r-11',
         },
         {
           poolNumber: 2,
-          key: 'pool2_r20',
-          titleTh: 'กองที่ 2 : r-20 (1,000 USDT)',
-          targetRank: 20,
+          key: 'pool2_r14',
+          titleTh: 'กองที่ 2 : r-14 (1,000 USDT)',
+          targetRank: 14,
           targetRankPriceUsdt: 1000,
-          requiredSelfRank: 20,
+          requiredSelfRank: 14,
           requiredDirectCount: 2,
-          allowedDirectRanks: [17, 18, 19, 20],
-          allowedDirectRanksLabel: 'r-17 หรือ r-18 หรือ r-19 หรือ r-20',
+          allowedDirectRanks: [12, 13, 14],
+          allowedDirectRanksLabel: 'r-12 หรือ r-13 หรือ r-14',
         },
         {
           poolNumber: 3,
-          key: 'pool3_r24',
-          titleTh: 'กองที่ 3 : r-24 (5,000 USDT)',
-          targetRank: 24,
-          targetRankPriceUsdt: 5000,
-          requiredSelfRank: 24,
+          key: 'pool3_r16',
+          titleTh: 'กองที่ 3 : r-16 (3,000 USDT)',
+          targetRank: 16,
+          targetRankPriceUsdt: 3000,
+          requiredSelfRank: 16,
           requiredDirectCount: 2,
-          allowedDirectRanks: [22, 23, 24],
-          allowedDirectRanksLabel: 'r-22 หรือ r-23 หรือ r-24',
+          allowedDirectRanks: [14, 15, 16],
+          allowedDirectRanksLabel: 'r-14 หรือ r-15 หรือ r-16',
         },
         {
           poolNumber: 4,
-          key: 'pool4_r27',
-          titleTh: 'กองที่ 4 : r-27 (10,000 USDT)',
-          targetRank: 27,
-          targetRankPriceUsdt: 10000,
-          requiredSelfRank: 27,
+          key: 'pool4_r18',
+          titleTh: 'กองที่ 4 : r-18 (5,000 USDT)',
+          targetRank: 18,
+          targetRankPriceUsdt: 5000,
+          requiredSelfRank: 18,
           requiredDirectCount: 5,
-          allowedDirectRanks: [25, 26, 27],
-          allowedDirectRanksLabel: 'r-25 หรือ r-26 หรือ r-27',
+          allowedDirectRanks: [16, 17, 18],
+          allowedDirectRanksLabel: 'r-16 หรือ r-17 หรือ r-18',
         },
       ];
 
@@ -6420,7 +6444,7 @@ async function startApp() {
 
     // Calculate total AllSell 4% across Ranks 1..27
     let allSellTotalUsdt = 0;
-    for (let rankNum = 1; rankNum <= 27; rankNum++) {
+    for (let rankNum = 1; rankNum <= 18; rankNum++) {
       const rNodes = matrixDB.nodesByRank[rankNum] || [];
       if (rNodes.length <= 1) continue;
       const unitPrice = RANK_PRICES_USDT[rankNum - 1] || 5;
@@ -6449,31 +6473,31 @@ async function startApp() {
     const poolDefs = [
       {
         poolNumber: 1,
-        titleTh: 'กองที่ 1 : r-13 (300 USDT)',
-        requiredSelfRank: 13,
+        titleTh: 'กองที่ 1 : r-11 (500 USDT)',
+        requiredSelfRank: 11,
         requiredDirectCount: 5,
-        allowedDirectRanks: [10, 11, 12, 13],
+        allowedDirectRanks: [8, 9, 10, 11],
       },
       {
         poolNumber: 2,
-        titleTh: 'กองที่ 2 : r-20 (1,000 USDT)',
-        requiredSelfRank: 20,
+        titleTh: 'กองที่ 2 : r-14 (1,000 USDT)',
+        requiredSelfRank: 14,
         requiredDirectCount: 2,
-        allowedDirectRanks: [17, 18, 19, 20],
+        allowedDirectRanks: [12, 13, 14],
       },
       {
         poolNumber: 3,
-        titleTh: 'กองที่ 3 : r-24 (5,000 USDT)',
-        requiredSelfRank: 24,
+        titleTh: 'กองที่ 3 : r-16 (3,000 USDT)',
+        requiredSelfRank: 16,
         requiredDirectCount: 2,
-        allowedDirectRanks: [22, 23, 24],
+        allowedDirectRanks: [14, 15, 16],
       },
       {
         poolNumber: 4,
-        titleTh: 'กองที่ 4 : r-27 (10,000 USDT)',
-        requiredSelfRank: 27,
+        titleTh: 'กองที่ 4 : r-18 (5,000 USDT)',
+        requiredSelfRank: 18,
         requiredDirectCount: 5,
-        allowedDirectRanks: [25, 26, 27],
+        allowedDirectRanks: [16, 17, 18],
       },
     ];
 
@@ -6483,7 +6507,7 @@ async function startApp() {
       const stats = computeMainIdDatabaseStats(m.id);
       mainMaxRankMap.set(m.id, stats.currentRank);
       const rSet = new Set<number>([1]);
-      for (let r = 2; r <= 27; r++) {
+      for (let r = 2; r <= 18; r++) {
         const rList = matrixDB.nodesByRank[r] || [];
         if (rList.some((x) => !x.isClone && !x.isExtraId && x.originMainId === m.id)) {
           rSet.add(r);
@@ -6701,7 +6725,7 @@ async function startApp() {
   app.post('/api/matrix/upgrade', async (req: Request, res: Response) => {
     try {
       const { targetRank, mainId, owner } = req.body;
-      const rankNum = Math.min(Math.max(Number(targetRank) || 2, 2), 27);
+      const rankNum = Math.min(Math.max(Number(targetRank) || 2, 2), 18);
       const mainIdNum = Math.max(1, Number(mainId) || 1);
 
       const r1Nodes = matrixDB.nodesByRank[1] || [];
@@ -6718,9 +6742,9 @@ async function startApp() {
       const r1SponsorMainId = mainNodeR1.directSponsorNodeId > 0 ? mainNodeR1.directSponsorNodeId : 1;
 
       // Determine current rank specifically for THIS Main ID (`mainIdNum`), not across the whole wallet
-      let currentRank = mainIdNum === 1 ? 27 : 1;
+      let currentRank = mainIdNum === 1 ? 18 : 1;
       if (mainIdNum !== 1) {
-        for (let r = 27; r >= 2; r--) {
+        for (let r = 18; r >= 2; r--) {
           const list = (matrixDB.nodesByRank[r] || []).filter((n) => !n.isSyntheticExtra);
           if (list.some((n) => !n.isClone && !n.isExtraId && n.originMainId === mainIdNum)) {
             currentRank = r;
@@ -6940,9 +6964,9 @@ async function startApp() {
       return res.json({ success: true, found: false });
     }
 
-    let currentRank = node.id === 1 ? 27 : 1;
+    let currentRank = node.id === 1 ? 18 : 1;
     if (node.id !== 1) {
-      for (let r = 27; r >= 2; r--) {
+      for (let r = 18; r >= 2; r--) {
         const list = matrixDB.nodesByRank[r] || [];
         if (list.some((n) => !n.isClone && !n.isExtraId && n.originMainId === node!.id)) {
           currentRank = r;
@@ -6975,7 +6999,7 @@ async function startApp() {
         return res.status(400).json({ success: false, error: 'กรุณากรอกเลข ID หลัก (เช่น 5 หรือ #5) หรือ Wallet Address' });
       }
 
-      const parsedRank = Math.min(27, Math.max(2, Number(targetRank) || 2));
+      const parsedRank = Math.min(18, Math.max(2, Number(targetRank) || 2));
       const r1Nodes = matrixDB.nodesByRank[1] || [];
       let userR1Node: IndexedTreeNode | undefined;
       let normalizedUser = '';
@@ -6999,9 +7023,9 @@ async function startApp() {
       const r1SponsorMainId = userR1Node?.directSponsorNodeId || 1;
 
       // Determine current rank specifically for THIS Main ID (`mainIdNum`), not across the whole wallet
-      let currentRank = mainIdNum === 1 ? 27 : 1;
+      let currentRank = mainIdNum === 1 ? 18 : 1;
       if (mainIdNum !== 1) {
-        for (let r = 27; r >= 2; r--) {
+        for (let r = 18; r >= 2; r--) {
           const list = (matrixDB.nodesByRank[r] || []).filter((n) => !n.isSyntheticExtra);
           if (list.some((n) => !n.isClone && !n.isExtraId && n.originMainId === mainIdNum)) {
             currentRank = r;
@@ -7252,7 +7276,7 @@ async function startApp() {
 
       const rankCountsMap: Record<number, number> = {};
       let totalNodesAllRanks = 0;
-      for (let r = 1; r <= 27; r++) {
+      for (let r = 1; r <= 18; r++) {
         const cnt = (matrixDB.nodesByRank[r] || []).filter((n) => !n.isSyntheticExtra).length;
         rankCountsMap[r] = cnt;
         totalNodesAllRanks += cnt;
@@ -7312,7 +7336,7 @@ async function startApp() {
   app.post('/api/admin/clear-cache', async (_req: Request, res: Response) => {
     try {
       rankSyncTimestamps.clear();
-      for (let r = 1; r <= 27; r++) {
+      for (let r = 1; r <= 18; r++) {
         matrixDB.nodesByRank[r] = [];
         matrixDB.rankCounts[r] = 0;
       }
@@ -7381,7 +7405,7 @@ async function startApp() {
         case 'adminUpgradeRankForMainId': {
           const mainId = Number(params?.mainId || 0);
           const targetRank = Number(params?.targetRank || 2);
-          if (!mainId || targetRank < 2 || targetRank > 27) {
+          if (!mainId || targetRank < 2 || targetRank > 18) {
             return res.status(400).json({ success: false, error: 'พารามิเตอร์ mainId หรือ targetRank ไม่ถูกต้อง' });
           }
           tx = await contract.adminUpgradeRankForMainId(mainId, targetRank);
@@ -7391,7 +7415,7 @@ async function startApp() {
         case 'adminUpgradeRank': {
           const targetUser = String(params?.targetUser || '').trim();
           const targetRank = Number(params?.targetRank || 2);
-          if (!ethers.isAddress(targetUser) || targetRank < 2 || targetRank > 27) {
+          if (!ethers.isAddress(targetUser) || targetRank < 2 || targetRank > 18) {
             return res.status(400).json({ success: false, error: 'Wallet Address หรือ targetRank ไม่ถูกต้อง' });
           }
           tx = await contract.adminUpgradeRank(targetUser, targetRank);
@@ -7500,9 +7524,9 @@ async function startApp() {
   });
 
   app.get('/api/matrix/inspect-rank', async (req: Request, res: Response) => {
-    const rankNum = Math.min(Math.max(Number(req.query.rank) || 1, 1), 27);
+    const rankNum = Math.min(Math.max(Number(req.query.rank) || 1, 1), 18);
     const addrParam = String(req.query.address || '').toLowerCase();
-    const nextPriceNum = rankNum < 27 ? RANK_PRICES_USDT[rankNum] : 0;
+    const nextPriceNum = rankNum < 18 ? RANK_PRICES_USDT[rankNum] : 0;
 
     if (!matrixDB.nodesByRank[rankNum] || matrixDB.nodesByRank[rankNum].length === 0) {
       await syncRankIntoDatabase(rankNum, CONTRACT_ADDRESS, false);
@@ -7569,7 +7593,7 @@ async function startApp() {
   });
 
   app.get('/api/matrix/tree-nodes', async (req: Request, res: Response) => {
-    const rank = Math.min(Math.max(Number(req.query.rank) || 1, 1), 27);
+    const rank = Math.min(Math.max(Number(req.query.rank) || 1, 1), 18);
     const targetContract = (req.query.contract as string) || CONTRACT_ADDRESS;
     const forceSync = req.query.forceSync === '1';
 
@@ -7639,7 +7663,7 @@ async function startApp() {
   });
 
   app.get('/api/matrix/nodes', async (req: Request, res: Response) => {
-    const rank = Math.min(Math.max(Number(req.query.rank) || 1, 1), 27);
+    const rank = Math.min(Math.max(Number(req.query.rank) || 1, 1), 18);
     if (!matrixDB.nodesByRank[rank] || matrixDB.nodesByRank[rank].length === 0) {
       await syncRankIntoDatabase(rank, CONTRACT_ADDRESS, false);
     }
@@ -7967,7 +7991,7 @@ async function startApp() {
         return res.status(400).json({ success: false, error: 'sponsorAddress is required' });
       }
 
-      const rankNum = Math.min(Math.max(Number(rank) || 1, 1), 27);
+      const rankNum = Math.min(Math.max(Number(rank) || 1, 1), 18);
       const data = await executeBatchPlacementInMemory(
         rankNum,
         sponsorAddress,
@@ -8082,7 +8106,7 @@ async function startApp() {
           usdtTokenConfigured: usdtAddress,
           matrixMaxDepth: 3,
           tierBranchFactor: 3,
-          maxCycleNodes: 27,
+          maxCycleNodes: 18,
           timestamp: new Date().toISOString(),
           status: `Contract bytecode deployed and verified on ${networkName} Explorer`,
           explorerUrl: `${explorer}/tx/${txHash}`,
@@ -8110,7 +8134,7 @@ async function startApp() {
     if (mainIdFilter > 0) {
       list = list.filter((u) => Number(u.mainNodeId) === mainIdFilter);
     }
-    if (rankFilter >= 2 && rankFilter <= 27) {
+    if (rankFilter >= 2 && rankFilter <= 18) {
       list = list.filter((u) => Number(u.toRank) === rankFilter);
     }
 
@@ -8136,7 +8160,7 @@ async function startApp() {
 
     const sanitizedLogs = matrixDB.rewardLogs.map((log) => {
       const parsed = parseFloat(log.amount);
-      const rNum = Math.min(Math.max(Number(log.rank) || 1, 1), 27);
+      const rNum = Math.min(Math.max(Number(log.rank) || 1, 1), 18);
       const unitPrice = RANK_PRICES_USDT[rNum - 1] || 5;
       const toIdStr = String(log.toNodeId || '0');
       let normalizedType = String(log.rewardType || 'DIRECT');
