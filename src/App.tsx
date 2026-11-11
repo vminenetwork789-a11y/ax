@@ -15,12 +15,35 @@ import { notifyMatrixNetworkError } from './hooks/useMatrixAutoReconnect';
 
 export default function App() {
   const [language, setLanguage] = useState<'th' | 'en'>('th');
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = window.localStorage.getItem('f27_theme_mode');
+      if (saved === 'dark' || saved === 'light') return saved;
+    }
+    return 'light';
+  });
   const [isDeployModalOpen, setIsDeployModalOpen] = useState<boolean>(false);
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState<boolean>(false);
   const [selectedInspectRank, setSelectedInspectRank] = useState<number>(1);
   const [, setSelectedVaultBalance] = useState<string>('0.00 USDT');
   const [bypassGateToDashboard, setBypassGateToDashboard] = useState<boolean>(false);
   const [isAdminView, setIsAdminView] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      const root = document.documentElement;
+      if (theme === 'dark') {
+        root.classList.add('dark');
+      } else {
+        root.classList.remove('dark');
+      }
+      window.localStorage.setItem('f27_theme_mode', theme);
+    }
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme((prev) => (prev === 'light' ? 'dark' : 'light'));
+  };
 
   const {
     account,
@@ -257,6 +280,8 @@ export default function App() {
           mode="login"
           language={language}
           onToggleLanguage={() => setLanguage(language === 'th' ? 'en' : 'th')}
+          theme={theme}
+          onToggleTheme={toggleTheme}
           account={account}
           detectedBrowserWallet={detectedBrowserWallet}
           chainId={chainId}
@@ -294,6 +319,8 @@ export default function App() {
           mode="Checking"
           language={language}
           onToggleLanguage={() => setLanguage(language === 'th' ? 'en' : 'th')}
+          theme={theme}
+          onToggleTheme={toggleTheme}
           account={account}
           detectedBrowserWallet={detectedBrowserWallet}
           chainId={chainId}
@@ -331,6 +358,8 @@ export default function App() {
           mode="register_onboarding"
           language={language}
           onToggleLanguage={() => setLanguage(language === 'th' ? 'en' : 'th')}
+          theme={theme}
+          onToggleTheme={toggleTheme}
           account={account}
           detectedBrowserWallet={detectedBrowserWallet}
           chainId={chainId}
@@ -364,7 +393,10 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col selection:bg-emerald-500/30 selection:text-emerald-200">
+    <div className="min-h-screen bg-[#F8FAFC] dark:bg-slate-950 text-[#0F172A] dark:text-slate-100 flex flex-col relative selection:bg-indigo-500/20 selection:text-indigo-900 dark:selection:bg-emerald-500/30 dark:selection:text-emerald-200 transition-colors duration-200">
+      {/* Subtle Pastel Gradient on Hero Section Top Background (Light Mode) */}
+      <div className="pointer-events-none fixed inset-x-0 top-0 h-80 bg-gradient-to-b from-indigo-100/60 via-sky-50/40 to-transparent dark:from-indigo-950/20 dark:via-slate-950/10 dark:to-transparent z-0" />
+
       <Header
         account={account}
         chainId={chainId}
@@ -376,6 +408,8 @@ export default function App() {
         onRefresh={refreshUserData}
         language={language}
         onToggleLanguage={() => setLanguage(language === 'th' ? 'en' : 'th')}
+        theme={theme}
+        onToggleTheme={toggleTheme}
         onOpenDeployModal={() => setIsDeployModalOpen(true)}
         contractAddress={contractAddress}
         isAdminUser={isAdminUser}
@@ -385,9 +419,9 @@ export default function App() {
 
       {/* Quick Banner when browsing in Guest / Bypass mode */}
       {(!account || (!isWalletRegistered && !isAdminUser)) && !(isAdminUser && isAdminView) && (
-        <div className="bg-indigo-950/60 border-b border-indigo-500/30 px-3 sm:px-6 py-2">
+        <div className="relative z-10 bg-[#EFF6FF] dark:bg-indigo-950/60 border-b border-blue-200/80 dark:border-indigo-500/30 px-3 sm:px-6 py-2">
           <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2 text-xs">
-            <span className="text-indigo-200">
+            <span className="text-[#1E40AF] dark:text-indigo-200 font-medium">
               {!account
                 ? language === 'th'
                   ? 'โหมดดูข้อมูล (ยังไม่ได้เข้าสู่ระบบ)'
@@ -398,7 +432,7 @@ export default function App() {
             </span>
             <button
               onClick={() => setBypassGateToDashboard(false)}
-              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold transition cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-[#2563EB] hover:bg-blue-700 dark:bg-emerald-500 dark:hover:bg-emerald-400 text-white dark:text-slate-950 font-bold shadow-xs transition cursor-pointer"
             >
               <LogIn className="w-3.5 h-3.5" />
               <span>
@@ -415,7 +449,7 @@ export default function App() {
         </div>
       )}
 
-      <main className="flex-1 w-full max-w-none mx-auto px-1 sm:px-2.5 py-1.5 sm:py-3 flex flex-col space-y-2.5">
+      <main className="relative z-10 flex-1 w-full max-w-none mx-auto px-1 sm:px-2.5 py-1.5 sm:py-3 flex flex-col space-y-2.5">
         {/* Global Framer Motion Blockchain Transaction Toast Notification System */}
         <TransactionToast
           txState={txState}
@@ -443,6 +477,7 @@ export default function App() {
             {/* Binary Matrix Tree Visualizer */}
             <MatrixTreeVisualizer
               language={language}
+              theme={theme}
               userAddress={account}
               chainId={chainId}
               isBscTestnet={isBscTestnet}
@@ -472,17 +507,17 @@ export default function App() {
       {/* Registration Popup Modal opened from Dashboard Status Widget / Summary Pill */}
       {isRegisterModalOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/50 dark:bg-black/80 backdrop-blur-sm"
           onClick={() => setIsRegisterModalOpen(false)}
         >
           <div
-            className="relative w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-2xl bg-slate-950 border border-indigo-500/40 shadow-2xl p-2"
+            className="relative w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-2xl bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-indigo-500/40 shadow-[0_20px_50px_-10px_rgba(15,23,42,0.15)] dark:shadow-2xl p-2"
             onClick={(e) => e.stopPropagation()}
           >
             <button
               type="button"
               onClick={() => setIsRegisterModalOpen(false)}
-              className="absolute top-4 right-4 z-10 p-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-700 transition cursor-pointer"
+              className="absolute top-4 right-4 z-10 p-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-800 text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white border border-slate-200/80 dark:border-slate-700 transition cursor-pointer"
               title="ปิดหน้าต่าง"
             >
               <X className="w-4 h-4" />

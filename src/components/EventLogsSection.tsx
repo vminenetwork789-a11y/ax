@@ -860,9 +860,9 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
   const mainAndAutoCount = perIdReports.filter((r) => r.nodeType !== 'CLONE_ID').length;
 
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden">
+    <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-6 shadow-[0_4px_20px_-2px_rgba(15,23,42,0.04)] dark:shadow-xl relative overflow-hidden transition-colors duration-200">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-800">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-200/80 dark:border-slate-800">
         <div>
           <div className="flex items-center gap-2 flex-wrap">
             <div className="relative flex h-3 w-3">
@@ -877,7 +877,7 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
                 }`}
               />
             </div>
-            <h3 className="text-lg font-bold text-emerald-400">
+            <h3 className="text-lg font-bold text-[#0F172A] dark:text-emerald-400">
               {activeTab === 'transactions'
                 ? language === 'th'
                   ? '⚡ ประวัติธุรกรรมรวมในระบบ (Transaction History)'
@@ -894,7 +894,7 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
                 ? '🚀 ประวัติการอัพแรงค์ (Rank 2 - 18)'
                 : '🚀 Rank Upgrade History (Rank 2 - 18)'}
             </h3>
-            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+            <span className="text-[10px] font-mono font-semibold px-2.5 py-0.5 rounded-full bg-[#DCFCE7] text-[#15803D] border border-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:border-emerald-500/30">
               Chain ID: 97 • Local Indexer DB
             </span>
             <button
@@ -902,16 +902,16 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
               onClick={wsManualReconnect}
               className={`inline-flex items-center gap-1.5 text-[10px] font-semibold px-2.5 py-0.5 rounded-full border transition cursor-pointer ${
                 isWsConnected || syncStatus === 'connected'
-                  ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300 hover:bg-emerald-900/60'
-                  : 'bg-amber-950/60 border-amber-500/40 text-amber-300 animate-pulse hover:bg-amber-900/60'
+                  ? 'bg-[#DCFCE7] border-emerald-200 text-[#15803D] hover:bg-emerald-100 dark:bg-emerald-950/60 dark:border-emerald-500/40 dark:text-emerald-300 dark:hover:bg-emerald-900/60'
+                  : 'bg-[#FEF3C7] border-amber-200 text-[#B45309] animate-pulse hover:bg-amber-100 dark:bg-amber-950/60 dark:border-amber-500/40 dark:text-amber-300 dark:hover:bg-amber-900/60'
               }`}
               title="คลิกเพื่อสั่งซิงค์สตรีมประวัติธุรกรรมสดใหม่ทันที"
             >
               <span
                 className={`w-2 h-2 rounded-full ${
                   isWsConnected || syncStatus === 'connected'
-                    ? 'bg-emerald-400 animate-ping'
-                    : 'bg-amber-400'
+                    ? 'bg-emerald-500 dark:bg-emerald-400 animate-ping'
+                    : 'bg-amber-500 dark:bg-amber-400'
                 }`}
               />
               <span>
@@ -922,8 +922,8 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
                   : '🔄 เชื่อมต่อ Live Tx Stream...'}
               </span>
             </button>
-            <span className="inline-flex items-center gap-1 text-[10px] font-mono px-2.5 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/35 font-bold">
-              <Clock className="w-3 h-3 text-cyan-400" />
+            <span className="inline-flex items-center gap-1 text-[10px] font-mono px-2.5 py-0.5 rounded-full bg-[#EFF6FF] text-[#1D4ED8] border border-blue-200 dark:bg-cyan-500/15 dark:text-cyan-300 dark:border-cyan-500/35 font-bold">
+              <Clock className="w-3 h-3 text-[#2563EB] dark:text-cyan-400" />
               {language === 'th'
                 ? `อ้างอิงเวลาล่าสุด: ${lastSyncedAt || 'เรียลไทม์'} (ใหม่สุด → เก่าสุด)`
                 : `Latest Time Ref: ${lastSyncedAt || 'Live'} (Newest First)`}
@@ -936,7 +936,7 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
             href={`https://testnet.bscscan.com/address/${CONTRACT_ADDRESS}#events`}
             target="_blank"
             rel="noreferrer"
-            className="text-xs bg-slate-950 hover:bg-slate-800 text-indigo-300 border border-slate-800 px-3 py-1.5 rounded-xl font-mono transition flex items-center gap-1.5"
+            className="text-xs bg-slate-50 hover:bg-slate-100 text-[#334155] border border-slate-200/80 dark:bg-slate-950 dark:hover:bg-slate-800 dark:text-indigo-300 dark:border-slate-800 px-3 py-1.5 rounded-xl font-mono transition flex items-center gap-1.5"
             title="View Contract Events on BSCScan Testnet"
           >
             <span>BSCScan Events</span>
@@ -946,7 +946,7 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
           <button
             onClick={() => fetchOnChainRewardEvents(true)}
             disabled={isRefreshing}
-            className="px-3 py-1.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/30 text-emerald-300 text-xs font-medium transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+            className="px-3 py-1.5 rounded-xl bg-[#DCFCE7] hover:bg-emerald-100 border border-emerald-200 text-[#15803D] dark:bg-emerald-600/20 dark:hover:bg-emerald-600/30 dark:border-emerald-500/30 dark:text-emerald-300 text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
             title="Sync Database from BNB Testnet"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
@@ -956,17 +956,17 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
       </div>
 
       {/* Mode Switcher Tabs: Transaction History vs Per-ID Breakdown vs Reward Events vs Rank Upgrade History */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 my-3 bg-slate-950 p-1.5 rounded-xl border border-slate-800 text-xs">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 my-3 bg-[#F8FAFC] dark:bg-slate-950 p-1.5 rounded-xl border border-slate-200/80 dark:border-slate-800 text-xs">
         <button
           type="button"
           onClick={() => setActiveTab('transactions')}
           className={`py-2 px-2.5 rounded-lg font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
             activeTab === 'transactions'
-              ? 'bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 shadow-md shadow-emerald-950/50 font-black'
-              : 'text-slate-400 hover:text-white'
+              ? 'bg-[#2563EB] text-white shadow-sm dark:bg-gradient-to-r dark:from-emerald-500 dark:to-teal-400 dark:text-slate-950 dark:shadow-md dark:shadow-emerald-950/50 font-black'
+              : 'text-[#64748B] hover:text-[#0F172A] hover:bg-white dark:text-slate-400 dark:hover:text-white dark:hover:bg-transparent'
           }`}
         >
-          <Zap className="w-4 h-4 text-slate-950" />
+          <Zap className="w-4 h-4" />
           <span>
             {language === 'th'
               ? `⚡ ประวัติธุรกรรมรวม (${combinedTransactions.length})`
@@ -979,8 +979,8 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
           onClick={() => setActiveTab('per_id')}
           className={`py-2 px-2.5 rounded-lg font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
             activeTab === 'per_id'
-              ? 'bg-amber-600 text-white shadow-md shadow-amber-950/50'
-              : 'text-slate-400 hover:text-white'
+              ? 'bg-[#2563EB] text-white shadow-sm dark:bg-amber-600 dark:text-white dark:shadow-md dark:shadow-amber-950/50'
+              : 'text-[#64748B] hover:text-[#0F172A] hover:bg-white dark:text-slate-400 dark:hover:text-white dark:hover:bg-transparent'
           }`}
         >
           <ShieldCheck className="w-4 h-4" />
@@ -996,8 +996,8 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
           onClick={() => setActiveTab('rewards')}
           className={`py-2 px-2.5 rounded-lg font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
             activeTab === 'rewards'
-              ? 'bg-emerald-600 text-white shadow-md shadow-emerald-950/50'
-              : 'text-slate-400 hover:text-white'
+              ? 'bg-[#2563EB] text-white shadow-sm dark:bg-emerald-600 dark:text-white dark:shadow-md dark:shadow-emerald-950/50'
+              : 'text-[#64748B] hover:text-[#0F172A] hover:bg-white dark:text-slate-400 dark:hover:text-white dark:hover:bg-transparent'
           }`}
         >
           <Radio className="w-4 h-4" />
@@ -1013,11 +1013,11 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
           onClick={() => setActiveTab('upgrades')}
           className={`py-2 px-2.5 rounded-lg font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
             activeTab === 'upgrades'
-              ? 'bg-indigo-600 text-white shadow-md shadow-indigo-950/50'
-              : 'text-slate-400 hover:text-white'
+              ? 'bg-[#2563EB] text-white shadow-sm dark:bg-indigo-600 dark:text-white dark:shadow-md dark:shadow-indigo-950/50'
+              : 'text-[#64748B] hover:text-[#0F172A] hover:bg-white dark:text-slate-400 dark:hover:text-white dark:hover:bg-transparent'
           }`}
         >
-          <Layers className="w-4 h-4 text-amber-300" />
+          <Layers className="w-4 h-4" />
           <span>
             {language === 'th'
               ? `ประวัติการอัพแรงค์ (${upgradeLogs.length})`
@@ -1028,32 +1028,32 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
 
       {/* Live On-Chain Telemetry Bar */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 my-3 text-[11px] font-mono">
-        <div className="bg-slate-950/90 border border-slate-800/80 rounded-xl p-2.5">
-          <span className="text-slate-500 block">Contract</span>
+        <div className="bg-[#F8FAFC] dark:bg-slate-950/90 border border-slate-200/80 dark:border-slate-800/80 rounded-xl p-2.5">
+          <span className="text-[#64748B] dark:text-slate-500 block">Contract</span>
           <a
             href={`https://testnet.bscscan.com/address/${CONTRACT_ADDRESS}`}
             target="_blank"
             rel="noreferrer"
-            className="text-emerald-400 hover:underline font-bold truncate block"
+            className="text-[#15803D] dark:text-emerald-400 hover:underline font-bold truncate block"
           >
             {CONTRACT_ADDRESS.slice(0, 8)}...{CONTRACT_ADDRESS.slice(-6)}
           </a>
         </div>
-        <div className="bg-slate-950/90 border border-slate-800/80 rounded-xl p-2.5">
-          <span className="text-slate-500 block">Latest Block</span>
-          <span className="text-indigo-300 font-bold">
+        <div className="bg-[#F8FAFC] dark:bg-slate-950/90 border border-slate-200/80 dark:border-slate-800/80 rounded-xl p-2.5">
+          <span className="text-[#64748B] dark:text-slate-500 block">Latest Block</span>
+          <span className="text-[#2563EB] dark:text-indigo-300 font-bold">
             {latestBlock > 0 ? `#${latestBlock.toLocaleString()}` : 'กำลังเชื่อมต่อ...'}
           </span>
         </div>
-        <div className="bg-slate-950/90 border border-slate-800/80 rounded-xl p-2.5">
-          <span className="text-slate-500 block">
+        <div className="bg-[#F8FAFC] dark:bg-slate-950/90 border border-slate-200/80 dark:border-slate-800/80 rounded-xl p-2.5">
+          <span className="text-[#64748B] dark:text-slate-500 block">
             {activeTab === 'transactions'
               ? 'ธุรกรรมทั้งหมด'
               : activeTab === 'upgrades'
               ? 'หักจาก Vault สะสมรวม'
               : 'Rank 1 Nodes ทั้งหมด'}
           </span>
-          <span className="text-amber-300 font-bold">
+          <span className="text-[#B45309] dark:text-amber-300 font-bold">
             {activeTab === 'transactions'
               ? `${filteredTransactions.length} รายการ`
               : activeTab === 'upgrades'
