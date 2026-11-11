@@ -318,7 +318,7 @@ export const FAQSection: React.FC<FAQSectionProps> = ({
               </div>
               <div className="p-3 rounded-lg bg-slate-950/70 border border-cyan-500/30">
                 <span className="text-cyan-400 font-bold block mb-1">3. New Extra ID Pool</span>
-                <span>If current rank &lt; 27: Vault (35%) in Rank 4 to 18 minus 5 ranks backwards. If current rank == 18: Vault (35%) in Rank 4 to 18 in full. Unlocks Auto Extra ID in Rank 2-18 when reaching target rank price.</span>
+                <span>If current rank &lt; 18: Vault (35%) in Rank 4 to 18 minus 5 ranks backwards. If current rank == 18: Vault (35%) in Rank 4 to 18 in full. Unlocks Auto Extra ID in Rank 2-18 when reaching target rank price.</span>
               </div>
             </div>
           </div>
@@ -369,6 +369,75 @@ export const FAQSection: React.FC<FAQSectionProps> = ({
                 <span>
                   Unlocks Auto Extra ID in Rank 2-18 once New Extra ID Pool accumulates the target Rank price, allowing automated Extra ID nodes to build independent sub-matrices.
                 </span>
+              </div>
+            </div>
+          </div>
+        ),
+      },
+      {
+        id: 'allsell-4-pools',
+        category: 'ranks',
+        questionTh: 'คุณสมบัติการรับ AllSell 4% (แบ่ง 4 กอง) และรอบการจ่ายเงินมีรายละเอียดอย่างไร?',
+        questionEn: 'What are the qualification requirements and payout schedule for the 4 AllSell pools (4%)?',
+        tagsTh: ['AllSell', '4 กอง', 'Rank 11', 'Rank 14', 'Rank 16', 'Rank 18', 'ปันผล'],
+        tagsEn: ['AllSell', '4 Pools', 'Rank 11', 'Rank 14', 'Rank 16', 'Rank 18', 'Dividends'],
+        answerTh: (
+          <div className="space-y-3 text-slate-300 leading-relaxed text-sm">
+            <p>
+              ยอด <strong className="text-emerald-400">AllSell 4%</strong> จากเม็ดซ้ายทั่วทั้งระบบ 
+              จะถูกแบ่งออกเป็น 4 กองเท่าๆ กัน (กองละ 25% ของ AllSell หรือ 1% ต่อเม็ดซ้าย) 
+              และมีระบบตัดรอบโอนเงินจริงเข้ากระเป๋าอัตโนมัติ <strong className="text-amber-300">ทุกวันที่ 1 (ต้นเดือน) และวันที่ 15 (กลางเดือน)</strong>
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+              <div className="p-3 rounded-xl bg-slate-950/70 border border-cyan-500/30 space-y-1">
+                <span className="font-extrabold text-amber-300 block">กองที่ 1 : r-11 (500 USDT)</span>
+                <div>1. ID หลักนั้น ต้องดำรงอยู่ใน <strong className="text-amber-300">r-11</strong></div>
+                <div>2. มี ID หลักแนะนำตรงอย่างน้อย <strong className="text-emerald-400">5 ID</strong> ดำรงอยู่ใน <strong className="text-cyan-300">r-8, r-9, r-10 หรือ r-11</strong></div>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-950/70 border border-cyan-500/30 space-y-1">
+                <span className="font-extrabold text-amber-300 block">กองที่ 2 : r-14 (1,000 USDT)</span>
+                <div>1. ID หลักนั้น ต้องดำรงอยู่ใน <strong className="text-amber-300">r-14</strong></div>
+                <div>2. มี ID หลักแนะนำตรงอย่างน้อย <strong className="text-emerald-400">2 ID</strong> ดำรงอยู่ใน <strong className="text-cyan-300">r-12, r-13 หรือ r-14</strong></div>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-950/70 border border-cyan-500/30 space-y-1">
+                <span className="font-extrabold text-amber-300 block">กองที่ 3 : r-16 (3,000 USDT)</span>
+                <div>1. ID หลักนั้น ต้องดำรงอยู่ใน <strong className="text-amber-300">r-16</strong></div>
+                <div>2. มี ID หลักแนะนำตรงอย่างน้อย <strong className="text-emerald-400">2 ID</strong> ดำรงอยู่ใน <strong className="text-cyan-300">r-14, r-15 หรือ r-16</strong></div>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-950/70 border border-cyan-500/30 space-y-1">
+                <span className="font-extrabold text-amber-300 block">กองที่ 4 : r-18 (5,000 USDT)</span>
+                <div>1. ID หลักนั้น ต้องดำรงอยู่ใน <strong className="text-amber-300">r-18</strong></div>
+                <div>2. มี ID หลักแนะนำตรงอย่างน้อย <strong className="text-emerald-400">5 ID</strong> ดำรงอยู่ใน <strong className="text-cyan-300">r-16, r-17 หรือ r-18</strong></div>
+              </div>
+            </div>
+          </div>
+        ),
+        answerEn: (
+          <div className="space-y-3 text-slate-300 leading-relaxed text-sm">
+            <p>
+              The <strong className="text-emerald-400">AllSell 4% fee</strong> from global left nodes is split into 4 equal pools 
+              (25% each = 1% per node), settled automatically on the <strong className="text-amber-300">1st and 15th of each month</strong>:
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+              <div className="p-3 rounded-xl bg-slate-950/70 border border-cyan-500/30 space-y-1">
+                <span className="font-extrabold text-amber-300 block">Pool 1 : r-11 (500 USDT)</span>
+                <div>1. Main ID present in <strong className="text-amber-300">Rank 11</strong></div>
+                <div>2. At least <strong className="text-emerald-400">5 direct Main IDs</strong> present in <strong className="text-cyan-300">r-8, r-9, r-10, or r-11</strong></div>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-950/70 border border-cyan-500/30 space-y-1">
+                <span className="font-extrabold text-amber-300 block">Pool 2 : r-14 (1,000 USDT)</span>
+                <div>1. Main ID present in <strong className="text-amber-300">Rank 14</strong></div>
+                <div>2. At least <strong className="text-emerald-400">2 direct Main IDs</strong> present in <strong className="text-cyan-300">r-12, r-13, or r-14</strong></div>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-950/70 border border-cyan-500/30 space-y-1">
+                <span className="font-extrabold text-amber-300 block">Pool 3 : r-16 (3,000 USDT)</span>
+                <div>1. Main ID present in <strong className="text-amber-300">Rank 16</strong></div>
+                <div>2. At least <strong className="text-emerald-400">2 direct Main IDs</strong> present in <strong className="text-cyan-300">r-14, r-15, or r-16</strong></div>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-950/70 border border-cyan-500/30 space-y-1">
+                <span className="font-extrabold text-amber-300 block">Pool 4 : r-18 (5,000 USDT)</span>
+                <div>1. Main ID present in <strong className="text-amber-300">Rank 18</strong></div>
+                <div>2. At least <strong className="text-emerald-400">5 direct Main IDs</strong> present in <strong className="text-cyan-300">r-16, r-17, or r-18</strong></div>
               </div>
             </div>
           </div>
@@ -691,19 +760,30 @@ export const FAQSection: React.FC<FAQSectionProps> = ({
           </div>
         </div>
 
-        {/* Global Expand / Collapse controls */}
-        <div className="flex items-center gap-2 self-start sm:self-auto">
+        {/* Global Expand / Collapse controls & Full Guide Link */}
+        <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+          <a
+            href="/SYSTEM_WORKFLOW_GUIDE_R1_TO_R18.txt"
+            target="_blank"
+            rel="noreferrer"
+            className="px-3 py-1.5 text-xs font-semibold text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 rounded-lg transition border border-emerald-500/30 inline-flex items-center gap-1.5"
+            title="เปิดอ่านคู่มือและรายละเอียดการทำงานของระบบฉบับเต็ม"
+          >
+            <FileCode2 className="w-3.5 h-3.5" />
+            <span>{language === 'th' ? 'คู่มือระบบฉบับเต็ม (TXT)' : 'Full Workflow Guide'}</span>
+            <ExternalLink className="w-3 h-3" />
+          </a>
           <button
             type="button"
             onClick={handleExpandAll}
-            className="px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white bg-slate-800/80 hover:bg-slate-800 rounded-lg transition border border-slate-700/60"
+            className="px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white bg-slate-800/80 hover:bg-slate-800 rounded-lg transition border border-slate-700/60 cursor-pointer"
           >
             {language === 'th' ? 'ขยายทั้งหมด' : 'Expand All'}
           </button>
           <button
             type="button"
             onClick={handleCollapseAll}
-            className="px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white bg-slate-800/80 hover:bg-slate-800 rounded-lg transition border border-slate-700/60"
+            className="px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white bg-slate-800/80 hover:bg-slate-800 rounded-lg transition border border-slate-700/60 cursor-pointer"
           >
             {language === 'th' ? 'ยุบทั้งหมด' : 'Collapse All'}
           </button>

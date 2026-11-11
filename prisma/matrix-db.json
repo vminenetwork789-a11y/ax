@@ -1,8 +1,8 @@
 {
   "contractAddress": "0xE6ef0985E12C5BC580A231DCc6d977CcEdE716d1",
   "usdtAddress": "0x05f24E1F598DF1aE8d0B424ce978f8ea33bB752b",
-  "lastSyncedBlock": 142042723,
-  "lastSyncedAt": "2026-11-11T04:08:43.819Z",
+  "lastSyncedBlock": 142048046,
+  "lastSyncedAt": "2026-11-11T04:48:39.291Z",
   "systemWallets": {
     "allSellWallet": "0xBeFEB9871a20656aeF7E8d218f751e9C23FAF710",
     "botWallet": "0xbFD03d4D69221085a63Dd372A5d59f952C084a56",
