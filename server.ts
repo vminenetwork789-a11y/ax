@@ -209,7 +209,7 @@ const DEFAULT_SYSTEM_CONFIG = {
   contractAddress:
     process.env.OVERRIDE_CONTRACT_ADDRESS ||
     process.env.CONTRACT_ADDRESS ||
-    '0xE6ef0985E12C5BC580A231DCc6d977CcEdE716d1',
+    '0xD3e4e4d7f367e563756d82989bB930B0261eb2BA',
   usdtAddress: process.env.USDT_ADDRESS || '0x05f24E1F598DF1aE8d0B424ce978f8ea33bB752b',
   chainId: Number(process.env.CHAIN_ID || 97),
   networkName: process.env.NETWORK_NAME || 'BNB Smart Chain Testnet',
@@ -219,6 +219,7 @@ const DEFAULT_SYSTEM_CONFIG = {
 };
 
 const SERVER_LEGACY_CONTRACTS = new Set([
+  '0xe6ef0985e12c5bc580a231dcc6d977ccede716d1',
   '0xda9da3b56b75f5d59ac0b17b402e79dd3dddffba',
   '0x104d65034b00f0db59497036208f3b798b4c10cc',
   '0x0742e9581217cc8cd6de2aa80b7ce9ad881deee3',
@@ -2357,7 +2358,7 @@ function reconcileAutoExtraIdsAcrossRanks(): Array<{
   reconcileRank1AutoMainIds();
 
   // Do NOT synthesize phantom/fake Extra IDs or Clones off-chain.
-  // The Smart Contract (0xE6ef0985E12C5BC580A231DCc6d977CcEdE716d1) already executes
+  // The Smart Contract (0xD3e4e4d7f367e563756d82989bB930B0261eb2BA) already executes
   // _processExtraIdPool and _processAutoNewIdPool directly on-chain and creates real nodes.
   return createdExtraNodes;
 }
