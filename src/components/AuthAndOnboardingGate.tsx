@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Wallet,
   Sparkles,
@@ -13,11 +13,19 @@ import {
   Network,
   Sun,
   Moon,
+  Link2,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { MatrixTreeVisualizer } from './MatrixTreeVisualizer';
 import { TransactionToast } from './TransactionToast';
 import { ApplicantItem, PlacementMode } from '../utils/offChainSimulator';
 import { UserProfile } from '../types';
+import {
+  getActiveReferralSponsorId,
+  setActiveReferralSponsorId,
+  buildReferralLink,
+} from '../utils/referralLink';
 
 interface AuthAndOnboardingGateProps {
   mode: 'login' | 'Checking' | 'register_onboarding';
@@ -107,6 +115,31 @@ export const AuthAndOnboardingGate: React.FC<AuthAndOnboardingGateProps> = ({
   onUpgradeToRank,
 }) => {
   const [customLoginInput, setCustomLoginInput] = useState<string>('');
+  const [referralSponsorId, setReferralSponsorId] = useState<number>(() => {
+    return getActiveReferralSponsorId() || 1;
+  });
+  const [hasUrlRef, setHasUrlRef] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    const p = new URLSearchParams(window.location.search);
+    return Boolean(p.get('ref') || p.get('sponsor') || p.get('upline') || p.get('r'));
+  });
+  const [copiedRefLink, setCopiedRefLink] = useState<boolean>(false);
+
+  useEffect(() => {
+    const detected = getActiveReferralSponsorId();
+    if (detected && detected >= 1) {
+      setReferralSponsorId(detected);
+    }
+  }, []);
+
+  const handleCopyGateRefLink = () => {
+    const url = buildReferralLink(referralSponsorId);
+    if (navigator?.clipboard?.writeText) {
+      navigator.clipboard.writeText(url).catch(() => {});
+    }
+    setCopiedRefLink(true);
+    setTimeout(() => setCopiedRefLink(false), 2000);
+  };
 
   const handleCustomSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -223,6 +256,65 @@ export const AuthAndOnboardingGate: React.FC<AuthAndOnboardingGateProps> = ({
                     ? 'เชื่อมต่อกระเป๋า Web3 หรือระบุรหัสสมาชิกเพื่อดูผังโครงสร้างและผลประโยชน์แบบเรียลไทม์'
                     : 'Connect your Web3 wallet or enter a Node ID to inspect real-time matrix positions'}
                 </p>
+              </div>
+
+              {/* Referral Link / Sponsor Banner & Quick Link Generator */}
+              <div className="p-3.5 rounded-2xl bg-[#EFF6FF] dark:bg-indigo-950/35 border border-blue-200/80 dark:border-indigo-500/35 space-y-2.5">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <span className="p-1.5 rounded-lg bg-white dark:bg-indigo-500/20 border border-blue-200/80 dark:border-indigo-500/40 text-[#2563EB] dark:text-indigo-300">
+                      <Link2 className="w-3.5 h-3.5" />
+                    </span>
+                    <span className="text-xs font-extrabold text-[#0F172A] dark:text-white">
+                      {hasUrlRef
+                        ? language === 'th'
+                          ? `🔗 เข้าใช้งานผ่านลิ้งผู้แนะนำ: รหัส #${referralSponsorId}`
+                          : `🔗 Referred by Sponsor Node #${referralSponsorId}`
+                        : language === 'th'
+                        ? '🔗 ลิ้งผู้แนะนำ (Referral Link)'
+                        : '🔗 Referral Link'}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-[11px]">
+                    <span className="text-[#64748B] dark:text-slate-400">
+                      {language === 'th' ? 'รหัสผู้แนะนำ:' : 'Sponsor #:'}
+                    </span>
+                    <input
+                      type="number"
+                      min={1}
+                      value={referralSponsorId}
+                      onChange={(e) => {
+                        const nextId = Math.max(1, parseInt(e.target.value, 10) || 1);
+                        setReferralSponsorId(nextId);
+                        setActiveReferralSponsorId(nextId);
+                      }}
+                      className="w-16 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-700 rounded-lg px-2 py-0.5 text-xs font-mono font-bold text-[#2563EB] dark:text-amber-300 text-center focus:outline-none focus:border-[#2563EB]"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  <div className="flex-1 min-w-0 bg-white dark:bg-slate-950/90 border border-slate-200/80 dark:border-slate-800 rounded-xl px-3 py-1.5 text-[11px] font-mono text-[#334155] dark:text-slate-300 truncate">
+                    {buildReferralLink(referralSponsorId)}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleCopyGateRefLink}
+                    className="px-3 py-1.5 rounded-xl bg-[#2563EB] hover:bg-blue-700 dark:bg-indigo-600 dark:hover:bg-indigo-500 text-white text-xs font-bold shrink-0 inline-flex items-center gap-1.5 transition cursor-pointer shadow-2xs"
+                  >
+                    {copiedRefLink ? (
+                      <>
+                        <Check className="w-3.5 h-3.5" />
+                        <span>{language === 'th' ? 'คัดลอกแล้ว!' : 'Copied!'}</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>{language === 'th' ? 'คัดลอกลิ้ง' : 'Copy Link'}</span>
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
 
               {/* Detected Browser Wallet Banner (Tinted Emerald Badge Style) */}
@@ -417,6 +509,9 @@ export const AuthAndOnboardingGate: React.FC<AuthAndOnboardingGateProps> = ({
                 </h1>
                 <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-md bg-[#FEF3C7] text-[#B45309] dark:bg-amber-500/20 dark:text-amber-300 border border-amber-300/80 dark:border-amber-500/40">
                   {language === 'th' ? 'กระเป๋านี้ยังไม่เคยสมัคร' : 'Unregistered Wallet'}
+                </span>
+                <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-md bg-[#DCFCE7] text-[#15803D] dark:bg-emerald-500/20 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-500/40">
+                  🔗 ผู้แนะนำตรง: #{referralSponsorId}
                 </span>
               </div>
               <div className="text-[11px] text-[#64748B] dark:text-slate-400 flex items-center gap-2 mt-0.5">

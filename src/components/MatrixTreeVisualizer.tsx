@@ -48,10 +48,17 @@ import {
   Bell,
   Clock,
   Calculator,
+  Link2,
+  Share2,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { emitTransactionToast } from './TransactionToast';
 import { ExtraIdPathCalculator, SimRawNode } from './ExtraIdPathCalculator';
+import {
+  getActiveReferralSponsorId,
+  setActiveReferralSponsorId,
+  buildReferralLink,
+} from '../utils/referralLink';
 
 export interface EnrichedBinaryNode {
   id: number;
@@ -664,9 +671,11 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
     timestamp: string;
   } | null>(null);
 
-  // Registration Popup Modal State
+  // Registration Popup Modal State & Referral Link State
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState<boolean>(false);
-  const [regSponsorId, setRegSponsorId] = useState<number>(1);
+  const [regSponsorId, setRegSponsorId] = useState<number>(() => getActiveReferralSponsorId() || 1);
+  const [selectedReferralNodeId, setSelectedReferralNodeId] = useState<number>(() => getActiveReferralSponsorId() || 1);
+  const [copiedReferralKey, setCopiedReferralKey] = useState<string | null>(null);
   const [regTargetParentId, setRegTargetParentId] = useState<number | string | undefined>(undefined);
   const [regIsLeft, setRegIsLeft] = useState<boolean | undefined>(undefined);
   const [regNodeCount, setRegNodeCount] = useState<number>(1);
@@ -676,13 +685,57 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
   const [regTxError, setRegTxError] = useState<string | null>(null);
 
   const openRegisterModal = (sponsorId: number, parentId?: number | string, isLeft?: boolean) => {
-    setRegSponsorId(sponsorId || 1);
+    const resolvedSponsor = sponsorId || getActiveReferralSponsorId() || 1;
+    setRegSponsorId(resolvedSponsor);
+    setActiveReferralSponsorId(resolvedSponsor);
     setRegTargetParentId(parentId);
     setRegIsLeft(isLeft);
     setRegNodeCount(1);
     setRegTxError(null);
     setRegTxMessage(null);
     setIsRegisterModalOpen(true);
+  };
+
+  const copyReferralLink = (nodeId: number | string, key?: string) => {
+    const cleanId = Math.max(1, parseInt(String(nodeId).replace(/[^0-9]/g, ''), 10) || 1);
+    const link = buildReferralLink(cleanId);
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(link).catch(() => {});
+    }
+    const statusKey = key || `ref-${cleanId}`;
+    setCopiedReferralKey(statusKey);
+    setTimeout(() => {
+      setCopiedReferralKey((prev) => (prev === statusKey ? null : prev));
+    }, 2200);
+    emitTransactionToast({
+      id: `copy-ref-${Date.now()}`,
+      status: 'confirmed',
+      step:
+        language === 'th'
+          ? `🔗 คัดลอกลิ้งผู้แนะนำ รหัส #${cleanId} สำเร็จ!`
+          : `🔗 Copied Referral Link for Node #${cleanId}!`,
+      message: link,
+    });
+  };
+
+  const shareReferralLink = async (nodeId: number | string) => {
+    const cleanId = Math.max(1, parseInt(String(nodeId).replace(/[^0-9]/g, ''), 10) || 1);
+    const link = buildReferralLink(cleanId);
+    const shareTitle = `FractalFlowMatrix27 — ลิ้งผู้แนะนำรหัส #${cleanId}`;
+    const shareText = `สมัครสมาชิก FractalFlowMatrix27 ต่อสายผู้แนะนำตรง รหัส #${cleanId} ผ่านลิ้งนี้: ${link}`;
+    if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+      try {
+        await navigator.share({
+          title: shareTitle,
+          text: shareText,
+          url: link,
+        });
+        return;
+      } catch {
+        // Fallback to copy
+      }
+    }
+    copyReferralLink(cleanId, `share-${cleanId}`);
   };
 
   const formatModalRowTime = useCallback(
@@ -5429,30 +5482,55 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             );
           })()}
 
-          {/* Open Benefit & History Popup Modal Button */}
-          <button
-            type="button"
-            onClick={() => {
-              const curMaxR = node.targetMainIdCurrentRank || node.rank || 1;
-              setModalUpgradeTargetRank(Math.min(18, curMaxR + 1));
-              setModalUpgradeMessage(null);
-              setModalUpgradeError(null);
-              setBenefitModalTab('all');
-              setExpandedBenefitNodeId((prev) => (prev === node.id ? null : node.id));
-              fetchPerIdHistoryForModal();
-            }}
-            className={`mt-1 w-full py-1 px-1.5 rounded-md font-bold text-[8.5px] flex items-center justify-between transition cursor-pointer ${
-              isBenefitOpen
-                ? 'bg-[#2563EB] dark:bg-gradient-to-r dark:from-indigo-600 dark:to-violet-600 text-white shadow-xs'
-                : 'bg-[#EFF6FF] hover:bg-blue-100/80 dark:bg-[#0c1020] dark:hover:bg-slate-900 text-[#1D4ED8] dark:text-indigo-200 border border-blue-200/80 dark:border-slate-800'
-            }`}
-          >
-            <span className="flex items-center gap-0.5">
-              <Coins className="w-2.5 h-2.5 text-[#2563EB] dark:text-indigo-300 shrink-0" />
-              <span>ดูผลประโยชน์</span>
-            </span>
-            <ChevronDown className="w-2.5 h-2.5" />
-          </button>
+          {/* Open Benefit & History Popup Modal Button + Quick Referral Link Copy Button */}
+          <div className="mt-1 flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => {
+                const curMaxR = node.targetMainIdCurrentRank || node.rank || 1;
+                setModalUpgradeTargetRank(Math.min(18, curMaxR + 1));
+                setModalUpgradeMessage(null);
+                setModalUpgradeError(null);
+                setBenefitModalTab('all');
+                setExpandedBenefitNodeId((prev) => (prev === node.id ? null : node.id));
+                fetchPerIdHistoryForModal();
+              }}
+              className={`flex-1 py-1 px-1.5 rounded-md font-bold text-[8.5px] flex items-center justify-between transition cursor-pointer ${
+                isBenefitOpen
+                  ? 'bg-[#2563EB] dark:bg-gradient-to-r dark:from-indigo-600 dark:to-violet-600 text-white shadow-xs'
+                  : 'bg-[#EFF6FF] hover:bg-blue-100/80 dark:bg-[#0c1020] dark:hover:bg-slate-900 text-[#1D4ED8] dark:text-indigo-200 border border-blue-200/80 dark:border-slate-800'
+              }`}
+            >
+              <span className="flex items-center gap-0.5">
+                <Coins className="w-2.5 h-2.5 text-[#2563EB] dark:text-indigo-300 shrink-0" />
+                <span>ดูผลประโยชน์</span>
+              </span>
+              <ChevronDown className="w-2.5 h-2.5" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                const sponsorTargetId = node.r1MainId || node.originMainId || node.id;
+                setSelectedReferralNodeId(sponsorTargetId);
+                copyReferralLink(sponsorTargetId, `node-card-ref-${node.id}`);
+              }}
+              className="py-1 px-1.5 rounded-md font-bold text-[8.5px] bg-[#DCFCE7] hover:bg-emerald-200/80 text-[#15803D] border border-emerald-300 dark:bg-emerald-950/70 dark:hover:bg-emerald-900 dark:text-emerald-300 dark:border-emerald-500/40 flex items-center gap-0.5 transition cursor-pointer shrink-0"
+              title={`คัดลอกลิ้งผู้แนะนำ รหัส #${node.r1MainId || node.originMainId || node.id}`}
+            >
+              {copiedReferralKey === `node-card-ref-${node.id}` ? (
+                <>
+                  <Check className="w-2.5 h-2.5 shrink-0" />
+                  <span>คัดลอกแล้ว</span>
+                </>
+              ) : (
+                <>
+                  <Link2 className="w-2.5 h-2.5 shrink-0" />
+                  <span>ลิ้งแนะนำ #{node.r1MainId || node.originMainId || node.id}</span>
+                </>
+              )}
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -6421,6 +6499,148 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                 </button>
               );
             })}
+          </div>
+        </div>
+      </div>
+
+      {/* 1.8 แถบลิ้งผู้แนะนำ (Referral Link Generator & Quick Share Bar) */}
+      <div className="rounded-2xl bg-[#EFF6FF] dark:bg-gradient-to-r dark:from-[#0f172a] dark:via-[#111827] dark:to-[#131c31] border border-blue-200/80 dark:border-indigo-500/40 p-3 sm:p-3.5 space-y-2 shadow-[0_4px_20px_-2px_rgba(37,99,235,0.06)]">
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#2563EB] text-white dark:bg-indigo-600 font-extrabold text-[11px] shadow-2xs">
+              <Link2 className="w-3.5 h-3.5" />
+              <span>{language === 'th' ? '🔗 ลิ้งผู้แนะนำของคุณ (Referral Link)' : '🔗 Your Referral Link'}</span>
+            </span>
+
+            <span className="text-[11px] text-[#334155] dark:text-slate-300 font-medium">
+              {language === 'th' ? 'เลือกรหัสผู้แนะนำ:' : 'Sponsor ID:'}
+            </span>
+
+            <div className="flex items-center gap-1 flex-wrap">
+              <input
+                type="number"
+                min={1}
+                value={selectedReferralNodeId}
+                onChange={(e) => {
+                  const nextId = Math.max(1, parseInt(e.target.value, 10) || 1);
+                  setSelectedReferralNodeId(nextId);
+                  setActiveReferralSponsorId(nextId);
+                }}
+                className="w-16 bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg px-2 py-1 text-xs font-mono font-extrabold text-[#2563EB] dark:text-amber-300 text-center focus:outline-none focus:border-[#2563EB]"
+                title="พิมพ์รหัสผู้แนะนำที่ต้องการสร้างลิ้ง"
+              />
+
+              <button
+                type="button"
+                onClick={() => {
+                  const targetMain =
+                    activeNodesMap.get(focusRootId)?.r1MainId ||
+                    activeNodesMap.get(focusRootId)?.originMainId ||
+                    focusRootId ||
+                    1;
+                  setSelectedReferralNodeId(targetMain);
+                  setActiveReferralSponsorId(targetMain);
+                }}
+                className={`px-2 py-1 rounded-lg font-mono text-[11px] font-bold border transition cursor-pointer ${
+                  selectedReferralNodeId ===
+                  (activeNodesMap.get(focusRootId)?.r1MainId ||
+                    activeNodesMap.get(focusRootId)?.originMainId ||
+                    focusRootId)
+                    ? 'bg-[#DCFCE7] border-emerald-300 text-[#15803D] dark:bg-emerald-500/20 dark:border-emerald-500/40 dark:text-emerald-300'
+                    : 'bg-white border-slate-200/80 text-[#334155] hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-800 dark:text-slate-300'
+                }`}
+              >
+                โหนดที่ดู #{activeNodesMap.get(focusRootId)?.r1MainId || activeNodesMap.get(focusRootId)?.originMainId || focusRootId}
+              </button>
+
+              {(() => {
+                if (!userAddress) return null;
+                const lower = userAddress.toLowerCase();
+                const r1Snap = multiRankSnapshotsState.get(1);
+                const nodeList: Array<{ id: number; isClone: boolean; owner?: string }> = r1Snap
+                  ? Array.from(r1Snap.values())
+                  : Array.from(activeNodesMap.values());
+                const myMainIds = nodeList
+                  .filter((n) => !n.isClone && n.owner?.toLowerCase() === lower)
+                  .map((n) => n.id)
+                  .slice(0, 6);
+                return myMainIds.map((mId) => (
+                  <button
+                    key={`my-ref-chip-${mId}`}
+                    type="button"
+                    onClick={() => {
+                      setSelectedReferralNodeId(mId);
+                      setActiveReferralSponsorId(mId);
+                    }}
+                    className={`px-2 py-1 rounded-lg font-mono text-[11px] font-bold border transition cursor-pointer ${
+                      selectedReferralNodeId === mId
+                        ? 'bg-[#2563EB] border-[#2563EB] text-white dark:bg-amber-500 dark:border-amber-400 dark:text-slate-950'
+                        : 'bg-white border-slate-200/80 text-[#1D4ED8] hover:bg-blue-50 dark:bg-slate-900 dark:border-slate-700 dark:text-amber-300'
+                    }`}
+                  >
+                    ID ของฉัน #{mId}
+                  </button>
+                ));
+              })()}
+            </div>
+          </div>
+
+          <span className="text-[10.5px] font-semibold px-2.5 py-0.5 rounded-full bg-[#DCFCE7] text-[#15803D] border border-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:border-emerald-500/35">
+            ✨ ผู้ที่กดลิ้งนี้จะสมัครต่อสายผู้แนะนำตรง #{selectedReferralNodeId} ทันที (รับ 30% ค่าแนะนำ)
+          </span>
+        </div>
+
+        {/* Full Referral URL Input & Action Buttons */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+          <div className="flex-1 min-w-0 flex items-center gap-2 bg-white dark:bg-slate-950/90 border border-slate-200/80 dark:border-slate-800 rounded-xl px-3 py-2 shadow-2xs">
+            <Link2 className="w-3.5 h-3.5 text-[#2563EB] dark:text-indigo-400 shrink-0" />
+            <span className="text-xs font-mono text-[#0F172A] dark:text-emerald-300 font-semibold truncate select-all">
+              {buildReferralLink(selectedReferralNodeId)}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
+            <button
+              type="button"
+              onClick={() => copyReferralLink(selectedReferralNodeId, 'main-ref-bar')}
+              className="flex-1 sm:flex-initial px-3.5 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-700 dark:bg-gradient-to-r dark:from-emerald-500 dark:to-teal-500 dark:hover:from-emerald-400 dark:hover:to-teal-400 text-white dark:text-slate-950 font-extrabold text-xs inline-flex items-center justify-center gap-1.5 transition cursor-pointer shadow-xs"
+            >
+              {copiedReferralKey === 'main-ref-bar' ? (
+                <>
+                  <Check className="w-3.5 h-3.5" />
+                  <span>{language === 'th' ? 'คัดลอกลิ้งแล้ว!' : 'Copied!'}</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>
+                    {language === 'th'
+                      ? `คัดลอกลิ้งแนะนำ #${selectedReferralNodeId}`
+                      : `Copy Link #${selectedReferralNodeId}`}
+                  </span>
+                </>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => shareReferralLink(selectedReferralNodeId)}
+              className="px-3 py-2 rounded-xl bg-white hover:bg-slate-100 text-[#334155] border border-slate-200/80 dark:bg-slate-900 dark:hover:bg-slate-800 dark:text-slate-200 dark:border-slate-700 font-bold text-xs inline-flex items-center justify-center gap-1.5 transition cursor-pointer shadow-2xs"
+              title="แชร์ลิ้งผู้แนะนำไปยังแอปอื่น"
+            >
+              <Share2 className="w-3.5 h-3.5 text-[#2563EB] dark:text-indigo-400" />
+              <span>{language === 'th' ? 'แชร์ลิ้ง' : 'Share'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => openRegisterModal(selectedReferralNodeId)}
+              className="px-3 py-2 rounded-xl bg-[#DCFCE7] hover:bg-emerald-200/80 text-[#15803D] border border-emerald-300 dark:bg-indigo-600/30 dark:hover:bg-indigo-600/50 dark:text-indigo-200 dark:border-indigo-400/50 font-extrabold text-xs inline-flex items-center justify-center gap-1 transition cursor-pointer"
+              title={`เปิดฟอร์มสมัครสมาชิกภายใต้ผู้แนะนำตรง #${selectedReferralNodeId}`}
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>{language === 'th' ? `สมัครต่อ #${selectedReferralNodeId}` : `Register under #${selectedReferralNodeId}`}</span>
+            </button>
           </div>
         </div>
       </div>
@@ -8701,6 +8921,35 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                             </div>
                           )}
 
+                          {/* Referral Link Row for this ID */}
+                          <div className="flex items-center justify-between gap-2 bg-white dark:bg-slate-900/90 border border-blue-200/80 dark:border-indigo-500/35 rounded-lg px-2.5 py-1.5 font-mono text-[10.5px]">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <Link2 className="w-3.5 h-3.5 text-[#2563EB] dark:text-indigo-400 shrink-0" />
+                              <span className="text-[#334155] dark:text-slate-300 truncate">
+                                {buildReferralLink(rep.originMainId || rep.id)}
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                copyReferralLink(rep.originMainId || rep.id, `wallet-modal-ref-${rep.id}`)
+                              }
+                              className="px-2 py-0.5 rounded bg-[#2563EB] hover:bg-blue-700 dark:bg-indigo-600 dark:hover:bg-indigo-500 text-white font-bold text-[10px] shrink-0 inline-flex items-center gap-1 cursor-pointer transition"
+                            >
+                              {copiedReferralKey === `wallet-modal-ref-${rep.id}` ? (
+                                <>
+                                  <Check className="w-3 h-3" />
+                                  <span>คัดลอกลิ้งแล้ว</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Copy className="w-3 h-3" />
+                                  <span>คัดลอกลิ้งแนะนำ #{rep.originMainId || rep.id}</span>
+                                </>
+                              )}
+                            </button>
+                          </div>
+
                           {/* Action Buttons for this ID */}
                           <div className="flex items-center gap-2 pt-1">
                             <button
@@ -8719,7 +8968,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                                 setIsWalletIdsModalOpen(false);
                                 setExpandedBenefitNodeId(targetNodeId);
                               }}
-                              className="flex-1 py-1.5 px-2.5 rounded-lg bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white font-bold text-[11px] transition cursor-pointer flex items-center justify-center gap-1 shadow"
+                              className="flex-1 py-1.5 px-2.5 rounded-lg bg-[#2563EB] hover:bg-blue-700 dark:bg-gradient-to-r dark:from-indigo-600 dark:to-violet-600 dark:hover:from-indigo-500 dark:hover:to-violet-500 text-white font-bold text-[11px] transition cursor-pointer flex items-center justify-center gap-1 shadow-xs"
                             >
                               <Coins className="w-3.5 h-3.5 text-amber-300 shrink-0" />
                               <span>
@@ -8740,7 +8989,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                                 navigateToNode(targetNodeId);
                                 setIsWalletIdsModalOpen(false);
                               }}
-                              className="py-1.5 px-2.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-amber-300 border border-slate-700 font-bold text-[11px] transition cursor-pointer"
+                              className="py-1.5 px-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-[#0F172A] border border-slate-200/80 dark:bg-slate-900 dark:hover:bg-slate-800 dark:text-amber-300 dark:border-slate-700 font-bold text-[11px] transition cursor-pointer"
                             >
                               🎯 ไปที่โหนด
                             </button>

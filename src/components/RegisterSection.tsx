@@ -28,6 +28,7 @@ import {
 } from '../utils/offChainSimulator';
 import { CONTRACT_ADDRESS, USDT_ADDRESS, getDynamicContractAddress } from '../contracts/config';
 import { QueueStatusData } from '../types';
+import { getActiveReferralSponsorId, buildReferralLink } from '../utils/referralLink';
 
 interface RegisterSectionProps {
   account: string | null;
@@ -81,9 +82,10 @@ export const RegisterSection: React.FC<RegisterSectionProps> = ({
   txSuccess,
   language,
 }) => {
+  const initialRefSponsor = getActiveReferralSponsorId() || 1;
   // Text input state so user can freely delete, clear, and type multi-digit numbers like "22" or a wallet "0x..."
-  const [sponsorInputText, setSponsorInputText] = useState<string>('1');
-  const [sponsorNodeId, setSponsorNodeId] = useState<number>(1);
+  const [sponsorInputText, setSponsorInputText] = useState<string>(String(initialRefSponsor));
+  const [sponsorNodeId, setSponsorNodeId] = useState<number>(initialRefSponsor);
   const [nodeCount, setNodeCount] = useState<number>(1);
   const [placementMode, setPlacementMode] = useState<PlacementMode>('contract_round');
 
@@ -91,6 +93,7 @@ export const RegisterSection: React.FC<RegisterSectionProps> = ({
   const [allOnChainNodes, setAllOnChainNodes] = useState<WalletNodeDetail[]>([]);
   const [selectedSponsorDetail, setSelectedSponsorDetail] = useState<WalletNodeDetail | null>(null);
   const [copiedAddr, setCopiedAddr] = useState<string | null>(null);
+  const [copiedRefUrl, setCopiedRefUrl] = useState<boolean>(false);
 
   const [sponsorCheckResult, setSponsorCheckResult] = useState<{
     checked: boolean;
@@ -546,6 +549,49 @@ export const RegisterSection: React.FC<RegisterSectionProps> = ({
             )}
           </div>
         )}
+      </div>
+
+      {/* Referral Link Box for Sponsor ID */}
+      <div className="mt-4 p-3 rounded-xl bg-[#EFF6FF] dark:bg-indigo-950/40 border border-blue-200/80 dark:border-indigo-500/40 space-y-2">
+        <div className="flex items-center justify-between gap-2 flex-wrap text-xs">
+          <span className="font-bold text-[#0F172A] dark:text-indigo-200">
+            {language === 'th'
+              ? `🔗 ลิ้งผู้แนะนำสำหรับรหัส #${sponsorNodeId || 1}:`
+              : `🔗 Referral Link for Node #${sponsorNodeId || 1}:`}
+          </span>
+          <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-[#DCFCE7] text-[#15803D] dark:bg-emerald-500/20 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-500/40 font-bold">
+            ส่งลิ้งให้ทีมงานคลิกสมัครต่อสาย #{sponsorNodeId || 1} ได้ทันที
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <div className="flex-1 min-w-0 bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 rounded-lg px-2.5 py-1.5 text-xs font-mono text-[#334155] dark:text-slate-200 truncate">
+            {buildReferralLink(sponsorNodeId || 1)}
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              const link = buildReferralLink(sponsorNodeId || 1);
+              if (navigator?.clipboard?.writeText) {
+                navigator.clipboard.writeText(link).catch(() => {});
+              }
+              setCopiedRefUrl(true);
+              setTimeout(() => setCopiedRefUrl(false), 2000);
+            }}
+            className="px-3 py-1.5 rounded-lg bg-[#2563EB] hover:bg-blue-700 dark:bg-indigo-600 dark:hover:bg-indigo-500 text-white text-xs font-bold shrink-0 inline-flex items-center gap-1.5 transition cursor-pointer"
+          >
+            {copiedRefUrl ? (
+              <>
+                <Check className="w-3.5 h-3.5" />
+                <span>{language === 'th' ? 'คัดลอกลิ้งแล้ว!' : 'Copied!'}</span>
+              </>
+            ) : (
+              <>
+                <Copy className="w-3.5 h-3.5" />
+                <span>{language === 'th' ? 'คัดลอกลิ้งผู้แนะนำ' : 'Copy Referral Link'}</span>
+              </>
+            )}
+          </button>
+        </div>
       </div>
 
       <form onSubmit={handleSubmit} className="mt-4 space-y-4">
