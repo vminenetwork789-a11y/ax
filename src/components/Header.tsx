@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { CONTRACT_ADDRESS } from '../contracts/config';
+import { WalletIncomeNotifier } from './WalletIncomeNotifier';
 import {
   ExternalLink,
   Wallet,
@@ -332,6 +333,14 @@ export const Header: React.FC<HeaderProps> = ({
                 </button>
               )}
             </div>
+
+            {/* Wallet Income & Latest Transaction Alert Center */}
+            <WalletIncomeNotifier
+              account={account}
+              language={language}
+              theme={theme}
+              onRefresh={onRefresh}
+            />
 
             {/* Connect / Disconnect Button */}
             {account ? (

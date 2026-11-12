@@ -1068,6 +1068,10 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
     new Map()
   );
   const [isPathCalculatorOpen, setIsPathCalculatorOpen] = useState<boolean>(false);
+  const [isLegendOpen, setIsLegendOpen] = useState<boolean>(false);
+  const [isSecondaryWidgetsCollapsed, setIsSecondaryWidgetsCollapsed] = useState<boolean>(false);
+  const [secondaryWidgetsTab, setSecondaryWidgetsTab] = useState<'pools' | 'calculator' | 'alerts'>('pools');
+  const [isConnectionAlertDismissed, setIsConnectionAlertDismissed] = useState<boolean>(false);
   const [copiedText, setCopiedText] = useState<string | null>(null);
   const [activeLocks, setActiveLocks] = useState<
     Array<{ parentId: string; isLeft: boolean; owner: string }>
@@ -5723,506 +5727,442 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           </button>
         </div>
 
-        {/* Row 4: Depth Selector (Includes Auto-All-Levels so new nodes at any depth are always shown) */}
-        <div className="flex items-center gap-2 flex-wrap text-xs">
-          <span className="text-[#64748B] dark:text-slate-400 font-semibold">ความลึก:</span>
-          <div className="flex items-center gap-1 bg-[#F8FAFC] dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 p-1 rounded-xl flex-wrap">
-            <button
-              type="button"
-              onClick={() => setMaxRenderDepth(0)}
-              className={`px-2.5 py-0.5 rounded-lg text-[11px] font-semibold transition cursor-pointer ${
-                maxRenderDepth === 0
-                  ? 'bg-[#2563EB] dark:bg-emerald-600 text-white font-bold shadow-2xs'
-                  : 'text-[#64748B] hover:text-[#0F172A] dark:text-slate-400 dark:hover:text-white'
-              }`}
-            >
-              เต็ม Max ทั้งหมด ({maxTreeLevelInRank} ชั้น)
-            </button>
-            {[4, 6, 8, 12, 15, 25].map((depthVal) => (
+        {/* Row 4: Depth Selector & Compact Status Legend Bar (รวมความลึกและสัญลักษณ์ในแถวเดียว ไม่เปลืองพื้นที่) */}
+        <div className="flex items-center justify-between gap-2 flex-wrap text-xs">
+          {/* Depth Selector - Compact horizontal scrollable */}
+          <div className="flex items-center gap-1.5 min-w-0 max-w-full">
+            <span className="text-[#64748B] dark:text-slate-400 font-semibold text-[11px] shrink-0">ความลึก:</span>
+            <div className="flex items-center gap-1 bg-[#F8FAFC] dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 p-0.5 sm:p-1 rounded-xl overflow-x-auto no-scrollbar max-w-full">
               <button
-                key={depthVal}
                 type="button"
-                onClick={() => setMaxRenderDepth(depthVal)}
-                className={`px-2.5 py-0.5 rounded-lg text-[11px] font-mono transition cursor-pointer ${
-                  maxRenderDepth === depthVal
+                onClick={() => setMaxRenderDepth(0)}
+                className={`px-2.5 py-0.5 rounded-lg text-[11px] font-semibold transition cursor-pointer whitespace-nowrap ${
+                  maxRenderDepth === 0
                     ? 'bg-[#2563EB] dark:bg-emerald-600 text-white font-bold shadow-2xs'
                     : 'text-[#64748B] hover:text-[#0F172A] dark:text-slate-400 dark:hover:text-white'
                 }`}
               >
-                {depthVal} ชั้น
+                เต็ม Max ({maxTreeLevelInRank} ชั้น)
               </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Row 4b: สัญลักษณ์สีกรอบสถานะโหนด (Node Border Color Legend with Tinted Badges in Light Mode) */}
-        <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap text-[11px] bg-[#F8FAFC] dark:bg-slate-950/80 border border-slate-200/80 dark:border-slate-800/90 rounded-xl px-2.5 py-1.5">
-          <span className="text-[#64748B] dark:text-slate-400 font-bold">สีกรอบสถานะ:</span>
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[#DCFCE7] border border-emerald-400 text-[#15803D] dark:bg-emerald-950/70 dark:border-2 dark:border-emerald-400 dark:text-emerald-300 font-extrabold">
-            <span>🟢 โคลนนิ่ง = กรอบสีเขียว</span>
-          </span>
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[#EFF6FF] border border-blue-300 text-[#1D4ED8] dark:bg-slate-900 dark:border-2 dark:border-white dark:text-white font-extrabold">
-            <span>⚪ Main ID = กรอบสีขาว/น้ำเงิน</span>
-          </span>
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[#FEF3C7] border border-amber-400 text-[#B45309] dark:bg-amber-950/70 dark:border-2 dark:border-amber-400 dark:text-amber-300 font-extrabold">
-            <span>🟡 Auto ID = กรอบสีทอง</span>
-          </span>
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[#FEE2E2] border border-rose-400 text-[#BE123C] dark:bg-red-950/70 dark:border-2 dark:border-red-500 dark:text-red-300 font-extrabold">
-            <span>🔴 Extra ID = กรอบสีแดง</span>
-          </span>
-        </div>
-
-        {/* Row 4c: ข้อมูลรายได้ AllSell (4%) และ Family Pool (คลิกเพื่อดูรายละเอียดและประวัติ) */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-          {/* Card 1: รายได้ AllSell (4%) */}
-          <div
-            onClick={() => {
-              setSystemPoolsModalTab('allsell');
-              fetchPerIdHistoryForModal();
-              setIsSystemPoolsModalOpen(true);
-            }}
-            className="rounded-xl bg-white dark:bg-gradient-to-r dark:from-[#0e1b2e] dark:via-[#111827] dark:to-[#0f2429] border border-slate-200/80 dark:border-cyan-500/45 hover:border-[#2563EB] dark:hover:border-cyan-400 p-2.5 sm:p-3 flex items-center justify-between gap-2 cursor-pointer transition shadow-[0_4px_20px_-2px_rgba(15,23,42,0.04)] dark:shadow-md"
-          >
-            <div className="space-y-1">
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="px-2 py-0.5 rounded-md bg-[#EFF6FF] border border-blue-200/80 text-[#1D4ED8] dark:bg-cyan-500/20 dark:border-cyan-400/40 dark:text-cyan-300 font-extrabold text-[11px]">
-                  🌐 รายได้ AllSell (4%)
-                </span>
-                <span className="text-[10px] font-mono text-[#64748B] dark:text-slate-400">
-                  กระเป๋า: {(systemPoolsData?.allSellWallet || '0xBeFEB9871a20656aeF7E8d218f751e9C23FAF710').slice(0, 6)}...
-                  {(systemPoolsData?.allSellWallet || '0xBeFEB9871a20656aeF7E8d218f751e9C23FAF710').slice(-4)}
-                </span>
-              </div>
-              <div className="flex items-center gap-3 flex-wrap font-mono text-xs text-[#334155] dark:text-slate-200">
-                <span>
-                  ผังนี้ (R{selectedRank}):{' '}
-                  <strong className="text-[#2563EB] dark:text-cyan-300 font-extrabold">
-                    +{activeRankPoolsSummary.rankAllSellUsdt.toFixed(2)} USDT
-                  </strong>
-                </span>
-                {viewMode === 'onchain' && (
-                  <span>
-                    รวมทุกแรงค์:{' '}
-                    <strong className="text-[#15803D] dark:text-emerald-400 font-extrabold">
-                      +{Number(systemPoolsData?.allSellTotalUsdt ?? activeRankPoolsSummary.rankAllSellUsdt).toFixed(2)} USDT
-                    </strong>
-                  </span>
-                )}
-                {Number(systemPoolsData?.onChainBalances?.allSellWalletUsdt || 0) > 0 && (
-                  <span className="text-[11px] text-[#B45309] dark:text-amber-300">
-                    (ยอดในกระเป๋าเชน: {Number(systemPoolsData.onChainBalances.allSellWalletUsdt).toFixed(2)} U)
-                  </span>
-                )}
-              </div>
-            </div>
-            <button
-              type="button"
-              className="px-2.5 py-1.5 rounded-lg bg-[#EFF6FF] hover:bg-blue-100/80 border border-blue-200/80 text-[#1D4ED8] dark:bg-cyan-500/20 dark:hover:bg-cyan-500/35 dark:border-cyan-400/50 dark:text-cyan-200 font-bold text-[10.5px] shrink-0 cursor-pointer"
-            >
-              ดูประวัติ AllSell
-            </button>
-          </div>
-
-          {/* Card 2: รายได้ Family Pool */}
-          <div
-            onClick={() => {
-              setSystemPoolsModalTab('family');
-              fetchPerIdHistoryForModal();
-              setIsSystemPoolsModalOpen(true);
-            }}
-            className="rounded-xl bg-white dark:bg-gradient-to-r dark:from-[#1f1333] dark:via-[#111827] dark:to-[#29152c] border border-slate-200/80 dark:border-fuchsia-500/45 hover:border-purple-500 dark:hover:border-fuchsia-400 p-2.5 sm:p-3 flex items-center justify-between gap-2 cursor-pointer transition shadow-[0_4px_20px_-2px_rgba(15,23,42,0.04)] dark:shadow-md"
-          >
-            <div className="space-y-1">
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="px-2 py-0.5 rounded-md bg-purple-100/80 border border-purple-200 text-purple-800 dark:bg-fuchsia-500/20 dark:border-fuchsia-400/40 dark:text-fuchsia-300 font-extrabold text-[11px]">
-                  🏛️ รายได้ Family Pool
-                </span>
-                <span className="text-[10px] font-mono text-[#64748B] dark:text-slate-400">
-                  กระเป๋า: {(systemPoolsData?.familyPoolWallet || '0x225DF4b5961f757f54728138F289Eaf49D4F275A').slice(0, 6)}...
-                  {(systemPoolsData?.familyPoolWallet || '0x225DF4b5961f757f54728138F289Eaf49D4F275A').slice(-4)}
-                </span>
-              </div>
-              <div className="flex items-center gap-3 flex-wrap font-mono text-xs text-[#334155] dark:text-slate-200">
-                <span>
-                  ผังนี้ (R{selectedRank}):{' '}
-                  <strong className="text-purple-700 dark:text-fuchsia-300 font-extrabold">
-                    +{activeRankPoolsSummary.rankFamilyTotalUsdt.toFixed(2)} USDT
-                  </strong>
-                </span>
-                {viewMode === 'onchain' && (
-                  <span>
-                    รวมทุกแรงค์:{' '}
-                    <strong className="text-[#B45309] dark:text-amber-300 font-extrabold">
-                      +{Number(systemPoolsData?.familyPoolTotalUsdt ?? activeRankPoolsSummary.rankFamilyTotalUsdt).toFixed(2)} USDT
-                    </strong>
-                  </span>
-                )}
-                {Number(systemPoolsData?.onChainBalances?.familyPoolWalletUsdt || 0) > 0 && (
-                  <span className="text-[11px] text-[#15803D] dark:text-emerald-300">
-                    (ยอดในกระเป๋าเชน: {Number(systemPoolsData.onChainBalances.familyPoolWalletUsdt).toFixed(2)} U)
-                  </span>
-                )}
-              </div>
-            </div>
-            <button
-              type="button"
-              className="px-2.5 py-1.5 rounded-lg bg-purple-50 hover:bg-purple-100 border border-purple-200 text-purple-700 dark:bg-fuchsia-500/20 dark:hover:bg-fuchsia-500/35 dark:border-fuchsia-400/50 dark:text-fuchsia-200 font-bold text-[10.5px] shrink-0 cursor-pointer"
-            >
-              ดูประวัติ Family Pool
-            </button>
-          </div>
-        </div>
-
-        {/* Row 4d: กล่องแจ้งเตือน Auto ID และ กล่องแจ้งเตือน Extra ID (ซ่อนเมื่อปิดระบบแจ้งเตือน) */}
-        {isAutoExtraPopupEnabled && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-            {/* Box 1: กล่องแจ้งเตือน Auto ID (กรอบทอง • Rank 1 • 10 USDT) */}
-            <div
-              onClick={() => {
-                setAutoExtraAlertTab('auto');
-                setUnreadAutoExtraCount(0);
-                fetchPerIdHistoryForModal();
-                setIsAutoExtraAlertModalOpen(true);
-              }}
-              className="rounded-xl bg-gradient-to-r from-[#281d07] via-[#141726] to-[#231908] border-2 border-amber-400/70 hover:border-amber-300 p-2.5 sm:p-3 flex flex-col justify-between gap-2 cursor-pointer transition shadow-[0_0_18px_rgba(245,158,11,0.22)] relative overflow-hidden"
-            >
-              <div className="flex items-start justify-between gap-2">
-                <div className="space-y-1 min-w-0">
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <span className="px-2 py-0.5 rounded-md bg-gradient-to-r from-amber-400 to-yellow-300 text-slate-950 font-black text-[11px] flex items-center gap-1 shadow">
-                      <Bell className="w-3 h-3 text-slate-950" />
-                      <span>🟡 กล่องแจ้งเตือน Auto ID (R1 • 5U)</span>
-                    </span>
-                    {autoExtraNotificationsData.readyAutoPoolsCount > 0 ? (
-                      <span className="px-2 py-0.5 rounded-full bg-emerald-500/25 border border-emerald-400 text-emerald-300 font-mono font-extrabold text-[10px] animate-pulse">
-                        🚨 พร้อมออก {autoExtraNotificationsData.readyAutoPoolsCount} รหัส!
-                      </span>
-                    ) : (
-                      <span className="px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-400/40 text-amber-200 font-mono font-bold text-[10px]">
-                        ออกแล้ว {autoExtraNotificationsData.spawnedAutoIds.length} รหัส
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="flex items-center gap-2.5 flex-wrap font-mono text-[11px] text-slate-200">
-                    <span>
-                      เกิดแล้ว:{' '}
-                      <strong className="text-amber-300 font-extrabold">
-                        {autoExtraNotificationsData.spawnedAutoIds.length} รหัส
-                      </strong>
-                    </span>
-                    <span>
-                      ของกระเป๋านี้:{' '}
-                      <strong className="text-emerald-400 font-extrabold">
-                        {autoExtraNotificationsData.myAutoSpawnedCount} รหัส
-                      </strong>
-                    </span>
-                    <span>
-                      คิวสะสมกระปุก:{' '}
-                      <strong className="text-cyan-300 font-extrabold">
-                        {autoExtraNotificationsData.autoPoolsList.length} รหัส
-                      </strong>
-                    </span>
-                  </div>
-                </div>
-
+              {[4, 6, 8, 12, 15, 25].map((depthVal) => (
                 <button
+                  key={depthVal}
                   type="button"
-                  className="px-2.5 py-1.5 rounded-lg bg-amber-500/25 hover:bg-amber-500/40 border border-amber-400/60 text-amber-200 font-extrabold text-[10.5px] shrink-0 cursor-pointer flex items-center gap-1"
+                  onClick={() => setMaxRenderDepth(depthVal)}
+                  className={`px-2 py-0.5 rounded-lg text-[11px] font-mono transition cursor-pointer whitespace-nowrap ${
+                    maxRenderDepth === depthVal
+                      ? 'bg-[#2563EB] dark:bg-emerald-600 text-white font-bold shadow-2xs'
+                      : 'text-[#64748B] hover:text-[#0F172A] dark:text-slate-400 dark:hover:text-white'
+                  }`}
                 >
-                  <Bell className="w-3 h-3 text-amber-300" />
-                  <span>เปิดกล่อง Auto ID</span>
+                  {depthVal} ชั้น
                 </button>
-              </div>
-
-              {/* Latest Auto ID or Top Accumulating Pool Mini Strip */}
-              <div className="rounded-lg bg-slate-950/85 border border-amber-500/30 px-2.5 py-1.5 text-[11px] font-mono flex items-center justify-between gap-2">
-                {autoExtraNotificationsData.spawnedAutoIds.length > 0 ? (
-                  <>
-                    <div className="truncate text-slate-200">
-                      <span className="text-amber-400 font-black">ล่าสุด:</span>{' '}
-                      <strong className="text-white">
-                        {autoExtraNotificationsData.spawnedAutoIds[0].label}
-                      </strong>{' '}
-                      <span className="text-slate-400">
-                        ← แตกจาก Main #{autoExtraNotificationsData.spawnedAutoIds[0].sourceMainId} (วางใต้ #
-                        {autoExtraNotificationsData.spawnedAutoIds[0].parentId}{' '}
-                        {autoExtraNotificationsData.spawnedAutoIds[0].side === 'LEFT' ? '↙ซ้าย' : '↘ขวา'})
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        const latestAuto = autoExtraNotificationsData.spawnedAutoIds[0];
-                        if (selectedRank !== 1) setSelectedRank(1);
-                        navigateToNode(latestAuto.id);
-                      }}
-                      className="px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/35 text-amber-300 border border-amber-400/40 text-[10px] font-bold shrink-0 cursor-pointer"
-                    >
-                      🔍 ดูโหนด #{autoExtraNotificationsData.spawnedAutoIds[0].id}
-                    </button>
-                  </>
-                ) : autoExtraNotificationsData.autoPoolsList.length > 0 ? (
-                  <div className="truncate text-amber-200">
-                    {autoExtraNotificationsData.autoPoolsList[0].noteTh}
-                  </div>
-                ) : (
-                  <div className="text-slate-400 truncate">
-                    ⏳ เมื่อกระปุก New Auto ID Pool สะสมครบ 10.00 USDT ระบบจะแจ้งเตือนและแตก Auto ID อัตโนมัติทันที
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Box 2: กล่องแจ้งเตือน Extra ID (กรอบแดง • Rank 2–27) */}
-            <div
-              onClick={() => {
-                setAutoExtraAlertTab('extra');
-                setUnreadAutoExtraCount(0);
-                fetchPerIdHistoryForModal();
-                setIsAutoExtraAlertModalOpen(true);
-              }}
-              className="rounded-xl bg-gradient-to-r from-[#2b0d14] via-[#141726] to-[#280e18] border-2 border-red-500/75 hover:border-red-400 p-2.5 sm:p-3 flex flex-col justify-between gap-2 cursor-pointer transition shadow-[0_0_18px_rgba(239,68,68,0.22)] relative overflow-hidden"
-            >
-              <div className="flex items-start justify-between gap-2">
-                <div className="space-y-1 min-w-0">
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <span className="px-2 py-0.5 rounded-md bg-gradient-to-r from-red-600 via-rose-500 to-red-500 text-white font-black text-[11px] flex items-center gap-1 shadow">
-                      <Bell className="w-3 h-3 text-white" />
-                      <span>🔴 กล่องแจ้งเตือน Extra ID (R2–R27)</span>
-                    </span>
-                    {autoExtraNotificationsData.readyExtraPoolsCount > 0 ? (
-                      <span className="px-2 py-0.5 rounded-full bg-emerald-500/25 border border-emerald-400 text-emerald-300 font-mono font-extrabold text-[10px] animate-pulse">
-                        🚨 พร้อมออก {autoExtraNotificationsData.readyExtraPoolsCount} รหัส!
-                      </span>
-                    ) : (
-                      <span className="px-2 py-0.5 rounded-full bg-red-500/20 border border-red-400/40 text-red-200 font-mono font-bold text-[10px]">
-                        ออกแล้ว {autoExtraNotificationsData.spawnedExtraIds.length} รหัส
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="flex items-center gap-2.5 flex-wrap font-mono text-[11px] text-slate-200">
-                    <span>
-                      เกิดแล้ว:{' '}
-                      <strong className="text-red-300 font-extrabold">
-                        {autoExtraNotificationsData.spawnedExtraIds.length} รหัส
-                      </strong>
-                    </span>
-                    <span>
-                      ของกระเป๋านี้:{' '}
-                      <strong className="text-emerald-400 font-extrabold">
-                        {autoExtraNotificationsData.myExtraSpawnedCount} รหัส
-                      </strong>
-                    </span>
-                    <span>
-                      คิวสะสมกระปุก:{' '}
-                      <strong className="text-cyan-300 font-extrabold">
-                        {autoExtraNotificationsData.extraPoolsList.length} รหัส
-                      </strong>
-                    </span>
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  className="px-2.5 py-1.5 rounded-lg bg-red-500/25 hover:bg-red-500/40 border border-red-400/60 text-red-200 font-extrabold text-[10.5px] shrink-0 cursor-pointer flex items-center gap-1"
-                >
-                  <Bell className="w-3 h-3 text-red-300" />
-                  <span>เปิดกล่อง Extra ID</span>
-                </button>
-              </div>
-
-              {/* Latest Extra ID or Top Accumulating Extra Pool Mini Strip */}
-              <div className="rounded-lg bg-slate-950/85 border border-red-500/30 px-2.5 py-1.5 text-[11px] font-mono flex items-center justify-between gap-2">
-                {autoExtraNotificationsData.spawnedExtraIds.length > 0 ? (
-                  <>
-                    <div className="truncate text-slate-200">
-                      <span className="text-red-400 font-black">ล่าสุด:</span>{' '}
-                      <strong className="text-white">
-                        {autoExtraNotificationsData.spawnedExtraIds[0].label}
-                      </strong>{' '}
-                      <span className="text-slate-400">
-                        ← แตกจาก Main #{autoExtraNotificationsData.spawnedExtraIds[0].sourceMainId} (วางใต้ R
-                        {autoExtraNotificationsData.spawnedExtraIds[0].rank}-#
-                        {autoExtraNotificationsData.spawnedExtraIds[0].parentId}{' '}
-                        {autoExtraNotificationsData.spawnedExtraIds[0].side === 'LEFT' ? '↙ซ้าย' : '↘ขวา'})
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        const latestEx = autoExtraNotificationsData.spawnedExtraIds[0];
-                        if (selectedRank !== latestEx.rank) {
-                          setSelectedRank(latestEx.rank);
-                          loadOnChainTree(latestEx.rank);
-                        }
-                        navigateToNode(latestEx.id);
-                      }}
-                      className="px-2 py-0.5 rounded bg-red-500/20 hover:bg-red-500/35 text-red-300 border border-red-400/40 text-[10px] font-bold shrink-0 cursor-pointer"
-                    >
-                      🔍 ดูโหนด R{autoExtraNotificationsData.spawnedExtraIds[0].rank}-#
-                      {autoExtraNotificationsData.spawnedExtraIds[0].id}
-                    </button>
-                  </>
-                ) : autoExtraNotificationsData.extraPoolsList.length > 0 ? (
-                  <div className="truncate text-red-200">
-                    {autoExtraNotificationsData.extraPoolsList[0].noteTh}
-                  </div>
-                ) : (
-                  <div className="text-slate-400 truncate">
-                    ⏳ เมื่อกระปุก New Extra ID Pool (R4–R27) สะสมครบราคาผัง R2–R27 ระบบจะแจ้งเตือนและแตก Extra ID ทันที
-                  </div>
-                )}
-              </div>
+              ))}
             </div>
           </div>
-        )}
 
-        {/* เครื่องคำนวณเส้นทางอัพเกรดและการเกิด Extra ID ล่วงหน้า (Matrix Path & Extra ID Calculator) */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between bg-[#F8FAFC] dark:bg-slate-900/90 border border-slate-200/80 dark:border-slate-800 rounded-xl px-3.5 py-2.5">
-            <div className="flex items-center gap-2 text-xs sm:text-sm font-bold text-[#0F172A] dark:text-amber-300">
-              <Calculator className="w-4 h-4 text-[#2563EB] dark:text-amber-400 shrink-0" />
-              <span>🧮 เครื่องคำนวณเส้นทางอัพเกรด & ตารางพยากรณ์การเกิด Extra ID (R2–R27)</span>
-            </div>
+          {/* Compact Legend Dropdown Toggle */}
+          <div className="relative shrink-0">
             <button
               type="button"
-              onClick={() => setIsPathCalculatorOpen((prev) => !prev)}
-              className="px-3 py-1 rounded-lg bg-[#EFF6FF] hover:bg-blue-100/80 dark:bg-slate-800 dark:hover:bg-slate-700 border border-blue-200/80 dark:border-slate-700 text-xs font-semibold text-[#1D4ED8] dark:text-slate-200 flex items-center gap-1 cursor-pointer transition"
+              onClick={() => setIsLegendOpen((prev) => !prev)}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-[#F8FAFC] hover:bg-slate-100 dark:bg-slate-900 dark:hover:bg-slate-800 border border-slate-200/80 dark:border-slate-800 text-[11px] font-bold text-[#334155] dark:text-slate-300 transition cursor-pointer shadow-2xs"
+              title="คลิกเพื่อดูคำอธิบายสีกรอบสถานะโหนด"
             >
-              <span>{isPathCalculatorOpen ? 'ซ่อนตารางคำนวณ' : 'เปิดตารางคำนวณ'}</span>
-              {isPathCalculatorOpen ? (
-                <ChevronUp className="w-3.5 h-3.5" />
-              ) : (
-                <ChevronDown className="w-3.5 h-3.5" />
-              )}
+              <span className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />
+                <span className="w-2 h-2 rounded-full bg-blue-500 inline-block" />
+                <span className="w-2 h-2 rounded-full bg-amber-400 inline-block" />
+                <span className="w-2 h-2 rounded-full bg-rose-500 inline-block" />
+              </span>
+              <span>สีกรอบ</span>
+              <ChevronDown className={`w-3 h-3 text-[#64748B] transition-transform duration-200 ${isLegendOpen ? 'rotate-180' : ''}`} />
             </button>
-          </div>
 
-          {isPathCalculatorOpen && multiRankSnapshotsState.size > 0 && (
-            <ExtraIdPathCalculator
-              multiRankSnapshots={multiRankSnapshotsState}
-              defaultMainId={2}
-              defaultProspectiveRank={10}
-              perIdReportsMap={perIdReportsMap}
-              onSelectRankAndNode={(r, nId) => {
-                if (selectedRank !== r) {
-                  setSelectedRank(r);
-                  loadOnChainTree(r);
-                }
-                navigateToNode(nId);
-              }}
-            />
-          )}
-        </div>
-
-        {/* แถบแจ้งเตือนการต่อสาย (Node Line Connection Notification Banner - สีกรอบตามประเภทโหนดล่าสุด) */}
-        {latestNodeInRank && (
-          <div
-            className={`rounded-2xl p-3 sm:p-3.5 border-2 transition-all duration-300 relative overflow-hidden ${
-              latestNodeInRank.isClone
-                ? 'bg-[#DCFCE7]/40 dark:bg-gradient-to-r dark:from-emerald-950/80 dark:via-slate-900 dark:to-emerald-950/80 border-emerald-400 shadow-[0_4px_20px_-2px_rgba(16,185,129,0.12)] dark:shadow-[0_0_22px_rgba(16,185,129,0.4)]'
-                : latestNodeInRank.isExtraId
-                ? 'bg-[#FEE2E2]/40 dark:bg-gradient-to-r dark:from-red-950/80 dark:via-slate-900 dark:to-rose-950/80 border-red-500 shadow-[0_4px_20px_-2px_rgba(239,68,68,0.12)] dark:shadow-[0_0_22px_rgba(239,68,68,0.4)]'
-                : latestNodeInRank.isAutoMainId
-                ? 'bg-[#FEF3C7]/45 dark:bg-gradient-to-r dark:from-amber-950/80 dark:via-slate-900 dark:to-yellow-950/80 border-amber-400 shadow-[0_4px_20px_-2px_rgba(245,158,11,0.12)] dark:shadow-[0_0_22px_rgba(245,158,11,0.4)]'
-                : 'bg-[#EFF6FF]/60 dark:bg-gradient-to-r dark:from-slate-900 dark:via-slate-950 dark:to-slate-900 border-blue-300 dark:border-white shadow-[0_4px_20px_-2px_rgba(37,99,235,0.1)] dark:shadow-[0_0_22px_rgba(255,255,255,0.3)]'
-            }`}
-          >
-            {/* Background ambient glow pulse */}
-            {(latestNewNodeAlert || newlyAddedNodeIds.size > 0) && (
-              <div className="absolute -right-10 -top-10 w-40 h-40 bg-amber-500/10 rounded-full blur-2xl pointer-events-none animate-pulse" />
-            )}
-
-            <div className="flex items-center justify-between flex-wrap gap-2.5 relative z-10">
-              {/* Left Column: Connection Info */}
-              <div className="flex items-center gap-2.5 flex-wrap">
-                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#DCFCE7] border border-emerald-300 text-[#15803D] dark:bg-emerald-500/20 dark:border-emerald-400/50 dark:text-emerald-300 font-extrabold text-[11px] shrink-0">
-                  <span className="w-2 h-2 rounded-full bg-[#15803D] dark:bg-emerald-400 animate-ping" />
-                  <span>⚡ แถบแจ้งเตือนการต่อสายไบนารี่</span>
-                </div>
-
-                <div className="text-xs text-[#0F172A] dark:text-slate-100 font-medium flex items-center gap-1.5 flex-wrap">
-                  <span className="flex items-center gap-1">
-                    {latestNodeInRank.isClone ? (
-                      <span className="inline-flex items-center gap-1 font-mono">
-                        <span className="px-1.5 py-0.2 rounded bg-[#DCFCE7] text-[#15803D] border border-emerald-300 dark:bg-emerald-400 dark:text-slate-950 font-black text-[10px]">
-                          🟢 โคลนนิ่งล่าสุด (กรอบเขียว)
-                        </span>
-                        โคลน <strong className="text-[#15803D] dark:text-emerald-300 font-black">#{latestNodeInRank.id}</strong> (รหัสหลัก <strong className="text-[#B45309] dark:text-amber-400">#{latestNodeInRank.r1MainId || latestNodeInRank.originMainId}</strong>)
-                      </span>
-                    ) : latestNodeInRank.isExtraId ? (
-                      <span className="inline-flex items-center gap-1 font-mono">
-                        <span className="px-1.5 py-0.2 rounded bg-[#FEE2E2] text-[#BE123C] border border-rose-300 dark:bg-red-500 dark:text-white font-black text-[10px]">
-                          🔴 Extra ID ล่าสุด (กรอบแดง)
-                        </span>
-                        Extra <strong className="text-[#BE123C] dark:text-red-300 font-black">R{latestNodeInRank.rank}-#{latestNodeInRank.id}</strong>
-                      </span>
-                    ) : latestNodeInRank.isAutoMainId ? (
-                      <span className="inline-flex items-center gap-1 font-mono">
-                        <span className="px-1.5 py-0.2 rounded bg-[#FEF3C7] text-[#B45309] border border-amber-300 dark:bg-amber-400 dark:text-slate-950 font-black text-[10px]">
-                          🟡 Auto ID ล่าสุด (กรอบทอง)
-                        </span>
-                        Auto ID <strong className="text-[#B45309] dark:text-amber-300 font-black">#{latestNodeInRank.r1MainId || latestNodeInRank.originMainId}</strong> (โหนด <strong className="text-[#0F172A] dark:text-white font-extrabold">#{latestNodeInRank.id}</strong>)
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 font-mono">
-                        <span className="px-1.5 py-0.2 rounded bg-[#EFF6FF] text-[#1D4ED8] border border-blue-200 dark:bg-white dark:text-slate-950 font-black text-[10px]">
-                          ⚪ Main ID ล่าสุด (กรอบขาว)
-                        </span>
-                        รหัสหลัก <strong className="text-[#0F172A] dark:text-white font-black">#{latestNodeInRank.r1MainId || latestNodeInRank.originMainId}</strong> (โหนด <strong className="text-[#0F172A] dark:text-white font-extrabold">#{latestNodeInRank.id}</strong>)
-                      </span>
-                    )}
-                  </span>
-
-                  <span className="text-[#64748B] dark:text-slate-400">ต่อสายเข้าผังใต้:</span>
-
-                  <span className="px-2 py-0.5 rounded-lg bg-[#EFF6FF] border border-blue-200 text-[#1D4ED8] dark:bg-indigo-950 dark:border-indigo-500/50 font-mono font-extrabold dark:text-indigo-300 text-[11px]">
-                    อัพไลน์ #{latestNodeInRank.parentId === 0 ? 'Root (#0)' : latestNodeInRank.parentId}
-                  </span>
-
-                  <span
-                    className={`px-2 py-0.5 rounded-lg font-mono font-black text-[11px] border ${
-                      latestNodeInRank.isLeft
-                        ? 'bg-[#DCFCE7] text-[#15803D] border-emerald-300 dark:bg-emerald-950/90 dark:text-emerald-300 dark:border-emerald-500/50'
-                        : 'bg-purple-100 text-purple-800 border-purple-300 dark:bg-purple-950/90 dark:text-purple-300 dark:border-purple-500/50'
-                    }`}
+            {isLegendOpen && (
+              <div className="absolute right-0 top-full mt-1.5 z-40 w-72 p-2.5 bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-xl shadow-xl flex flex-col gap-1.5 text-[11px] animate-in fade-in zoom-in-95">
+                <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-1.5 mb-0.5">
+                  <span className="font-bold text-[#0F172A] dark:text-white">คำอธิบายสีกรอบสถานะ</span>
+                  <button
+                    type="button"
+                    onClick={() => setIsLegendOpen(false)}
+                    className="text-slate-400 hover:text-slate-600 dark:hover:text-white text-xs p-0.5 rounded cursor-pointer"
                   >
-                    {latestNodeInRank.isLeft ? '↙ ฝั่งซ้าย (Left Slot)' : '↘ ฝั่งขวา (Right Slot)'} • ชั้น {latestNodeInRank.level}
-                  </span>
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <div className="flex items-center gap-2 p-1.5 rounded-lg bg-[#DCFCE7] border border-emerald-300 text-[#15803D] dark:bg-emerald-950/70 dark:border-emerald-500/40 dark:text-emerald-300 font-bold">
+                  <span>🟢 โคลนนิ่ง = กรอบสีเขียว</span>
+                </div>
+                <div className="flex items-center gap-2 p-1.5 rounded-lg bg-[#EFF6FF] border border-blue-200 text-[#1D4ED8] dark:bg-slate-900 dark:border-white/60 dark:text-white font-bold">
+                  <span>⚪ Main ID = กรอบสีขาว/น้ำเงิน</span>
+                </div>
+                <div className="flex items-center gap-2 p-1.5 rounded-lg bg-[#FEF3C7] border border-amber-300 text-[#B45309] dark:bg-amber-950/70 dark:border-amber-500/40 dark:text-amber-300 font-bold">
+                  <span>🟡 Auto ID = กรอบสีทอง</span>
+                </div>
+                <div className="flex items-center gap-2 p-1.5 rounded-lg bg-[#FEE2E2] border border-rose-300 text-[#BE123C] dark:bg-red-950/70 dark:border-red-500/40 dark:text-red-300 font-bold">
+                  <span>🔴 Extra ID = กรอบสีแดง</span>
                 </div>
               </div>
+            )}
+          </div>
+        </div>
 
-              {/* Right Column: Action Buttons */}
-              <div className="flex items-center gap-2 flex-wrap shrink-0">
+        {/* Row 4c: รวมข้อมูลระบบ & เครื่องมือย่อย (Unified System Hub - ลดความรกตา จัดเป็นแท็บกระชับพร้อมปุ่มย่อ/ขยาย) */}
+        <div className="bg-[#F8FAFC]/90 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800 rounded-xl p-2 sm:p-2.5 space-y-2 transition shadow-2xs">
+          {/* Header Row: Clean Tab Navigation & Collapse Toggle */}
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-[11px] font-bold text-[#64748B] dark:text-slate-400">📊 ข้อมูลระบบ:</span>
+              <div className="inline-flex items-center bg-white dark:bg-slate-950 p-0.5 rounded-lg border border-slate-200/80 dark:border-slate-800 text-xs">
                 <button
                   type="button"
                   onClick={() => {
-                    const targetFocus =
-                      latestNodeInRank.parentId > 0 ? latestNodeInRank.parentId : latestNodeInRank.id;
-                    navigateToNode(targetFocus);
+                    setIsSecondaryWidgetsCollapsed(false);
+                    setSecondaryWidgetsTab('pools');
                   }}
-                  className="px-3 py-1.5 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white dark:bg-gradient-to-r dark:from-amber-500 dark:to-yellow-400 dark:hover:from-amber-400 dark:hover:to-yellow-300 dark:text-slate-950 font-black text-xs shadow-xs cursor-pointer transition flex items-center gap-1"
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition cursor-pointer flex items-center gap-1 ${
+                    !isSecondaryWidgetsCollapsed && secondaryWidgetsTab === 'pools'
+                      ? 'bg-[#2563EB] text-white shadow-2xs'
+                      : 'text-[#334155] dark:text-slate-300 hover:text-[#2563EB]'
+                  }`}
                 >
-                  <Search className="w-3.5 h-3.5" />
-                  <span>ดูจุดต่อสาย #{latestNodeInRank.parentId} → #{latestNodeInRank.id}</span>
+                  <span>💰 พูล AllSell / Family</span>
+                  <span className="text-[10px] opacity-90 font-mono">
+                    (+{(activeRankPoolsSummary.rankAllSellUsdt + activeRankPoolsSummary.rankFamilyTotalUsdt).toFixed(1)}U)
+                  </span>
                 </button>
 
-                {focusRootId !== 1 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsSecondaryWidgetsCollapsed(false);
+                    setSecondaryWidgetsTab('calculator');
+                    setIsPathCalculatorOpen(true);
+                  }}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition cursor-pointer flex items-center gap-1 ${
+                    !isSecondaryWidgetsCollapsed && secondaryWidgetsTab === 'calculator'
+                      ? 'bg-[#2563EB] text-white shadow-2xs'
+                      : 'text-[#334155] dark:text-slate-300 hover:text-[#2563EB]'
+                  }`}
+                >
+                  <Calculator className="w-3 h-3" />
+                  <span>คำนวณ Extra ID</span>
+                </button>
+
+                {isAutoExtraPopupEnabled && (
                   <button
                     type="button"
-                    onClick={() => navigateToNode(1)}
-                    className="px-3 py-1.5 rounded-xl bg-white hover:bg-slate-100 text-[#334155] border border-slate-200/80 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-amber-300 dark:border-slate-700 font-bold text-xs cursor-pointer transition flex items-center gap-1"
+                    onClick={() => {
+                      setIsSecondaryWidgetsCollapsed(false);
+                      setSecondaryWidgetsTab('alerts');
+                    }}
+                    className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition cursor-pointer flex items-center gap-1 ${
+                      !isSecondaryWidgetsCollapsed && secondaryWidgetsTab === 'alerts'
+                        ? 'bg-[#2563EB] text-white shadow-2xs'
+                        : 'text-[#334155] dark:text-slate-300 hover:text-[#2563EB]'
+                    }`}
                   >
-                    <RotateCcw className="w-3.5 h-3.5" />
-                    <span>ดูผังรวม (#1)</span>
+                    <Bell className="w-3 h-3" />
+                    <span>Auto / Extra</span>
+                    {(autoExtraNotificationsData.readyAutoPoolsCount > 0 || autoExtraNotificationsData.readyExtraPoolsCount > 0) && (
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping inline-block" />
+                    )}
                   </button>
                 )}
               </div>
             </div>
+
+            {/* Collapse / Expand Toggle */}
+            <button
+              type="button"
+              onClick={() => setIsSecondaryWidgetsCollapsed((prev) => !prev)}
+              className="text-[11px] font-semibold text-[#64748B] hover:text-[#0F172A] dark:text-slate-400 dark:hover:text-white px-2 py-0.5 rounded-md hover:bg-white dark:hover:bg-slate-800 border border-transparent hover:border-slate-200/80 dark:hover:border-slate-700 transition cursor-pointer flex items-center gap-1"
+            >
+              <span>{isSecondaryWidgetsCollapsed ? '▾ แสดงข้อมูล' : '▴ ย่อเก็บส่วนนี้'}</span>
+            </button>
+          </div>
+
+          {/* Expanded Content Area */}
+          {!isSecondaryWidgetsCollapsed && (
+            <div className="pt-1">
+              {/* TAB 1: Pools */}
+              {secondaryWidgetsTab === 'pools' && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {/* Card 1: รายได้ AllSell (4%) */}
+                  <div
+                    onClick={() => {
+                      setSystemPoolsModalTab('allsell');
+                      fetchPerIdHistoryForModal();
+                      setIsSystemPoolsModalOpen(true);
+                    }}
+                    className="rounded-xl bg-white dark:bg-[#0f172a] border border-slate-200/80 dark:border-cyan-500/40 hover:border-[#2563EB] dark:hover:border-cyan-400 p-2.5 flex items-center justify-between gap-2 cursor-pointer transition shadow-2xs"
+                  >
+                    <div className="space-y-0.5 min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="px-2 py-0.5 rounded-md bg-[#EFF6FF] border border-blue-200/80 text-[#1D4ED8] dark:bg-cyan-500/20 dark:border-cyan-400/40 dark:text-cyan-300 font-extrabold text-[11px]">
+                          🌐 AllSell (4%)
+                        </span>
+                        <span className="text-[10px] font-mono text-[#64748B] dark:text-slate-400">
+                          {(systemPoolsData?.allSellWallet || '0xBeFEB9871a20656aeF7E8d218f751e9C23FAF710').slice(0, 6)}...
+                          {(systemPoolsData?.allSellWallet || '0xBeFEB9871a20656aeF7E8d218f751e9C23FAF710').slice(-4)}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 flex-wrap font-mono text-xs text-[#334155] dark:text-slate-200">
+                        <span>
+                          ผัง R{selectedRank}:{' '}
+                          <strong className="text-[#2563EB] dark:text-cyan-300 font-extrabold">
+                            +{activeRankPoolsSummary.rankAllSellUsdt.toFixed(2)} USDT
+                          </strong>
+                        </span>
+                        {viewMode === 'onchain' && (
+                          <span className="text-[#15803D] dark:text-emerald-400 font-bold">
+                            (รวมทุกแรงค์ +{Number(systemPoolsData?.allSellTotalUsdt ?? activeRankPoolsSummary.rankAllSellUsdt).toFixed(2)} U)
+                          </span>
+                        )}
+                        {Number(systemPoolsData?.onChainBalances?.allSellWalletUsdt || 0) > 0 && (
+                          <span className="text-[10.5px] text-[#B45309] dark:text-amber-300">
+                            (ยอดในเชน: {Number(systemPoolsData.onChainBalances.allSellWalletUsdt).toFixed(2)} U)
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="px-2 py-1 rounded-lg bg-[#EFF6FF] hover:bg-blue-100 text-[#1D4ED8] dark:bg-cyan-500/20 dark:text-cyan-200 font-bold text-[10.5px] shrink-0 cursor-pointer"
+                    >
+                      ประวัติ ↗
+                    </button>
+                  </div>
+
+                  {/* Card 2: รายได้ Family Pool */}
+                  <div
+                    onClick={() => {
+                      setSystemPoolsModalTab('family');
+                      fetchPerIdHistoryForModal();
+                      setIsSystemPoolsModalOpen(true);
+                    }}
+                    className="rounded-xl bg-white dark:bg-[#0f172a] border border-slate-200/80 dark:border-fuchsia-500/40 hover:border-purple-500 dark:hover:border-fuchsia-400 p-2.5 flex items-center justify-between gap-2 cursor-pointer transition shadow-2xs"
+                  >
+                    <div className="space-y-0.5 min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="px-2 py-0.5 rounded-md bg-purple-100/80 border border-purple-200 text-purple-800 dark:bg-fuchsia-500/20 dark:border-fuchsia-400/40 dark:text-fuchsia-300 font-extrabold text-[11px]">
+                          🏛️ Family Pool
+                        </span>
+                        <span className="text-[10px] font-mono text-[#64748B] dark:text-slate-400">
+                          {(systemPoolsData?.familyPoolWallet || '0x225DF4b5961f757f54728138F289Eaf49D4F275A').slice(0, 6)}...
+                          {(systemPoolsData?.familyPoolWallet || '0x225DF4b5961f757f54728138F289Eaf49D4F275A').slice(-4)}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 flex-wrap font-mono text-xs text-[#334155] dark:text-slate-200">
+                        <span>
+                          ผัง R{selectedRank}:{' '}
+                          <strong className="text-purple-700 dark:text-fuchsia-300 font-extrabold">
+                            +{activeRankPoolsSummary.rankFamilyTotalUsdt.toFixed(2)} USDT
+                          </strong>
+                        </span>
+                        {viewMode === 'onchain' && (
+                          <span className="text-[#B45309] dark:text-amber-300 font-bold">
+                            (รวมทุกแรงค์ +{Number(systemPoolsData?.familyPoolTotalUsdt ?? activeRankPoolsSummary.rankFamilyTotalUsdt).toFixed(2)} U)
+                          </span>
+                        )}
+                        {Number(systemPoolsData?.onChainBalances?.familyPoolWalletUsdt || 0) > 0 && (
+                          <span className="text-[10.5px] text-[#15803D] dark:text-emerald-300">
+                            (ยอดในเชน: {Number(systemPoolsData.onChainBalances.familyPoolWalletUsdt).toFixed(2)} U)
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="px-2 py-1 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-700 dark:bg-fuchsia-500/20 dark:text-fuchsia-200 font-bold text-[10.5px] shrink-0 cursor-pointer"
+                    >
+                      ประวัติ ↗
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 2: Calculator */}
+              {secondaryWidgetsTab === 'calculator' && (
+                <div className="space-y-2">
+                  {multiRankSnapshotsState.size > 0 ? (
+                    <ExtraIdPathCalculator
+                      multiRankSnapshots={multiRankSnapshotsState}
+                      defaultMainId={2}
+                      defaultProspectiveRank={10}
+                      perIdReportsMap={perIdReportsMap}
+                      onSelectRankAndNode={(r, nId) => {
+                        if (selectedRank !== r) {
+                          setSelectedRank(r);
+                          loadOnChainTree(r);
+                        }
+                        navigateToNode(nId);
+                      }}
+                    />
+                  ) : (
+                    <div className="p-4 text-center text-xs text-[#64748B] dark:text-slate-400">
+                      กำลังโหลดข้อมูลตารางคำนวณเส้นทาง...
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* TAB 3: Auto/Extra Alerts */}
+              {secondaryWidgetsTab === 'alerts' && isAutoExtraPopupEnabled && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {/* Compact Auto ID Card */}
+                  <div
+                    onClick={() => {
+                      setAutoExtraAlertTab('auto');
+                      setUnreadAutoExtraCount(0);
+                      fetchPerIdHistoryForModal();
+                      setIsAutoExtraAlertModalOpen(true);
+                    }}
+                    className="rounded-xl bg-gradient-to-r from-amber-950/70 via-slate-900 to-amber-950/70 border border-amber-400/60 p-2.5 flex items-center justify-between gap-2 cursor-pointer transition"
+                  >
+                    <div className="space-y-1 min-w-0 text-xs">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="px-2 py-0.5 rounded-md bg-amber-400 text-slate-950 font-black text-[10.5px]">
+                          🟡 Auto ID (R1)
+                        </span>
+                        <span className="text-[10px] text-amber-200 font-mono">
+                          ออกแล้ว {autoExtraNotificationsData.spawnedAutoIds.length} รหัส
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-slate-300 font-mono">
+                        กระเป๋านี้: <strong className="text-emerald-400">{autoExtraNotificationsData.myAutoSpawnedCount}</strong> · คิวสะสม: <strong className="text-cyan-300">{autoExtraNotificationsData.autoPoolsList.length}</strong>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="px-2.5 py-1 rounded-lg bg-amber-500/20 text-amber-300 text-[10px] font-bold shrink-0 cursor-pointer"
+                    >
+                      เปิดกล่อง ↗
+                    </button>
+                  </div>
+
+                  {/* Compact Extra ID Card */}
+                  <div
+                    onClick={() => {
+                      setAutoExtraAlertTab('extra');
+                      setUnreadAutoExtraCount(0);
+                      fetchPerIdHistoryForModal();
+                      setIsAutoExtraAlertModalOpen(true);
+                    }}
+                    className="rounded-xl bg-gradient-to-r from-red-950/70 via-slate-900 to-red-950/70 border border-red-500/60 p-2.5 flex items-center justify-between gap-2 cursor-pointer transition"
+                  >
+                    <div className="space-y-1 min-w-0 text-xs">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="px-2 py-0.5 rounded-md bg-red-600 text-white font-black text-[10.5px]">
+                          🔴 Extra ID (R2–27)
+                        </span>
+                        <span className="text-[10px] text-red-200 font-mono">
+                          ออกแล้ว {autoExtraNotificationsData.spawnedExtraIds.length} รหัส
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-slate-300 font-mono">
+                        กระเป๋านี้: <strong className="text-emerald-400">{autoExtraNotificationsData.myExtraSpawnedCount}</strong> · คิวสะสม: <strong className="text-cyan-300">{autoExtraNotificationsData.extraPoolsList.length}</strong>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="px-2.5 py-1 rounded-lg bg-red-500/20 text-red-300 text-[10px] font-bold shrink-0 cursor-pointer"
+                    >
+                      เปิดกล่อง ↗
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* แถบแจ้งเตือนการต่อสาย (Node Line Connection Notification Banner - สรุปกระชับ 1 แถว พร้อมปุ่มปิด) */}
+        {latestNodeInRank && !isConnectionAlertDismissed && (
+          <div
+            className={`rounded-xl px-2.5 py-2 border transition-all duration-200 relative overflow-hidden flex items-center justify-between gap-2 flex-wrap ${
+              latestNodeInRank.isClone
+                ? 'bg-[#DCFCE7]/70 dark:bg-emerald-950/50 border-emerald-300 dark:border-emerald-500/40'
+                : latestNodeInRank.isExtraId
+                ? 'bg-[#FEE2E2]/70 dark:bg-red-950/50 border-rose-300 dark:border-red-500/40'
+                : latestNodeInRank.isAutoMainId
+                ? 'bg-[#FEF3C7]/70 dark:bg-amber-950/50 border-amber-300 dark:border-amber-500/40'
+                : 'bg-[#EFF6FF]/80 dark:bg-slate-900/90 border-blue-200/90 dark:border-slate-700'
+            }`}
+          >
+            <div className="flex items-center gap-2 flex-wrap text-xs min-w-0">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white dark:bg-slate-950 font-extrabold text-[10.5px] border border-slate-200/80 dark:border-slate-800 shadow-2xs shrink-0">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                <span>⚡ ต่อสายล่าสุด:</span>
+              </span>
+
+              <span className="font-mono text-[11px] text-[#0F172A] dark:text-slate-100 flex items-center gap-1.5 flex-wrap">
+                {latestNodeInRank.isClone ? (
+                  <>🟢 โคลน <strong>#{latestNodeInRank.id}</strong> (รหัสหลัก #{latestNodeInRank.r1MainId || latestNodeInRank.originMainId})</>
+                ) : latestNodeInRank.isExtraId ? (
+                  <>🔴 Extra <strong>R{latestNodeInRank.rank}-#{latestNodeInRank.id}</strong></>
+                ) : latestNodeInRank.isAutoMainId ? (
+                  <>🟡 Auto ID <strong>#{latestNodeInRank.r1MainId || latestNodeInRank.originMainId}</strong> (โหนด #{latestNodeInRank.id})</>
+                ) : (
+                  <>⚪ Main ID <strong>#{latestNodeInRank.r1MainId || latestNodeInRank.originMainId}</strong> (โหนด #{latestNodeInRank.id})</>
+                )}
+                <span className="text-[#64748B] dark:text-slate-400">→ ต่อใต้</span>
+                <span className="px-1.5 py-0.2 rounded bg-white dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700 font-bold">
+                  #{latestNodeInRank.parentId === 0 ? 'Root (#0)' : latestNodeInRank.parentId}
+                </span>
+                <span className="text-[#64748B] dark:text-slate-400">
+                  ({latestNodeInRank.isLeft ? '↙ ซ้าย' : '↘ ขวา'} • ชั้น {latestNodeInRank.level})
+                </span>
+              </span>
+            </div>
+
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  const targetFocus =
+                    latestNodeInRank.parentId > 0 ? latestNodeInRank.parentId : latestNodeInRank.id;
+                  navigateToNode(targetFocus);
+                }}
+                className="px-2.5 py-1 rounded-lg bg-[#2563EB] hover:bg-blue-700 text-white font-bold text-[11px] shadow-2xs cursor-pointer transition flex items-center gap-1"
+              >
+                <Search className="w-3 h-3" />
+                <span>ดูจุดต่อสาย #{latestNodeInRank.parentId} → #{latestNodeInRank.id}</span>
+              </button>
+
+              {focusRootId !== 1 && (
+                <button
+                  type="button"
+                  onClick={() => navigateToNode(1)}
+                  className="px-2 py-1 rounded-lg bg-white hover:bg-slate-100 text-[#334155] border border-slate-200/80 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-amber-300 dark:border-slate-700 font-bold text-[11px] cursor-pointer transition flex items-center gap-1"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span>ผังรวม</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setIsConnectionAlertDismissed(true)}
+                className="p-1 rounded-lg text-[#64748B] hover:text-[#0F172A] hover:bg-white/80 dark:text-slate-400 dark:hover:text-white dark:hover:bg-slate-800 transition cursor-pointer"
+                title="ปิดแถบแจ้งเตือนนี้"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {latestNodeInRank && isConnectionAlertDismissed && (
+          <div className="flex justify-end -mt-1">
+            <button
+              type="button"
+              onClick={() => setIsConnectionAlertDismissed(false)}
+              className="text-[10.5px] text-[#64748B] hover:text-[#2563EB] dark:text-slate-400 dark:hover:text-cyan-300 font-semibold flex items-center gap-1 cursor-pointer"
+            >
+              <span>⚡ แสดงแถบแจ้งเตือนการต่อสายล่าสุด (#{latestNodeInRank.id})</span>
+            </button>
           </div>
         )}
 
