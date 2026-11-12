@@ -18,6 +18,9 @@ import {
   BookOpen,
   ArrowDownRight,
   Zap,
+  Sun,
+  Moon,
+  Globe,
 } from 'lucide-react';
 import { TransactionToast } from './TransactionToast';
 import { ApplicantItem, PlacementMode } from '../utils/offChainSimulator';
@@ -91,6 +94,9 @@ interface AuthAndOnboardingGateProps {
 export const AuthAndOnboardingGate: React.FC<AuthAndOnboardingGateProps> = ({
   mode,
   language,
+  onToggleLanguage,
+  theme = 'light',
+  onToggleTheme,
   account,
   isBscTestnet,
   isConnecting,
@@ -234,6 +240,63 @@ export const AuthAndOnboardingGate: React.FC<AuthAndOnboardingGateProps> = ({
 
   const [isPlanExpanded, setIsPlanExpanded] = useState<boolean>(true);
 
+  // สวิตช์โหมดสว่าง/โหมดมืด และปุ่มสลับภาษาสำหรับหน้า Login และ สมัครสมาชิก
+  const renderTopToolbar = () => (
+    <div className="flex items-center justify-between w-full px-1">
+      <div className="flex items-center gap-2">
+        <div className="flex items-center justify-center w-8 h-8 rounded-xl bg-blue-50 dark:bg-emerald-500/15 border border-blue-200/80 dark:border-emerald-500/30 text-[#2563EB] dark:text-emerald-400 font-mono font-black text-xs shadow-xs">
+          F27
+        </div>
+        <span className="text-xs font-bold text-slate-500 dark:text-slate-400">
+          Fractal Flow
+        </span>
+      </div>
+
+      <div className="flex items-center gap-2">
+        {onToggleTheme && (
+          <button
+            type="button"
+            onClick={onToggleTheme}
+            className="px-2.5 sm:px-3 py-1.5 rounded-xl bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700/80 border border-slate-200/90 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold inline-flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+            title={
+              theme === 'light'
+                ? language === 'th'
+                  ? 'สลับเป็นโหมดมืด (Dark Mode)'
+                  : 'Switch to Dark Mode'
+                : language === 'th'
+                ? 'สลับเป็นโหมดสว่าง (Light Mode)'
+                : 'Switch to Light Mode'
+            }
+          >
+            {theme === 'light' ? (
+              <>
+                <Sun className="w-3.5 h-3.5 text-amber-500" />
+                <span>{language === 'th' ? 'โหมดสว่าง' : 'Light'}</span>
+              </>
+            ) : (
+              <>
+                <Moon className="w-3.5 h-3.5 text-indigo-300" />
+                <span>{language === 'th' ? 'โหมดมืด' : 'Dark'}</span>
+              </>
+            )}
+          </button>
+        )}
+
+        {onToggleLanguage && (
+          <button
+            type="button"
+            onClick={onToggleLanguage}
+            className="px-2.5 sm:px-3 py-1.5 rounded-xl bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700/80 border border-slate-200/90 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold inline-flex items-center gap-1.5 shadow-xs transition cursor-pointer font-mono"
+            title={language === 'th' ? 'Switch to English' : 'เปลี่ยนเป็นภาษาไทย'}
+          >
+            <Globe className="w-3.5 h-3.5 text-[#2563EB] dark:text-emerald-400" />
+            <span>{language === 'th' ? '🇬🇧 EN' : '🇹🇭 TH'}</span>
+          </button>
+        )}
+      </div>
+    </div>
+  );
+
   // ============================================================================
   // 1. หน้าเข้าสู่ระบบ (WEB3 LOGIN SCREEN) — แสดงชื่อเว็บไซต์ Fractal Flow + ยอดสมาชิกไอดีหลัก Rank 1 & ยอดเงิน + แผนรายได้และหลักการทำงาน
   // ============================================================================
@@ -241,6 +304,8 @@ export const AuthAndOnboardingGate: React.FC<AuthAndOnboardingGateProps> = ({
     return (
       <div className="min-h-screen w-full bg-[#F8FAFC] dark:bg-[#070b16] text-[#0F172A] dark:text-slate-100 flex items-center justify-center px-4 py-8 sm:py-12 relative overflow-y-auto transition-colors duration-200">
         <div className="w-full max-w-lg space-y-4">
+          {renderTopToolbar()}
+
           <TransactionToast
             txState={txState}
             onClear={onClearTxState}
@@ -504,23 +569,26 @@ export const AuthAndOnboardingGate: React.FC<AuthAndOnboardingGateProps> = ({
   // ============================================================================
   if (mode === 'Checking') {
     return (
-      <div className="min-h-screen w-full bg-[#F8FAFC] dark:bg-[#070b16] text-[#0F172A] dark:text-slate-100 flex flex-col items-center justify-center p-4">
-        <div className="max-w-md w-full bg-white dark:bg-slate-900/90 border border-slate-200/80 dark:border-slate-800 rounded-3xl p-8 text-center space-y-5 shadow-[0_4px_20px_-2px_rgba(15,23,42,0.04)] dark:shadow-2xl">
-          <div className="text-xl font-extrabold text-[#2563EB] dark:text-emerald-400">
-            Fractal Flow
-          </div>
-          <div className="w-14 h-14 rounded-2xl bg-[#EFF6FF] dark:bg-emerald-500/15 border border-blue-200/80 dark:border-emerald-500/30 flex items-center justify-center mx-auto">
-            <div className="w-7 h-7 border-3 border-[#2563EB] dark:border-emerald-400 border-t-transparent rounded-full animate-spin" />
-          </div>
-          <div className="space-y-1.5">
-            <h3 className="text-lg font-bold text-[#0F172A] dark:text-white">
-              {language === 'th'
-                ? 'กำลังตรวจสอบสถานะกระเป๋า...'
-                : 'Verifying Wallet...'}
-            </h3>
-            {account && (
-              <p className="text-xs font-mono text-[#2563EB] dark:text-emerald-400 break-all px-2">{account}</p>
-            )}
+      <div className="min-h-screen w-full bg-[#F8FAFC] dark:bg-[#070b16] text-[#0F172A] dark:text-slate-100 flex flex-col items-center justify-center p-4 transition-colors duration-200">
+        <div className="max-w-md w-full space-y-3">
+          {renderTopToolbar()}
+          <div className="w-full bg-white dark:bg-slate-900/90 border border-slate-200/80 dark:border-slate-800 rounded-3xl p-8 text-center space-y-5 shadow-[0_4px_20px_-2px_rgba(15,23,42,0.04)] dark:shadow-2xl">
+            <div className="text-xl font-extrabold text-[#2563EB] dark:text-emerald-400">
+              Fractal Flow
+            </div>
+            <div className="w-14 h-14 rounded-2xl bg-[#EFF6FF] dark:bg-emerald-500/15 border border-blue-200/80 dark:border-emerald-500/30 flex items-center justify-center mx-auto">
+              <div className="w-7 h-7 border-3 border-[#2563EB] dark:border-emerald-400 border-t-transparent rounded-full animate-spin" />
+            </div>
+            <div className="space-y-1.5">
+              <h3 className="text-lg font-bold text-[#0F172A] dark:text-white">
+                {language === 'th'
+                  ? 'กำลังตรวจสอบสถานะกระเป๋า...'
+                  : 'Verifying Wallet...'}
+              </h3>
+              {account && (
+                <p className="text-xs font-mono text-[#2563EB] dark:text-emerald-400 break-all px-2">{account}</p>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -543,8 +611,10 @@ export const AuthAndOnboardingGate: React.FC<AuthAndOnboardingGateProps> = ({
   };
 
   return (
-    <div className="min-h-screen w-full bg-[#F8FAFC] dark:bg-[#070b16] text-[#0F172A] dark:text-slate-100 flex items-center justify-center px-4 py-8 relative overflow-hidden">
-      <div className="w-full max-w-md space-y-5">
+    <div className="min-h-screen w-full bg-[#F8FAFC] dark:bg-[#070b16] text-[#0F172A] dark:text-slate-100 flex items-center justify-center px-4 py-8 relative overflow-hidden transition-colors duration-200">
+      <div className="w-full max-w-md space-y-4">
+        {renderTopToolbar()}
+
         <div className="text-center">
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-[#0F172A] dark:text-white">
             Fractal Flow
