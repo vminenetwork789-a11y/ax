@@ -773,8 +773,8 @@ export const WalletIncomeNotifier: React.FC<WalletIncomeNotifierProps> = ({
               )}
             </AnimatePresence>
 
-            {/* 4. Floating Action Button (FAB) at Bottom-Right Corner - Always Follows Screen */}
-            <div className="fixed bottom-5 right-5 sm:bottom-6 sm:right-6 z-[9990] pointer-events-auto">
+            {/* 4. Floating Action Button (FAB) at Bottom-Right Corner - Sits cleanly above the floating Register button */}
+            <div className="fixed bottom-16 right-4 sm:bottom-20 sm:right-5 z-[9990] pointer-events-auto">
               <motion.button
                 type="button"
                 whileHover={{ scale: 1.08 }}

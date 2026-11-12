@@ -163,44 +163,50 @@ export const AuthAndOnboardingGate: React.FC<AuthAndOnboardingGateProps> = ({
   }, [mode, parsedSponsorId, onCheckSponsor, language]);
 
   // ============================================================================
-  // 1. หน้าเข้าสู่ระบบ (WEB3 LOGIN SCREEN) — เหลือเฉพาะปุ่ม Login เท่านั้น
+  // 1. หน้าเข้าสู่ระบบ (WEB3 LOGIN SCREEN) — แสดงชื่อเว็บไซต์ Fractal Flow + ปุ่ม Login ในกรอบการ์ด
   // ============================================================================
   if (mode === 'login') {
     return (
       <div className="min-h-screen w-full bg-[#F8FAFC] dark:bg-[#070b16] text-[#0F172A] dark:text-slate-100 flex items-center justify-center px-4 relative overflow-hidden transition-colors duration-200">
-        <div className="w-full max-w-sm space-y-4">
+        <div className="w-full max-w-md space-y-4">
           <TransactionToast
             txState={txState}
             onClear={onClearTxState}
             language={language}
           />
 
-          <button
-            onClick={onConnectWallet}
-            disabled={isConnecting}
-            className="w-full py-4 px-6 rounded-2xl bg-[#2563EB] hover:bg-blue-700 dark:bg-gradient-to-r dark:from-emerald-600 dark:via-teal-600 dark:to-emerald-600 dark:hover:from-emerald-500 dark:hover:via-teal-500 dark:hover:to-emerald-500 text-white font-bold text-base shadow-[0_4px_20px_-2px_rgba(37,99,235,0.35)] dark:shadow-xl dark:shadow-emerald-950/60 border border-blue-500/30 dark:border-emerald-400/30 transition duration-200 flex items-center justify-center gap-3 cursor-pointer disabled:opacity-60"
-          >
-            {isConnecting ? (
-              <>
-                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                <span>
-                  {language === 'th'
-                    ? 'กำลังเข้าสู่ระบบ...'
-                    : 'Signing in...'}
-                </span>
-              </>
-            ) : (
-              <>
-                <Wallet className="w-5 h-5" />
-                <span>
-                  {language === 'th'
-                    ? 'เข้าสู่ระบบด้วยกระเป๋า Web3 (MetaMask / TrustWallet)'
-                    : 'Login with Web3 Wallet (MetaMask / TrustWallet)'}
-                </span>
-                <ArrowRight className="w-5 h-5" />
-              </>
-            )}
-          </button>
+          <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-3xl p-7 sm:p-9 shadow-[0_8px_30px_rgb(15,23,42,0.06)] dark:shadow-2xl text-center space-y-6">
+            <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-[#0F172A] dark:text-white">
+              Fractal Flow
+            </h1>
+
+            <button
+              onClick={onConnectWallet}
+              disabled={isConnecting}
+              className="w-full py-4 px-6 rounded-2xl bg-[#2563EB] hover:bg-blue-700 dark:bg-gradient-to-r dark:from-emerald-600 dark:via-teal-600 dark:to-emerald-600 dark:hover:from-emerald-500 dark:hover:via-teal-500 dark:hover:to-emerald-500 text-white font-bold text-base shadow-[0_4px_20px_-2px_rgba(37,99,235,0.35)] dark:shadow-xl dark:shadow-emerald-950/60 border border-blue-500/30 dark:border-emerald-400/30 transition duration-200 flex items-center justify-center gap-3 cursor-pointer disabled:opacity-60"
+            >
+              {isConnecting ? (
+                <>
+                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  <span>
+                    {language === 'th'
+                      ? 'กำลังเข้าสู่ระบบ...'
+                      : 'Signing in...'}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <Wallet className="w-5 h-5" />
+                  <span>
+                    {language === 'th'
+                      ? 'เข้าสู่ระบบด้วยกระเป๋า Web3 (MetaMask / TrustWallet)'
+                      : 'Login with Web3 Wallet (MetaMask / TrustWallet)'}
+                  </span>
+                  <ArrowRight className="w-5 h-5" />
+                </>
+              )}
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -213,6 +219,9 @@ export const AuthAndOnboardingGate: React.FC<AuthAndOnboardingGateProps> = ({
     return (
       <div className="min-h-screen w-full bg-[#F8FAFC] dark:bg-[#070b16] text-[#0F172A] dark:text-slate-100 flex flex-col items-center justify-center p-4">
         <div className="max-w-md w-full bg-white dark:bg-slate-900/90 border border-slate-200/80 dark:border-slate-800 rounded-3xl p-8 text-center space-y-5 shadow-[0_4px_20px_-2px_rgba(15,23,42,0.04)] dark:shadow-2xl">
+          <div className="text-xl font-extrabold text-[#2563EB] dark:text-emerald-400">
+            Fractal Flow
+          </div>
           <div className="w-14 h-14 rounded-2xl bg-[#EFF6FF] dark:bg-emerald-500/15 border border-blue-200/80 dark:border-emerald-500/30 flex items-center justify-center mx-auto">
             <div className="w-7 h-7 border-3 border-[#2563EB] dark:border-emerald-400 border-t-transparent rounded-full animate-spin" />
           </div>
@@ -248,7 +257,13 @@ export const AuthAndOnboardingGate: React.FC<AuthAndOnboardingGateProps> = ({
 
   return (
     <div className="min-h-screen w-full bg-[#F8FAFC] dark:bg-[#070b16] text-[#0F172A] dark:text-slate-100 flex items-center justify-center px-4 py-8 relative overflow-hidden">
-      <div className="w-full max-w-md space-y-4">
+      <div className="w-full max-w-md space-y-5">
+        <div className="text-center">
+          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-[#0F172A] dark:text-white">
+            Fractal Flow
+          </h1>
+        </div>
+
         <TransactionToast
           txState={txState}
           onClear={onClearTxState}
@@ -263,9 +278,9 @@ export const AuthAndOnboardingGate: React.FC<AuthAndOnboardingGateProps> = ({
                 <UserPlus className="w-5 h-5" />
               </div>
               <div>
-                <h1 className="text-lg font-extrabold text-[#0F172A] dark:text-white">
+                <h2 className="text-lg font-extrabold text-[#0F172A] dark:text-white">
                   {language === 'th' ? 'สมัครสมาชิกใหม่' : 'Member Registration'}
-                </h1>
+                </h2>
                 {account && (
                   <p className="text-xs font-mono text-[#64748B] dark:text-slate-400">
                     {account.substring(0, 6)}...{account.substring(account.length - 4)}

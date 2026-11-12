@@ -126,11 +126,8 @@ export const Header: React.FC<HeaderProps> = ({
               <div className="min-w-0">
                 <div className="flex items-center gap-2 min-w-0">
                   <h1 className="text-base sm:text-xl font-extrabold text-slate-900 dark:bg-gradient-to-r dark:from-emerald-400 dark:via-teal-300 dark:to-indigo-300 dark:bg-clip-text dark:text-transparent truncate">
-                    FractalFlowMatrix27
+                    Fractal Flow
                   </h1>
-                  <span className="hidden sm:inline-flex items-center text-[10px] font-bold uppercase px-2.5 py-0.5 rounded-full bg-[#EFF6FF] text-[#1D4ED8] border border-blue-200/80 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20 whitespace-nowrap shrink-0">
-                    DApp Control Panel
-                  </span>
                 </div>
 
                 <div className="flex items-center gap-1.5 sm:gap-2 text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 mt-0.5 flex-wrap">

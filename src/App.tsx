@@ -3,7 +3,6 @@ import { useWeb3 } from './hooks/useWeb3';
 import { Header } from './components/Header';
 import { RegisterSection } from './components/RegisterSection';
 import { MatrixTreeVisualizer } from './components/MatrixTreeVisualizer';
-import { EventLogsSection } from './components/EventLogsSection';
 import { DeployContractModal } from './components/DeployContractModal';
 import { QuickContractSwitcherModal } from './components/QuickContractSwitcherModal';
 import { AuthAndOnboardingGate } from './components/AuthAndOnboardingGate';
@@ -524,12 +523,6 @@ export default function App() {
               currentUserRank={profile?.currentMaxRank || 1}
               lastTxSuccess={txState.successMessage}
               refreshTrigger={txState.successMessage}
-            />
-
-            {/* Dedicated Transaction History & Event Logs Section (At the Very Bottom) */}
-            <EventLogsSection
-              language={language}
-              account={account}
             />
           </>
         )}

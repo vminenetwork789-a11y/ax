@@ -6967,45 +6967,45 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             </div>
           )}
 
-          {/* แถบจัดเรียง 2 ปุ่มด้านล่างสุดของผัง (ซ้าย: ดูข้อมูล ID ของกระเป๋านี้ | ขวา: สมัครสมาชิก / ลงรหัสเพิ่ม) ไม่ซ้อนทับกัน */}
-          <div className="absolute bottom-2.5 left-2 right-2 sm:bottom-4 sm:left-4 sm:right-4 z-30 flex items-center justify-between gap-1.5 sm:gap-3 pointer-events-none">
-          {/* ปุ่มดูข้อมูล ID ของกระเป๋านี้ ด้านซ้ายล่างสุดของผัง */}
-          <button
-            type="button"
-            onClick={() => {
-              const focusedOwner =
-                activeNodesMap.get(focusRootId)?.owner ||
-                activeNodesMap.get(1)?.owner ||
-                '0x622E20082e63c7220c5AF0A77Cbc437a98505311';
-              setSelectedInspectWallet(userAddress || focusedOwner);
-              fetchPerIdHistoryForModal();
-              setIsWalletIdsModalOpen(true);
-            }}
-            className="pointer-events-auto flex-1 sm:flex-initial max-w-[49%] sm:max-w-none justify-center px-2.5 py-2 sm:px-4 sm:py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 via-violet-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-extrabold text-[10.5px] sm:text-xs md:text-sm shadow-[0_6px_20px_rgba(99,102,241,0.45)] border border-indigo-400/60 transition cursor-pointer flex items-center gap-1 sm:gap-1.5 whitespace-nowrap overflow-hidden"
-          >
-            <User className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-300 shrink-0" />
-            <span className="truncate">
-              {language === 'th' ? '👛 ดูข้อมูล ID ของกระเป๋านี้' : '👛 View Wallet IDs'}
-            </span>
-          </button>
+          {/* ปุ่มลอยตัวมุมซ้ายล่าง: ดูข้อมูล ID กระเป๋านี้ | มุมขวาล่าง: สมัครสมาชิก */}
+          <div className="fixed bottom-3.5 left-3 right-3 sm:bottom-5 sm:left-5 sm:right-5 z-40 flex items-center justify-between gap-2 pointer-events-none">
+            {/* ปุ่มดูข้อมูล ID กระเป๋านี้ ลอยอยู่มุมซ้ายล่าง */}
+            <button
+              type="button"
+              onClick={() => {
+                const focusedOwner =
+                  activeNodesMap.get(focusRootId)?.owner ||
+                  activeNodesMap.get(1)?.owner ||
+                  '0x622E20082e63c7220c5AF0A77Cbc437a98505311';
+                setSelectedInspectWallet(userAddress || focusedOwner);
+                fetchPerIdHistoryForModal();
+                setIsWalletIdsModalOpen(true);
+              }}
+              className="pointer-events-auto px-3.5 py-2.5 sm:px-4 sm:py-3 rounded-2xl bg-gradient-to-r from-indigo-600 via-violet-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-extrabold text-xs sm:text-sm shadow-[0_8px_25px_rgba(99,102,241,0.45)] border border-indigo-400/60 transition cursor-pointer flex items-center gap-1.5 whitespace-nowrap"
+            >
+              <User className="w-4 h-4 text-amber-300 shrink-0" />
+              <span>
+                {language === 'th' ? 'ดูข้อมูล ID กระเป๋านี้' : 'View Wallet IDs'}
+              </span>
+            </button>
 
-          {/* ปุ่มสมัครสมาชิก ด้านขวาล่างสุดของผัง */}
-          <button
-            type="button"
-            onClick={() => {
-              if (onOpenRegisterModal) {
-                onOpenRegisterModal();
-              } else {
-                openRegisterModal(focusRootId || 1);
-              }
-            }}
-            className="pointer-events-auto flex-1 sm:flex-initial max-w-[49%] sm:max-w-none justify-center px-2.5 py-2 sm:px-4 sm:py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 via-teal-500 to-emerald-600 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-extrabold text-[10.5px] sm:text-xs md:text-sm shadow-[0_6px_20px_rgba(16,185,129,0.45)] border border-emerald-300/60 transition cursor-pointer flex items-center gap-1 sm:gap-1.5 whitespace-nowrap overflow-hidden"
-          >
-            <Sparkles className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-950 shrink-0" />
-            <span className="truncate">
-              {language === 'th' ? '+ สมัครสมาชิก / ลงรหัสเพิ่ม' : '+ Register / Add ID'}
-            </span>
-          </button>
+            {/* ปุ่มสมัครสมาชิก ลอยอยู่มุมขวาล่าง */}
+            <button
+              type="button"
+              onClick={() => {
+                if (onOpenRegisterModal) {
+                  onOpenRegisterModal();
+                } else {
+                  openRegisterModal(focusRootId || 1);
+                }
+              }}
+              className="pointer-events-auto px-3.5 py-2.5 sm:px-4 sm:py-3 rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-500 to-emerald-600 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-extrabold text-xs sm:text-sm shadow-[0_8px_25px_rgba(16,185,129,0.45)] border border-emerald-300/60 transition cursor-pointer flex items-center gap-1.5 whitespace-nowrap"
+            >
+              <Sparkles className="w-4 h-4 text-slate-950 shrink-0" />
+              <span>
+                {language === 'th' ? 'สมัครสมาชิก' : 'Register'}
+              </span>
+            </button>
           </div>
         </div>
       </div>
