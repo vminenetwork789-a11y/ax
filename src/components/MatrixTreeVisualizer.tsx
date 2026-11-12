@@ -1446,16 +1446,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         for (const [pId, childIds] of childrenByParent.entries()) {
           const parentObj = rawNodes.get(pId);
           if (!parentObj) continue;
-          childIds.sort((a, b) => {
-            const nodeA = rawNodes.get(a);
-            const nodeB = rawNodes.get(b);
-            const roundA = onChainCloneRoundMap.get(a) || (nodeA?.isClone ? 1 : 0);
-            const roundB = onChainCloneRoundMap.get(b) || (nodeB?.isClone ? 1 : 0);
-            if (nodeA?.isClone && nodeB?.isClone && roundA !== roundB) {
-              return roundA - roundB;
-            }
-            return a - b;
-          });
+          childIds.sort((a, b) => a - b);
           parentObj.leftChild = childIds[0] || 0;
           parentObj.rightChild = childIds[1] || 0;
         }
@@ -2809,13 +2800,28 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           const r1UnitVault = Number((r1EntryPrice * 0.35).toFixed(4));
           const maxPossibleSpawns =
             window5Start > 1 ? Math.floor((deducted + 1e-4) / r1EntryPrice) : 0;
+          let taggedAutoCountForMain = 0;
+          for (const sn of snap1ForMains.values()) {
+            if (
+              sn.id > r1Id &&
+              !sn.isClone &&
+              !sn.isExtraId &&
+              sn.originType === 'AUTO_NEW_MAIN' &&
+              (sn.owner || '').toLowerCase() === (n1.owner || '').toLowerCase() &&
+              (sn.directSponsorNodeId === r1Id || (r1Id === 1 && sn.directSponsorNodeId <= 1))
+            ) {
+              taggedAutoCountForMain++;
+            }
+          }
+          const repForR1 = perIdReportsMap.get(r1Id);
+          const repAutoCount = Array.isArray(repForR1?.autoIdsSpawned)
+            ? repForR1.autoIdsSpawned.length
+            : Number(repForR1?.totalAutoIdCount || 0);
           let spawnedCount = 0;
           if (r1Id === 1) {
-            spawnedCount = maxPossibleSpawns;
-          } else if (perIdReportsMap.has(r1Id)) {
-            // Strictly honor authentic backend/on-chain autoId reports for Main IDs > 1 (e.g. ID #2 where vaults were spent on upgrades)
-            const rep = perIdReportsMap.get(r1Id);
-            spawnedCount = Array.isArray(rep?.autoIdsSpawned) ? rep.autoIdsSpawned.length : (rep?.totalAutoIdCount || 0);
+            spawnedCount = Math.max(maxPossibleSpawns, taggedAutoCountForMain, repAutoCount);
+          } else if (perIdReportsMap.has(r1Id) || taggedAutoCountForMain > 0) {
+            spawnedCount = Math.max(repAutoCount, taggedAutoCountForMain);
           } else if (maxPossibleSpawns > 0) {
             // สำหรับ Main ID > 1 ที่ไม่ได้ใช้ยอดอัปเกรด
             for (let c = maxPossibleSpawns; c >= 1; c--) {
@@ -3166,11 +3172,15 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
               lineageAutoIdVault.set(sourceMain, Number((r1Bal + extraBal).toFixed(4)));
             }
           }
-          if (sourceMain === undefined && isBackendTaggedAuto && priorMains.length > 0) {
-            sourceMain =
-              explicitSponsorId > 0 && priorMains.includes(explicitSponsorId)
-                ? explicitSponsorId
-                : priorMains[0];
+          if (sourceMain === undefined && isBackendTaggedAuto) {
+            if (priorMains.length > 0) {
+              sourceMain =
+                explicitSponsorId > 0 && priorMains.includes(explicitSponsorId)
+                  ? explicitSponsorId
+                  : priorMains[0];
+            } else {
+              sourceMain = explicitSponsorId > 0 ? explicitSponsorId : firstMainOfOwner;
+            }
           }
 
           if (sourceMain !== undefined) {
@@ -3550,11 +3560,15 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                 );
               }
             }
-            if (sourceMain === undefined && isSnapTaggedAuto && priorMains.length > 0) {
-              sourceMain =
-                explicitSpId > 0 && priorMains.includes(explicitSpId)
-                  ? explicitSpId
-                  : priorMains[0];
+            if (sourceMain === undefined && isSnapTaggedAuto) {
+              if (priorMains.length > 0) {
+                sourceMain =
+                  explicitSpId > 0 && priorMains.includes(explicitSpId)
+                    ? explicitSpId
+                    : priorMains[0];
+              } else {
+                sourceMain = explicitSpId > 0 ? explicitSpId : firstMain;
+              }
             }
             if (sourceMain !== undefined) {
               s1AutoIdSourceMap.set(id1, sourceMain);
@@ -3799,6 +3813,9 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             !n.isExtraId &&
             effectiveR1MainId > 1 &&
             (s1AutoIdSourceMap.has(effectiveR1MainId) ||
+              onChainOriginTypeMap.get(effectiveR1MainId) === 'AUTO_NEW_MAIN' ||
+              snap1?.get(effectiveR1MainId)?.originType === 'AUTO_NEW_MAIN' ||
+              perIdReportsMap.get(effectiveR1MainId)?.nodeType === 'AUTO_ID' ||
               (activeRank === 1 && autoMainNodeIds.has(n.id))),
           originMainId,
           r1MainId,
@@ -5032,6 +5049,9 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
       if (child.isClone) {
         return `#${mainLabel}(โคลน#${child.id})`;
       }
+      if (child.isAutoMainId) {
+        return `Auto#${mainLabel}(#${child.id})`;
+      }
       return `#${mainLabel}(#${child.id})`;
     };
 
@@ -5210,7 +5230,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                   )}
                 </button>
                 <span className="px-1 py-0.2 rounded bg-[#FEF3C7] dark:bg-amber-500/15 border border-amber-300 dark:border-amber-500/40 text-[#B45309] dark:text-amber-400 font-mono font-bold text-[9.5px]">
-                  R{node.rank}
+                  R{node.isExtraId ? node.rank : node.targetMainIdCurrentRank || node.rank}
                 </span>
               </div>
 
@@ -5434,12 +5454,11 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                     <>
                       Vault:{' '}
                       <strong className="text-[#0F172A] dark:text-white">
-                        {node.upgradeRankPool > 0
-                          ? `${node.upgradeRankPool.toFixed(2)}/${node.nextRankPrice}U`
-                          : selectedRank <= 4 &&
-                            (node.newAutoIdPool > 0 || node.totalAutoIdCount > 0 || node.id === 1)
-                          ? `${node.newAutoIdPool.toFixed(2)}/5U`
-                          : `${node.vaultBalance.toFixed(2)}/${node.nextRankPrice}U`}
+                        {(node.targetMainIdCurrentRank || 1) >= 18 || node.id === 1
+                          ? selectedRank <= 3
+                            ? `${node.newAutoIdPool.toFixed(2)}/5U`
+                            : `${node.newExtraIdPool.toFixed(2)}/${RANK_PRICES_USDT[1] || 10}U`
+                          : `${node.upgradeRankPool.toFixed(2)}/${node.nextRankPrice}U`}
                       </strong>
                     </>
                   )}

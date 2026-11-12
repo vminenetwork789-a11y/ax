@@ -266,7 +266,7 @@ const DEFAULT_SYSTEM_CONFIG = {
   contractAddress:
     process.env.OVERRIDE_CONTRACT_ADDRESS ||
     process.env.CONTRACT_ADDRESS ||
-    '0x49a754084903678B7d46FF2934EDb037CD1Ab518',
+    '0x8B2eF84f543f5C1DfA8240A1853D63eFe66006Eb',
   usdtAddress: process.env.USDT_ADDRESS || '0x05f24E1F598DF1aE8d0B424ce978f8ea33bB752b',
   chainId: Number(process.env.CHAIN_ID || 97),
   networkName: process.env.NETWORK_NAME || 'BNB Smart Chain Testnet',
@@ -316,6 +316,7 @@ const SERVER_LEGACY_CONTRACTS = new Set([
   '0x3b69efbd1f615cd31e326497555bfa56a194f935',
   '0x792cd37f508b97e4f86d8747fe7888a281dd1158',
   '0xd3e4e4d7f367e563756d82989bb930b0261eb2ba',
+  '0x49a754084903678b7d46ff2934edb037cd1ab518',
 ]);
 
 const SERVER_LEGACY_USDT = new Set([
@@ -1595,12 +1596,7 @@ function reconcileRankTreeLinks(nodes: IndexedTreeNode[]): IndexedTreeNode[] {
   for (const [pId, children] of childrenByParent.entries()) {
     const parent = byId.get(pId);
     if (!parent) continue;
-    children.sort((a, b) => {
-      if (a.isClone && b.isClone && a.cloneRound && b.cloneRound && a.cloneRound !== b.cloneRound) {
-        return a.cloneRound - b.cloneRound;
-      }
-      return a.id - b.id;
-    });
+    children.sort((a, b) => a.id - b.id);
 
     const leftNode = children[0];
     const rightNode = children.length > 1 ? children[1] : undefined;
@@ -2241,6 +2237,31 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
   const extraR2To3MinR1IdByMain = new Map<number, number>();
   const usedExtraR2To3 = new Set<number>();
 
+  const LEGACY_CONTRACT_PRICES_USDT = [
+    10, 20, 30, 40, 50, 60, 80, 100, 200, 300,
+    500, 700, 1000, 1500, 2000, 4000, 6000, 10000,
+  ];
+  const activeContractLower = (matrixDB.contractAddress || CONTRACT_ADDRESS).toLowerCase();
+  const usesLegacyOnChainScale =
+    activeContractLower === '0x49a754084903678b7d46ff2934edb037cd1ab518' ||
+    activeContractLower === '0x8b2ef84f543f5c1dfa8240a1853d63efe66006eb' ||
+    sortedR1.some((m) => {
+      if (m.isClone || m.isExtraId || m.id <= 1) return false;
+      const rawV = Number(m.rawNodeVault ?? m.nodeVault ?? 0);
+      if (rawV <= 0) return false;
+      let lc = 0;
+      for (const sn of sortedR1) {
+        const snOrig = sn.originMainId || sn.id;
+        if (
+          (sn.id === m.id || (sn.isClone && snOrig === m.id)) &&
+          sn.leftChild > 0
+        ) {
+          lc++;
+        }
+      }
+      return lc > 0 && rawV > lc * 1.75 + 0.1;
+    });
+
   for (const mNode of sortedR1) {
     if (mNode.isClone || mNode.isExtraId) continue;
     const win5Start = getMainWindow5Start(mNode.id);
@@ -2253,6 +2274,8 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
 
     let totalGross1To3 = 0;
     let totalRem1To3 = 0;
+    let legacyGross1To3 = 0;
+    let legacyRem1To3 = 0;
     let extraR2To3 = 0;
     let extraR2To3Rem = 0;
     let extraMinR1Id = mNode.id;
@@ -2266,7 +2289,10 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
           : rList.find((x) => !x.isClone && !x.isExtraId && x.originMainId === mNode.id);
       if (!correspMain) continue;
 
-      const rUnitVault = Number(((RANK_PRICES_USDT[r - 1] || 5) * 0.35).toFixed(4));
+      const newRankPrice = RANK_PRICES_USDT[r - 1] || 5;
+      const oldRankPrice = LEGACY_CONTRACT_PRICES_USDT[r - 1] || newRankPrice;
+      const rUnitVault = Number((newRankPrice * 0.35).toFixed(4));
+      const legacyUnitVault = Number((oldRankPrice * 0.35).toFixed(4));
       let leftCount = 0;
       for (const sn of rList) {
         const snOrig = sn.originMainId || sn.id;
@@ -2291,9 +2317,14 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
       }
 
       const grossR = Number((leftCount * rUnitVault).toFixed(4));
-      const remR = Number((correspMain.nodeVault ?? 0).toFixed(4));
+      const rawRemR = Number((correspMain.rawNodeVault ?? correspMain.nodeVault ?? 0).toFixed(4));
+      const remR = usesLegacyOnChainScale
+        ? Number((rawRemR * (newRankPrice / oldRankPrice)).toFixed(4))
+        : rawRemR;
       totalGross1To3 = Number((totalGross1To3 + grossR).toFixed(4));
       totalRem1To3 = Number((totalRem1To3 + remR).toFixed(4));
+      legacyGross1To3 = Number((legacyGross1To3 + leftCount * legacyUnitVault).toFixed(4));
+      legacyRem1To3 = Number((legacyRem1To3 + rawRemR).toFixed(4));
       if (r > 1) {
         extraR2To3 = Number((extraR2To3 + grossR).toFixed(4));
         extraR2To3Rem = Number((extraR2To3Rem + remR).toFixed(4));
@@ -2303,7 +2334,10 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
     const r1EntryPrice = RANK_PRICES_USDT[0] || 5;
     const r1UnitVault = Number((r1EntryPrice * 0.35).toFixed(4));
     const deducted = Math.max(0, Number((totalGross1To3 - totalRem1To3).toFixed(4)));
-    const maxPossibleSpawns = Math.floor((deducted + 1e-4) / r1EntryPrice);
+    const scaledSpawns = Math.floor((deducted + 1e-4) / r1EntryPrice);
+    const legacyDeducted = Math.max(0, Number((legacyGross1To3 - legacyRem1To3).toFixed(4)));
+    const legacySpawns = usesLegacyOnChainScale ? Math.floor((legacyDeducted + 1e-4) / 10) : 0;
+    const maxPossibleSpawns = Math.max(scaledSpawns, legacySpawns);
     let expectedSpawns = 0;
     if (mNode.id === 1) {
       expectedSpawns = maxPossibleSpawns;
@@ -2468,9 +2502,10 @@ function reconcileAutoExtraIdsAcrossRanks(): Array<{
     500, 700, 1000, 1500, 2000, 4000, 6000, 10000,
   ];
   const r1Nodes = matrixDB.nodesByRank[1] || [];
+  const activeContractAddrLower = (matrixDB.contractAddress || CONTRACT_ADDRESS).toLowerCase();
   const isLegacyContract =
-    (matrixDB.contractAddress || CONTRACT_ADDRESS).toLowerCase() ===
-    '0x49a754084903678b7d46ff2934edb037cd1ab518';
+    activeContractAddrLower === '0x49a754084903678b7d46ff2934edb037cd1ab518' ||
+    activeContractAddrLower === '0x8b2ef84f543f5c1dfa8240a1853d63efe66006eb';
 
   const resolveExtraSpawnerMainIdLocal = (extraNode: IndexedTreeNode): number => {
     const extraOwner = (extraNode.owner || '').toLowerCase();
@@ -2528,15 +2563,43 @@ function reconcileAutoExtraIdsAcrossRanks(): Array<{
       for (const [, src] of autoMainSourceMap.entries()) {
         if (src === 1) spawnedAutoCount++;
       }
-      let remAutoDeduct = Number((spawnedAutoCount * (RANK_PRICES_USDT[0] || 5)).toFixed(4));
+      const totalAutoDeduct = Number((spawnedAutoCount * (RANK_PRICES_USDT[0] || 5)).toFixed(4));
+      let totalGrossR1To3 = 0;
+      let totalScaledRawR1To3 = 0;
+      const scaledRawByR = new Map<number, number>();
       for (let r = 1; r <= 3; r++) {
         const cNode = correspByRank.get(r);
         if (!cNode) continue;
         const gVal = grossByRank.get(r) || 0;
-        const used = Math.min(gVal, remAutoDeduct);
-        cNode.nodeVault = Number(Math.max(0, gVal - used).toFixed(4));
-        cNode.reconciledBaseVault = cNode.nodeVault;
-        remAutoDeduct = Number(Math.max(0, remAutoDeduct - used).toFixed(4));
+        totalGrossR1To3 = Number((totalGrossR1To3 + gVal).toFixed(4));
+        const rawV = Number(cNode.rawNodeVault ?? cNode.nodeVault ?? 0);
+        const newRankPrice = RANK_PRICES_USDT[r - 1] || 5;
+        const oldRankPrice = LEGACY_CONTRACT_PRICES_USDT[r - 1] || newRankPrice;
+        const scaledV = isLegacyContract
+          ? Number((rawV * (newRankPrice / oldRankPrice)).toFixed(4))
+          : rawV;
+        scaledRawByR.set(r, scaledV);
+        totalScaledRawR1To3 = Number((totalScaledRawR1To3 + scaledV).toFixed(4));
+      }
+      const expectedRemR1To3 = Math.max(0, Number((totalGrossR1To3 - totalAutoDeduct).toFixed(4)));
+      if (Math.abs(totalScaledRawR1To3 - expectedRemR1To3) <= 0.05) {
+        for (let r = 1; r <= 3; r++) {
+          const cNode = correspByRank.get(r);
+          if (!cNode) continue;
+          cNode.nodeVault = Number((scaledRawByR.get(r) || 0).toFixed(4));
+          cNode.reconciledBaseVault = cNode.nodeVault;
+        }
+      } else {
+        let remAutoDeduct = totalAutoDeduct;
+        for (let r = 1; r <= 3; r++) {
+          const cNode = correspByRank.get(r);
+          if (!cNode) continue;
+          const gVal = grossByRank.get(r) || 0;
+          const used = Math.min(gVal, remAutoDeduct);
+          cNode.nodeVault = Number(Math.max(0, gVal - used).toFixed(4));
+          cNode.reconciledBaseVault = cNode.nodeVault;
+          remAutoDeduct = Number(Math.max(0, remAutoDeduct - used).toFixed(4));
+        }
       }
 
       let totalExtraDeduct = 0;
