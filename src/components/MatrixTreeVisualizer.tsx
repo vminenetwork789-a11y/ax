@@ -771,10 +771,10 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
       id: toastId,
       status: 'pending',
       step: language === 'th' ? 'กำลังอนุมัติวงเงิน USDT บนบล็อกเชน...' : 'Approving USDT on Blockchain...',
-      message: `${regNodeCount * 10} USDT`,
+      message: `${regNodeCount * (RANK_PRICES_USDT[0] || 5)} USDT`,
     });
     try {
-      await onApproveUsdt(regNodeCount * 10);
+      await onApproveUsdt(regNodeCount * (RANK_PRICES_USDT[0] || 5));
       const msg = language === 'th' ? 'อนุมัติ USDT บนบล็อกเชนสำเร็จเรียบร้อย!' : 'USDT Approved successfully!';
       setRegTxMessage(msg);
       emitTransactionToast({
@@ -1428,23 +1428,45 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           });
         }
 
-        // Self-healing Parent-Child Linker: ensure every newly added node (e.g. #6, #7...) is attached to its parent's leftChild or rightChild
+        // Self-healing Canonical Parent-Child Linker:
+        // Group all children by parentId, sort by clone round (Round 1 strictly on Left, Round 2 on Right) or ID ascending,
+        // and assign leftChild = child[0], rightChild = child[1].
         const rawSortedIds = Array.from(rawNodes.keys()).sort((a, b) => a - b);
+        const childrenByParent = new Map<number, number[]>();
         for (const cid of rawSortedIds) {
           if (cid <= 1) continue;
           const childObj = rawNodes.get(cid);
           if (!childObj || childObj.parentId <= 0) continue;
-          const parentObj = rawNodes.get(childObj.parentId);
+          if (!rawNodes.has(childObj.parentId)) continue;
+          const list = childrenByParent.get(childObj.parentId) || [];
+          list.push(cid);
+          childrenByParent.set(childObj.parentId, list);
+        }
+
+        for (const [pId, childIds] of childrenByParent.entries()) {
+          const parentObj = rawNodes.get(pId);
           if (!parentObj) continue;
-          if (parentObj.leftChild === cid || parentObj.rightChild === cid) continue;
-          if (!parentObj.leftChild || parentObj.leftChild <= 0 || !rawNodes.has(parentObj.leftChild)) {
-            parentObj.leftChild = cid;
-          } else if (
-            !parentObj.rightChild ||
-            parentObj.rightChild <= 0 ||
-            !rawNodes.has(parentObj.rightChild)
-          ) {
-            parentObj.rightChild = cid;
+          childIds.sort((a, b) => {
+            const nodeA = rawNodes.get(a);
+            const nodeB = rawNodes.get(b);
+            const roundA = onChainCloneRoundMap.get(a) || (nodeA?.isClone ? 1 : 0);
+            const roundB = onChainCloneRoundMap.get(b) || (nodeB?.isClone ? 1 : 0);
+            if (nodeA?.isClone && nodeB?.isClone && roundA !== roundB) {
+              return roundA - roundB;
+            }
+            return a - b;
+          });
+          parentObj.leftChild = childIds[0] || 0;
+          parentObj.rightChild = childIds[1] || 0;
+        }
+
+        for (const pObj of rawNodes.values()) {
+          if (!childrenByParent.has(pObj.id)) {
+            if (pObj.leftChild > 0 && !rawNodes.has(pObj.leftChild)) pObj.leftChild = 0;
+            if (pObj.rightChild > 0 && !rawNodes.has(pObj.rightChild)) pObj.rightChild = 0;
+          } else {
+            const cList = childrenByParent.get(pObj.id)!;
+            if (cList.length < 2) pObj.rightChild = 0;
           }
         }
 
@@ -1876,7 +1898,8 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
               const cParent = placedMap.get(cSlot.parentId);
               placedMap.set(cloneSnap.id, cloneSnap);
               if (cParent) {
-                if (cSlot.isLeft) {
+                const placeLeft = !cParent.leftChild || !placedMap.has(cParent.leftChild) || cSlot.isLeft;
+                if (placeLeft) {
                   cParent.leftChild = cloneSnap.id;
                 } else {
                   cParent.rightChild = cloneSnap.id;
@@ -1900,7 +1923,8 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             const targetParent = placedMap.get(slot.parentId) || rootSnap;
             sn.parentId = targetParent.id;
             placedMap.set(sn.id, sn);
-            if (slot.isLeft) {
+            const placeLeft = !targetParent.leftChild || !placedMap.has(targetParent.leftChild) || slot.isLeft;
+            if (placeLeft) {
               targetParent.leftChild = sn.id;
             } else {
               targetParent.rightChild = sn.id;
@@ -4325,9 +4349,9 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             parentId: Number(item.parentId || 1),
             side: sideVal,
             owner: ownerStr,
-            costUsdt: 10,
+            costUsdt: RANK_PRICES_USDT[0] || 5,
             isMyWallet: Boolean(userLower && ownerStr.toLowerCase() === userLower),
-            noteTh: `แตกตัวอัตโนมัติจากกระปุก New Auto ID Pool (10 USDT) ของ Main ID #${spMain} → วางต่อสายใต้ #${item.parentId || 1} (${sideVal === 'LEFT' ? '↙ ขาซ้าย' : '↘ ขาขวา'})`,
+            noteTh: `แตกตัวอัตโนมัติจากกระปุก New Auto ID Pool (${RANK_PRICES_USDT[0] || 5} USDT) ของ Main ID #${spMain} → วางต่อสายใต้ #${item.parentId || 1} (${sideVal === 'LEFT' ? '↙ ขาซ้าย' : '↘ ขาขวา'})`,
           });
         }
       }
@@ -4451,9 +4475,9 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             parentId: n.parentId,
             side: sideVal,
             owner: n.owner,
-            costUsdt: 10,
+            costUsdt: RANK_PRICES_USDT[0] || 5,
             isMyWallet: isMine,
-            noteTh: `แตกตัวอัตโนมัติจากกระปุก New Auto ID Pool (10 USDT) ของ Main ID #${spMain} → วางต่อสายใต้ #${n.parentId} (${sideVal === 'LEFT' ? '↙ ขาซ้าย' : '↘ ขาขวา'})`,
+            noteTh: `แตกตัวอัตโนมัติจากกระปุก New Auto ID Pool (${RANK_PRICES_USDT[0] || 5} USDT) ของ Main ID #${spMain} → วางต่อสายใต้ #${n.parentId} (${sideVal === 'LEFT' ? '↙ ขาซ้าย' : '↘ ขาขวา'})`,
           });
         }
       }
@@ -4641,7 +4665,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             category: 'POOL_READY',
             title:
               newReadyPool.category === 'AUTO_POOL'
-                ? `⚡ กระปุก Auto ID ครบ 10 USDT! (Main #${newReadyPool.mainId})`
+                ? `⚡ กระปุก Auto ID ครบ ${RANK_PRICES_USDT[0] || 5} USDT! (Main #${newReadyPool.mainId})`
                 : `⚡ กระปุก Extra ID พร้อมออกรหัส! (Main #${newReadyPool.mainId})`,
             subtitle: newReadyPool.noteTh,
             sourceMainId: newReadyPool.mainId,
@@ -7007,7 +7031,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                     {language === 'th' ? '📝 ฟอร์มสมัครสมาชิก DApp' : '📝 Register DApp Node'}
                   </h3>
                   <p className="text-[11px] text-slate-400">
-                    {language === 'th' ? 'ผัง Rank 1 (10 USDT ต่อโหนด)' : 'Rank 1 Matrix (10 USDT / Node)'}
+                    {language === 'th' ? `ผัง Rank 1 (${RANK_PRICES_USDT[0] || 5} USDT ต่อโหนด)` : `Rank 1 Matrix (${RANK_PRICES_USDT[0] || 5} USDT / Node)`}
                   </p>
                 </div>
               </div>
@@ -7078,7 +7102,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                           : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-white'
                       }`}
                     >
-                      {cnt} รหัส ({cnt * 10} U)
+                      {cnt} รหัส ({cnt * (RANK_PRICES_USDT[0] || 5)} U)
                     </button>
                   ))}
                 </div>
@@ -7097,7 +7121,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                 <div className="flex items-center justify-between pt-1 border-t border-slate-800">
                   <span className="text-slate-300 font-bold">รวมค่าสมัครทั้งหมด:</span>
                   <span className="font-mono font-extrabold text-amber-400 text-sm">
-                    {regNodeCount * 10} USDT
+                    {regNodeCount * (RANK_PRICES_USDT[0] || 5)} USDT
                   </span>
                 </div>
               </div>
@@ -7118,7 +7142,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
 
               {/* Action Buttons */}
               <div className="space-y-2 pt-1">
-                {parseFloat(allowance || '0') < regNodeCount * 10 && (
+                {parseFloat(allowance || '0') < regNodeCount * (RANK_PRICES_USDT[0] || 5) && (
                   <button
                     type="button"
                     onClick={handleModalApproveUsdt}
@@ -7133,7 +7157,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                     <span>
                       {regIsApproving
                         ? 'กำลังอนุมัติ USDT...'
-                        : `อนุมัติ USDT (${regNodeCount * 10} USDT)`}
+                        : `อนุมัติ USDT (${regNodeCount * (RANK_PRICES_USDT[0] || 5)} USDT)`}
                     </span>
                   </button>
                 )}
@@ -7152,7 +7176,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                   <span>
                     {regIsSubmitting
                       ? 'กำลังสมัครสมาชิก...'
-                      : `🚀 ยืนยันสมัครสมาชิก (${regNodeCount * 10} USDT)`}
+                      : `🚀 ยืนยันสมัครสมาชิก (${regNodeCount * (RANK_PRICES_USDT[0] || 5)} USDT)`}
                   </span>
                 </button>
               </div>
@@ -7826,7 +7850,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                         const defaultPools = [
                           {
                             poolNumber: 1,
-                            titleTh: 'กองที่ 1 : r-11 (500 USDT)',
+                            titleTh: `กองที่ 1 : r-11 (${(RANK_PRICES_USDT[10] || 300).toLocaleString()} USDT)`,
                             requiredSelfRank: 11,
                             hasSelfRank: currentMaxR >= 11,
                             requiredDirectCount: 5,
@@ -7839,7 +7863,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                           },
                           {
                             poolNumber: 2,
-                            titleTh: 'กองที่ 2 : r-14 (1,000 USDT)',
+                            titleTh: `กองที่ 2 : r-14 (${(RANK_PRICES_USDT[13] || 800).toLocaleString()} USDT)`,
                             requiredSelfRank: 14,
                             hasSelfRank: currentMaxR >= 14,
                             requiredDirectCount: 2,
@@ -7852,7 +7876,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                           },
                           {
                             poolNumber: 3,
-                            titleTh: 'กองที่ 3 : r-16 (3,000 USDT)',
+                            titleTh: `กองที่ 3 : r-16 (${(RANK_PRICES_USDT[15] || 2000).toLocaleString()} USDT)`,
                             requiredSelfRank: 16,
                             hasSelfRank: currentMaxR >= 16,
                             requiredDirectCount: 2,
@@ -7865,7 +7889,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                           },
                           {
                             poolNumber: 4,
-                            titleTh: 'กองที่ 4 : r-18 (5,000 USDT)',
+                            titleTh: `กองที่ 4 : r-18 (${(RANK_PRICES_USDT[17] || 5000).toLocaleString()} USDT)`,
                             requiredSelfRank: 18,
                             hasSelfRank: currentMaxR >= 18,
                             requiredDirectCount: 5,
@@ -9297,9 +9321,9 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                 const fallbackFourPools = [
                   {
                     poolNumber: 1,
-                    titleTh: 'กองที่ 1 : r-11 (500 USDT)',
+                    titleTh: `กองที่ 1 : r-11 (${(RANK_PRICES_USDT[10] || 300).toLocaleString()} USDT)`,
                     targetRank: 11,
-                    targetRankPriceUsdt: 500,
+                    targetRankPriceUsdt: RANK_PRICES_USDT[10] || 300,
                     requiredSelfRank: 11,
                     requiredDirectCount: 5,
                     allowedDirectRanksLabel: 'r-8 หรือ r-9 หรือ r-10 หรือ r-11',
@@ -9312,9 +9336,9 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                   },
                   {
                     poolNumber: 2,
-                    titleTh: 'กองที่ 2 : r-14 (1,000 USDT)',
+                    titleTh: `กองที่ 2 : r-14 (${(RANK_PRICES_USDT[13] || 800).toLocaleString()} USDT)`,
                     targetRank: 14,
-                    targetRankPriceUsdt: 1000,
+                    targetRankPriceUsdt: RANK_PRICES_USDT[13] || 800,
                     requiredSelfRank: 14,
                     requiredDirectCount: 2,
                     allowedDirectRanksLabel: 'r-12 หรือ r-13 หรือ r-14',
@@ -9327,9 +9351,9 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                   },
                   {
                     poolNumber: 3,
-                    titleTh: 'กองที่ 3 : r-16 (3,000 USDT)',
+                    titleTh: `กองที่ 3 : r-16 (${(RANK_PRICES_USDT[15] || 2000).toLocaleString()} USDT)`,
                     targetRank: 16,
-                    targetRankPriceUsdt: 3000,
+                    targetRankPriceUsdt: RANK_PRICES_USDT[15] || 2000,
                     requiredSelfRank: 16,
                     requiredDirectCount: 2,
                     allowedDirectRanksLabel: 'r-14 หรือ r-15 หรือ r-16',
@@ -9342,9 +9366,9 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                   },
                   {
                     poolNumber: 4,
-                    titleTh: 'กองที่ 4 : r-18 (5,000 USDT)',
+                    titleTh: `กองที่ 4 : r-18 (${(RANK_PRICES_USDT[17] || 5000).toLocaleString()} USDT)`,
                     targetRank: 18,
-                    targetRankPriceUsdt: 5000,
+                    targetRankPriceUsdt: RANK_PRICES_USDT[17] || 5000,
                     requiredSelfRank: 18,
                     requiredDirectCount: 5,
                     allowedDirectRanksLabel: 'r-16 หรือ r-17 หรือ r-18',
@@ -10034,7 +10058,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                 : `🟡 แจ้งเตือน Auto ID ใหม่! (Auto ID #18 • R1-#18)`,
               subtitle: sample
                 ? sample.noteTh
-                : `แตกตัวอัตโนมัติจากกระปุก New Auto ID Pool (10 USDT) ของ Main ID #1 → วางต่อสายใต้ #9 (↙ ขาซ้าย)`,
+                : `แตกตัวอัตโนมัติจากกระปุก New Auto ID Pool (${RANK_PRICES_USDT[0] || 5} USDT) ของ Main ID #1 → วางต่อสายใต้ #9 (↙ ขาซ้าย)`,
               sourceMainId: sample ? sample.sourceMainId : 1,
               parentId: sample ? sample.parentId : 9,
               side: sample ? sample.side : 'LEFT',
@@ -10042,7 +10066,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                 sample?.owner ||
                 userAddress ||
                 '0x622E20082e63c7220c5AF0A77Cbc437a98505311',
-              amountUsdt: 10,
+              amountUsdt: RANK_PRICES_USDT[0] || 5,
               timestamp: nowTime,
             });
           } else {
@@ -10157,7 +10181,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                         🟡 สรุป Auto ID (Rank 1)
                       </span>
                       <span className="px-2 py-0.5 rounded bg-amber-400 text-slate-950 font-black text-[10px]">
-                        10 USDT / รหัส
+                        {RANK_PRICES_USDT[0] || 5} USDT / รหัส
                       </span>
                     </div>
                     <div className="flex items-center justify-between">
@@ -10222,10 +10246,10 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                     </div>
                     <div className="text-[11px] text-slate-300 space-y-1 leading-relaxed">
                       <div>
-                        • <strong className="text-amber-300">Auto ID (กรอบทอง)</strong>: แตกอัตโนมัติใน Rank 1 เมื่อกระปุก New Auto ID Pool สะสมครบ <strong>10.00 USDT</strong>
+                        • <strong className="text-amber-300">Auto ID (กรอบทอง)</strong>: แตกอัตโนมัติใน Rank 1 เมื่อกระปุก New Auto ID Pool สะสมครบ <strong>{(RANK_PRICES_USDT[0] || 5).toFixed(2)} USDT</strong>
                       </div>
                       <div>
-                        • <strong className="text-red-300">Extra ID (กรอบแดง)</strong>: รวมยอดเก่าคงเหลือ + ยอดใหม่ในกระปุก New Extra ID Pool ก่อนสร้าง Extra ID เมื่อครบราคาผัง R18→R2 (เริ่ม 20 USDT)
+                        • <strong className="text-red-300">Extra ID (กรอบแดง)</strong>: รวมยอดเก่าคงเหลือ + ยอดใหม่ในกระปุก New Extra ID Pool ก่อนสร้าง Extra ID เมื่อครบราคาผัง R18→R2 (เริ่ม {RANK_PRICES_USDT[1] || 10} USDT)
                       </div>
                     </div>
                   </div>
@@ -10321,7 +10345,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
 
                         {filteredAutoList.length === 0 ? (
                           <div className="text-slate-400 py-5 text-center font-sans">
-                            ยังไม่มีรายการ Auto ID ในหมวดที่เลือก (เมื่อกระปุก New Auto ID Pool ครบ 10.00 USDT ระบบจะออก Auto ID และแจ้งเตือนที่นี่ทันที)
+                            ยังไม่มีรายการ Auto ID ในหมวดที่เลือก (เมื่อกระปุก New Auto ID Pool ครบ {(RANK_PRICES_USDT[0] || 5).toFixed(2)} USDT ระบบจะออก Auto ID และแจ้งเตือนที่นี่ทันที)
                           </div>
                         ) : (
                           <>
@@ -10346,7 +10370,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                                       )}
                                     </div>
                                     <span className="text-emerald-400 font-extrabold text-[11px]">
-                                      หักกระปุก 10.00 USDT
+                                      หักกระปุก {(RANK_PRICES_USDT[0] || 5).toFixed(2)} USDT
                                     </span>
                                   </div>
 

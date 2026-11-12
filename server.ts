@@ -651,8 +651,8 @@ type RewardType =
   | 'DIRECT_ID1_CLONE_FAMILY_POOL';
 
 const RANK_PRICES_USDT: number[] = [
-  10, 20, 30, 40, 50, 60, 80, 100, 200, 300,
-  500, 700, 900, 1000, 2000, 3000, 4000, 5000,
+  5, 10, 20, 30, 40, 50, 60, 80, 100, 200,
+  300, 400, 600, 800, 1000, 2000, 3000, 5000,
 ];
 
 interface UserVaultModel {
@@ -735,6 +735,7 @@ export interface IndexedTreeNode {
   rightChild: number;
   isClone: boolean;
   isExtraId: boolean;
+  isLeft?: boolean;
   isSyntheticExtra?: boolean;
   originMainId: number;
   cloneRound: number;
@@ -1577,13 +1578,46 @@ function reconcileRankTreeLinks(nodes: IndexedTreeNode[]): IndexedTreeNode[] {
       n.cloneRound = 0;
     }
     if (n.id <= 1 || n.parentId <= 0) continue;
-    const parent = byId.get(n.parentId);
+  }
+
+  // Canonical Binary Tree Linker: รวบรวมลูกของแต่ละ Parent และจัดระเบียบ Left / Right ให้ถูกต้องเสมอ
+  // กฎเหล็ก: ลูกลำดับแรก (หรือโคลนรอบ 1) ต้องอยู่ฝั่งซ้าย (leftChild) เสมอ และลูกลำดับสอง (หรือโคลนรอบ 2) อยู่ฝั่งขวา (rightChild)
+  // ป้องกันบั๊กฝั่งซ้าย-ขวากลับด้าน (เช่น ซ้ายเป็นรอบ 2 ขวาเป็นรอบ 1) หรือมีลูกฝั่งขวาขณะที่ฝั่งซ้ายยังว่าง
+  const childrenByParent = new Map<number, IndexedTreeNode[]>();
+  for (const n of nodes) {
+    if (n.id <= 1 || n.parentId <= 0) continue;
+    if (!byId.has(n.parentId)) continue;
+    const list = childrenByParent.get(n.parentId) || [];
+    list.push(n);
+    childrenByParent.set(n.parentId, list);
+  }
+
+  for (const [pId, children] of childrenByParent.entries()) {
+    const parent = byId.get(pId);
     if (!parent) continue;
-    if (parent.leftChild === n.id || parent.rightChild === n.id) continue;
-    if (!parent.leftChild || parent.leftChild <= 0 || !byId.has(parent.leftChild)) {
-      parent.leftChild = n.id;
-    } else if (!parent.rightChild || parent.rightChild <= 0 || !byId.has(parent.rightChild)) {
-      parent.rightChild = n.id;
+    children.sort((a, b) => {
+      if (a.isClone && b.isClone && a.cloneRound && b.cloneRound && a.cloneRound !== b.cloneRound) {
+        return a.cloneRound - b.cloneRound;
+      }
+      return a.id - b.id;
+    });
+
+    const leftNode = children[0];
+    const rightNode = children.length > 1 ? children[1] : undefined;
+
+    parent.leftChild = leftNode ? leftNode.id : 0;
+    parent.rightChild = rightNode ? rightNode.id : 0;
+    if (leftNode) leftNode.isLeft = true;
+    if (rightNode) rightNode.isLeft = false;
+  }
+
+  for (const p of nodes) {
+    if (!childrenByParent.has(p.id)) {
+      if (p.leftChild > 0 && !byId.has(p.leftChild)) p.leftChild = 0;
+      if (p.rightChild > 0 && !byId.has(p.rightChild)) p.rightChild = 0;
+    } else {
+      const cList = childrenByParent.get(p.id)!;
+      if (cList.length < 2) p.rightChild = 0;
     }
   }
 
@@ -1818,7 +1852,8 @@ function reconcileRankTreeLinks(nodes: IndexedTreeNode[]): IndexedTreeNode[] {
           const cParent = placedNodes.find((p) => p.id === cSlot.parentId);
           placedNodes.push(cloneNode);
           if (cParent) {
-            if (cSlot.isLeft) {
+            const placeLeft = !cParent.leftChild || cParent.leftChild <= 0 || cSlot.isLeft;
+            if (placeLeft) {
               cParent.leftChild = cloneNode.id;
             } else {
               cParent.rightChild = cloneNode.id;
@@ -1845,7 +1880,8 @@ function reconcileRankTreeLinks(nodes: IndexedTreeNode[]): IndexedTreeNode[] {
         const targetParent = placedNodes.find((p) => p.id === slot.parentId) || rootNode;
         n.parentId = targetParent.id;
         placedNodes.push(n);
-        if (slot.isLeft) {
+        const placeLeft = !targetParent.leftChild || targetParent.leftChild <= 0 || slot.isLeft;
+        if (placeLeft) {
           targetParent.leftChild = n.id;
         } else {
           targetParent.rightChild = n.id;
@@ -6178,6 +6214,7 @@ async function startApp() {
         // 2. Outflow Events: Auto IDs
         sortedAutoSpawned.forEach((sp, idx) => {
           const spTime = sp.timestamp || new Date(Date.now() - (idx + 1) * 60000).toISOString();
+          const autoIdCost = RANK_PRICES_USDT[0] || 5;
           ledgerEvents.push({
             id: `v-out-auto-${rep.id}-${sp.id}`,
             timestamp: spTime,
@@ -6185,10 +6222,10 @@ async function startApp() {
             actionType: 'SPAWN_AUTO_ID',
             actionLabelTh: 'หักสร้าง Auto ID',
             rank: 1,
-            amountUsdt: 10.0,
+            amountUsdt: autoIdCost,
             poolType: 'AUTO_ID_POOL',
             poolLabelTh: 'Auto ID Pool',
-            descriptionTh: `หัก 10.00 USDT จาก Auto ID Pool สร้าง ${sp.label} วางผัง Rank 1`,
+            descriptionTh: `หัก ${autoIdCost.toFixed(2)} USDT จาก Auto ID Pool สร้าง ${sp.label} วางผัง Rank 1`,
             note: `สร้าง Auto ID สำเร็จ (ID #${sp.id})`,
             poolBalanceAfterUsdt: 0,
             balanceAfterUsdt: 0,
@@ -6299,9 +6336,9 @@ async function startApp() {
         {
           poolNumber: 1,
           key: 'pool1_r11',
-          titleTh: 'กองที่ 1 : r-11 (500 USDT)',
+          titleTh: `กองที่ 1 : r-11 (${(RANK_PRICES_USDT[10] || 300).toLocaleString()} USDT)`,
           targetRank: 11,
-          targetRankPriceUsdt: 500,
+          targetRankPriceUsdt: RANK_PRICES_USDT[10] || 300,
           requiredSelfRank: 11,
           requiredDirectCount: 5,
           allowedDirectRanks: [8, 9, 10, 11],
@@ -6310,9 +6347,9 @@ async function startApp() {
         {
           poolNumber: 2,
           key: 'pool2_r14',
-          titleTh: 'กองที่ 2 : r-14 (1,000 USDT)',
+          titleTh: `กองที่ 2 : r-14 (${(RANK_PRICES_USDT[13] || 800).toLocaleString()} USDT)`,
           targetRank: 14,
-          targetRankPriceUsdt: 1000,
+          targetRankPriceUsdt: RANK_PRICES_USDT[13] || 800,
           requiredSelfRank: 14,
           requiredDirectCount: 2,
           allowedDirectRanks: [12, 13, 14],
@@ -6321,9 +6358,9 @@ async function startApp() {
         {
           poolNumber: 3,
           key: 'pool3_r16',
-          titleTh: 'กองที่ 3 : r-16 (3,000 USDT)',
+          titleTh: `กองที่ 3 : r-16 (${(RANK_PRICES_USDT[15] || 2000).toLocaleString()} USDT)`,
           targetRank: 16,
-          targetRankPriceUsdt: 3000,
+          targetRankPriceUsdt: RANK_PRICES_USDT[15] || 2000,
           requiredSelfRank: 16,
           requiredDirectCount: 2,
           allowedDirectRanks: [14, 15, 16],
@@ -6332,9 +6369,9 @@ async function startApp() {
         {
           poolNumber: 4,
           key: 'pool4_r18',
-          titleTh: 'กองที่ 4 : r-18 (5,000 USDT)',
+          titleTh: `กองที่ 4 : r-18 (${(RANK_PRICES_USDT[17] || 5000).toLocaleString()} USDT)`,
           targetRank: 18,
-          targetRankPriceUsdt: 5000,
+          targetRankPriceUsdt: RANK_PRICES_USDT[17] || 5000,
           requiredSelfRank: 18,
           requiredDirectCount: 5,
           allowedDirectRanks: [16, 17, 18],
@@ -6727,28 +6764,28 @@ async function startApp() {
     const poolDefs = [
       {
         poolNumber: 1,
-        titleTh: 'กองที่ 1 : r-11 (500 USDT)',
+        titleTh: `กองที่ 1 : r-11 (${(RANK_PRICES_USDT[10] || 300).toLocaleString()} USDT)`,
         requiredSelfRank: 11,
         requiredDirectCount: 5,
         allowedDirectRanks: [8, 9, 10, 11],
       },
       {
         poolNumber: 2,
-        titleTh: 'กองที่ 2 : r-14 (1,000 USDT)',
+        titleTh: `กองที่ 2 : r-14 (${(RANK_PRICES_USDT[13] || 800).toLocaleString()} USDT)`,
         requiredSelfRank: 14,
         requiredDirectCount: 2,
         allowedDirectRanks: [12, 13, 14],
       },
       {
         poolNumber: 3,
-        titleTh: 'กองที่ 3 : r-16 (3,000 USDT)',
+        titleTh: `กองที่ 3 : r-16 (${(RANK_PRICES_USDT[15] || 2000).toLocaleString()} USDT)`,
         requiredSelfRank: 16,
         requiredDirectCount: 2,
         allowedDirectRanks: [14, 15, 16],
       },
       {
         poolNumber: 4,
-        titleTh: 'กองที่ 4 : r-18 (5,000 USDT)',
+        titleTh: `กองที่ 4 : r-18 (${(RANK_PRICES_USDT[17] || 5000).toLocaleString()} USDT)`,
         requiredSelfRank: 18,
         requiredDirectCount: 5,
         allowedDirectRanks: [16, 17, 18],
@@ -7610,7 +7647,8 @@ async function startApp() {
           const parentNode = rList.find((n) => n.id === parentIdNum);
           const rightSlotTriggerQueue: IndexedTreeNode[] = [];
           if (parentNode) {
-            if (placement.isLeft) {
+            const placeLeft = !parentNode.leftChild || parentNode.leftChild <= 0 || placement.isLeft;
+            if (placeLeft) {
               // เงื่อนไข Admin อัพ Rank ฟรี: วางฝั่งซ้าย ไม่จ่ายค่าคอม 30%/30%/4%/1% และไม่บวก 35% เข้ากระปุก
               parentNode.leftChild = nextIdInRank;
             } else {
@@ -7654,7 +7692,8 @@ async function startApp() {
             clonesCreated++;
             const cloneParent = rList.find((n) => n.id === clonePlacement.parentId);
             if (cloneParent) {
-              if (clonePlacement.isLeft) {
+              const placeLeft = !cloneParent.leftChild || cloneParent.leftChild <= 0 || clonePlacement.isLeft;
+              if (placeLeft) {
                 cloneParent.leftChild = cloneIdInRank;
               } else {
                 cloneParent.rightChild = cloneIdInRank;

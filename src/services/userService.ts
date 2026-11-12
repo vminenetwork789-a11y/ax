@@ -10,8 +10,8 @@ export type RewardType =
   | 'FAMILY_POOL_OVERFLOW';
 
 export const RANK_PRICES_USDT: number[] = [
-  10, 20, 30, 40, 50, 60, 80, 100, 200, 300,
-  500, 700, 900, 1000, 2000, 3000, 4000, 5000,
+  5, 10, 20, 30, 40, 50, 60, 80, 100, 200,
+  300, 400, 600, 800, 1000, 2000, 3000, 5000,
 ];
 
 export interface UserAccountModel {

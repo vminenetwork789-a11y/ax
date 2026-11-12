@@ -196,8 +196,8 @@ contract FractalFlowMatrix27 is Ownable, ReentrancyGuard {
 
         uint256 unit = 10 ** _usdtDecimals;
         uint16[18] memory prices = [
-            10, 20, 30, 40, 50, 60, 80, 100, 200, 300,
-            500, 700, 900, 1000, 2000, 3000, 4000, 5000
+            5, 10, 20, 30, 40, 50, 60, 80, 100, 200,
+            300, 400, 600, 800, 1000, 2000, 3000, 5000
         ];
 
         for (uint8 i = 0; i < MAX_RANK; i++) {

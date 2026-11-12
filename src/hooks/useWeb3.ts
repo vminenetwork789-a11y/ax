@@ -922,12 +922,13 @@ export function useWeb3() {
         throw new Error(`Sponsor Node ID #${sponsorNodeId} ไม่ถูกต้อง: ${reason}`);
       }
 
-      // 2. Get Rank 1 price (10 USDT)
+      // 2. Get Rank 1 price (5 USDT)
+      const r1UnitPrice = RANK_PRICES_USDT[0] || 5;
       let price: bigint;
       try {
         price = await matrixContract.rankPrice(1);
       } catch {
-        price = ethers.parseUnits('10', usdtDecimals);
+        price = ethers.parseUnits(String(r1UnitPrice), usdtDecimals);
       }
       const totalCost = price * BigInt(countToReg);
 
@@ -1165,18 +1166,19 @@ export function useWeb3() {
         usdtDecimals = 18;
       }
 
+      const r1UnitPrice = RANK_PRICES_USDT[0] || 5;
       let unitPrice: bigint;
       try {
         unitPrice = await matrixContract.rankPrice(1);
       } catch {
-        unitPrice = ethers.parseUnits('10', usdtDecimals);
+        unitPrice = ethers.parseUnits(String(r1UnitPrice), usdtDecimals);
       }
 
       const totalCost = unitPrice * BigInt(count);
 
       setTxState((prev) => ({
         ...prev,
-        step: `ตรวจสอบสิทธิ์ USDT Allowance สำหรับ ${count} โหนด (รวม ${count * 10} USDT)...`,
+        step: `ตรวจสอบสิทธิ์ USDT Allowance สำหรับ ${count} โหนด (รวม ${count * r1UnitPrice} USDT)...`,
       }));
 
       const currentAllowance = await usdtContract.allowance(userAddr, currentContract);

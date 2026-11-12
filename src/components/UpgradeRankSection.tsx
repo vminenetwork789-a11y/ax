@@ -120,7 +120,8 @@ export const UpgradeRankSection: React.FC<UpgradeRankSectionProps> = ({
     return { targetExtraRank: 2, targetExtraPrice: minPrice, isExtraReady: false };
   }, [newExtraIdPool]);
 
-  const isMainReady = (newAutoIdPool || 0) >= 10.0;
+  const r1EntryPrice = RANK_DEFINITIONS.find((d) => d.rank === 1)?.priceUSDT || 5;
+  const isMainReady = (newAutoIdPool || 0) >= r1EntryPrice;
 
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 sm:p-6 shadow-xl relative overflow-hidden space-y-4">
@@ -316,11 +317,11 @@ export const UpgradeRankSection: React.FC<UpgradeRankSectionProps> = ({
             <span className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-semibold ${
               isMainReady ? 'bg-yellow-500/20 text-yellow-300 border border-yellow-400/40' : 'bg-slate-800 text-slate-400'
             }`}>
-              {isMainReady ? '✓ พร้อมออกรหัส' : `ขาด ${(Math.max(0, 10.0 - newAutoIdPool)).toFixed(2)} U`}
+              {isMainReady ? '✓ พร้อมออกรหัส' : `ขาด ${(Math.max(0, r1EntryPrice - newAutoIdPool)).toFixed(2)} U`}
             </span>
           </div>
           <div className="font-mono text-lg font-extrabold text-yellow-300">
-            {newAutoIdPool.toFixed(2)} <span className="text-xs font-normal text-slate-400">/ 10.00 USDT</span>
+            {newAutoIdPool.toFixed(2)} <span className="text-xs font-normal text-slate-400">/ {r1EntryPrice.toFixed(2)} USDT</span>
           </div>
           <div className="text-[10px] text-slate-400 leading-tight">
             {language === 'th'
@@ -574,12 +575,12 @@ export const UpgradeRankSection: React.FC<UpgradeRankSectionProps> = ({
                     title={
                       isMainReady
                         ? `กดเพื่อสร้าง Auto New Main ID สำหรับรหัสหลัก #${selectedMainId} ทันที`
-                        : `ยอดสะสม New Auto ID Pool ปัจจุบัน ${(newAutoIdPool || 0).toFixed(2)}/10.00 USDT (ยังไม่ถึงเกณฑ์ 10.00 USDT)`
+                        : `ยอดสะสม New Auto ID Pool ปัจจุบัน ${(newAutoIdPool || 0).toFixed(2)}/${r1EntryPrice.toFixed(2)} USDT (ยังไม่ถึงเกณฑ์ ${r1EntryPrice.toFixed(2)} USDT)`
                     }
                   >
                     <span className={`w-2 h-2 rounded-full ${isMainReady ? 'bg-amber-400 animate-pulse' : 'bg-slate-500'}`} />
                     <span>
-                      + Auto New Main ID ({(newAutoIdPool || 0).toFixed(2)}/10.00 U)
+                      + Auto New Main ID ({(newAutoIdPool || 0).toFixed(2)}/{r1EntryPrice.toFixed(2)} U)
                     </span>
                   </button>
 
@@ -625,7 +626,7 @@ export const UpgradeRankSection: React.FC<UpgradeRankSectionProps> = ({
                       <strong className="text-amber-400">1. Upgrade Rank Pool:</strong> ยอดสะสม Vault (35%) ของ 5 rank ย้อนหลัง (ของ ID #{selectedMainId} ปัจจุบันคือ R{window5Start} - R{window5End}) ถูกนำมาใช้ปลดล็อกอัปเกรดสู่แรงค์ถัดไปโดยอัตโนมัติ
                     </li>
                     <li>
-                      <strong className="text-yellow-400">2. New Auto ID Pool:</strong> ยอดสะสม Vault (35%) ใน Rank 1 ถึง 3 ลบด้วย 5 rank ย้อนหลังของรหัสหลักนั้น (สะสมครบ 10.00 USDT ปลดล็อกสิทธิ์สร้าง Auto New Main ID ทันที เงินแยก ไม่ใช้เหรียญในกระเป๋า)
+                      <strong className="text-yellow-400">2. New Auto ID Pool:</strong> ยอดสะสม Vault (35%) ใน Rank 1 ถึง 3 ลบด้วย 5 rank ย้อนหลังของรหัสหลักนั้น (สะสมครบ {r1EntryPrice.toFixed(2)} USDT ปลดล็อกสิทธิ์สร้าง Auto New Main ID ทันที เงินแยก ไม่ใช้เหรียญในกระเป๋า)
                     </li>
                     <li>
                       <strong className="text-cyan-400">3. New Extra ID Pool (เงื่อนไขการเกิด Auto Extra ID):</strong>

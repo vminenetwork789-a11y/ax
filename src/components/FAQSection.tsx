@@ -390,17 +390,17 @@ export const FAQSection: React.FC<FAQSectionProps> = ({
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
               <div className="p-3 rounded-xl bg-slate-950/70 border border-cyan-500/30 space-y-1">
-                <span className="font-extrabold text-amber-300 block">กองที่ 1 : r-11 (500 USDT)</span>
+                <span className="font-extrabold text-amber-300 block">กองที่ 1 : r-11 (300 USDT)</span>
                 <div>1. ID หลักนั้น ต้องดำรงอยู่ใน <strong className="text-amber-300">r-11</strong></div>
                 <div>2. มี ID หลักแนะนำตรงอย่างน้อย <strong className="text-emerald-400">5 ID</strong> ดำรงอยู่ใน <strong className="text-cyan-300">r-8, r-9, r-10 หรือ r-11</strong></div>
               </div>
               <div className="p-3 rounded-xl bg-slate-950/70 border border-cyan-500/30 space-y-1">
-                <span className="font-extrabold text-amber-300 block">กองที่ 2 : r-14 (1,000 USDT)</span>
+                <span className="font-extrabold text-amber-300 block">กองที่ 2 : r-14 (800 USDT)</span>
                 <div>1. ID หลักนั้น ต้องดำรงอยู่ใน <strong className="text-amber-300">r-14</strong></div>
                 <div>2. มี ID หลักแนะนำตรงอย่างน้อย <strong className="text-emerald-400">2 ID</strong> ดำรงอยู่ใน <strong className="text-cyan-300">r-12, r-13 หรือ r-14</strong></div>
               </div>
               <div className="p-3 rounded-xl bg-slate-950/70 border border-cyan-500/30 space-y-1">
-                <span className="font-extrabold text-amber-300 block">กองที่ 3 : r-16 (3,000 USDT)</span>
+                <span className="font-extrabold text-amber-300 block">กองที่ 3 : r-16 (2,000 USDT)</span>
                 <div>1. ID หลักนั้น ต้องดำรงอยู่ใน <strong className="text-amber-300">r-16</strong></div>
                 <div>2. มี ID หลักแนะนำตรงอย่างน้อย <strong className="text-emerald-400">2 ID</strong> ดำรงอยู่ใน <strong className="text-cyan-300">r-14, r-15 หรือ r-16</strong></div>
               </div>
@@ -420,17 +420,17 @@ export const FAQSection: React.FC<FAQSectionProps> = ({
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
               <div className="p-3 rounded-xl bg-slate-950/70 border border-cyan-500/30 space-y-1">
-                <span className="font-extrabold text-amber-300 block">Pool 1 : r-11 (500 USDT)</span>
+                <span className="font-extrabold text-amber-300 block">Pool 1 : r-11 (300 USDT)</span>
                 <div>1. Main ID present in <strong className="text-amber-300">Rank 11</strong></div>
                 <div>2. At least <strong className="text-emerald-400">5 direct Main IDs</strong> present in <strong className="text-cyan-300">r-8, r-9, r-10, or r-11</strong></div>
               </div>
               <div className="p-3 rounded-xl bg-slate-950/70 border border-cyan-500/30 space-y-1">
-                <span className="font-extrabold text-amber-300 block">Pool 2 : r-14 (1,000 USDT)</span>
+                <span className="font-extrabold text-amber-300 block">Pool 2 : r-14 (800 USDT)</span>
                 <div>1. Main ID present in <strong className="text-amber-300">Rank 14</strong></div>
                 <div>2. At least <strong className="text-emerald-400">2 direct Main IDs</strong> present in <strong className="text-cyan-300">r-12, r-13, or r-14</strong></div>
               </div>
               <div className="p-3 rounded-xl bg-slate-950/70 border border-cyan-500/30 space-y-1">
-                <span className="font-extrabold text-amber-300 block">Pool 3 : r-16 (3,000 USDT)</span>
+                <span className="font-extrabold text-amber-300 block">Pool 3 : r-16 (2,000 USDT)</span>
                 <div>1. Main ID present in <strong className="text-amber-300">Rank 16</strong></div>
                 <div>2. At least <strong className="text-emerald-400">2 direct Main IDs</strong> present in <strong className="text-cyan-300">r-14, r-15, or r-16</strong></div>
               </div>
