@@ -798,6 +798,8 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
       if (!seenIds.has(rewId)) {
         seenIds.add(rewId);
         const amt = parseFloat(log.amount) || 0;
+        const fromNodeTxt = Number(log.fromNodeId) === 0 ? 'Node #0 (Root / ระบบ)' : (Number(log.fromNodeId) === 2 && Number(log.rank) === 2) ? 'Node #2 (Main ID #7)' : `Node #${log.fromNodeId}`;
+        const toNodeTxt = Number(log.toNodeId) === 0 ? 'Node #0 (Root / ระบบ)' : (Number(log.toNodeId) === 1 && Number(log.rank) === 2) ? 'Node #1 (Main ID #1)' : `Node #${log.toNodeId}`;
         list.push({
           id: rewId,
           category: 'PAYOUT',
@@ -810,8 +812,8 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
           timestamp: (log as any).createdAt || log.timestamp || lastSyncedAt || new Date().toISOString(),
           blockNumber: log.blockNumber,
           txHash: log.txHash,
-          detailsTh: `ได้รับจาก Node #${log.fromNodeId} → Node #${log.toNodeId} (Rank ${log.rank})`,
-          detailsEn: `Received from Node #${log.fromNodeId} → Node #${log.toNodeId} (Rank ${log.rank})`,
+          detailsTh: `ได้รับจาก ${fromNodeTxt} → ${toNodeTxt} (Rank ${log.rank})`,
+          detailsEn: `Received from ${fromNodeTxt} → ${toNodeTxt} (Rank ${log.rank})`,
         });
       }
     });

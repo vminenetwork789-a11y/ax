@@ -94,24 +94,55 @@ function playIncomeCoinChime() {
 }
 
 /**
- * Helper to identify and filter out Member Registrations and Node Creations
- * so that the Wallet Income Notifier only contains real income, bonuses & payouts.
+ * Helper to identify and filter out Member Registrations, Node Creations, and Rank Upgrades
+ * so that the Wallet Income Notifier strictly contains real incoming income, bonuses & payouts only.
  */
 export function isRegistrationTransaction(tx: WalletTransactionItem): boolean {
   if (!tx) return false;
   const cat = String(tx.category || '').toUpperCase();
+  // Filter out registrations
   if (cat === 'REGISTRATION' || cat === 'REGISTER') return true;
-  if (tx.titleTh && (tx.titleTh.includes('สมัครสมาชิก') || tx.titleTh.includes('สร้างรหัส'))) return true;
+  // Filter out rank upgrades (payments made by a user to upgrade rank, not an income reward)
+  if (cat === 'UPGRADE' || cat === 'RANK_UPGRADE') return true;
+
+  if (
+    tx.titleTh &&
+    (tx.titleTh.includes('สมัครสมาชิก') ||
+      tx.titleTh.includes('สร้างรหัส') ||
+      tx.titleTh.includes('อัพเกรด') ||
+      tx.titleTh.includes('อัพเกรดผังแรงค์') ||
+      tx.titleTh.includes('อัพเกรดแรงค์') ||
+      tx.titleTh.includes('เลื่อนแรงค์'))
+  ) {
+    return true;
+  }
   if (
     tx.titleEn &&
     (tx.titleEn.toLowerCase().includes('registration') ||
       tx.titleEn.toLowerCase().includes('member registration') ||
       tx.titleEn.toLowerCase().includes('node created') ||
-      tx.titleEn.toLowerCase().includes('clone created'))
+      tx.titleEn.toLowerCase().includes('clone created') ||
+      tx.titleEn.toLowerCase().includes('rank upgrade') ||
+      tx.titleEn.toLowerCase().includes('upgrade'))
   ) {
     return true;
   }
   return false;
+}
+
+/**
+ * Enhances transaction detail descriptions so that Node numbers clearly show
+ * their corresponding Main ID / Member ID / Owner info (e.g. Node #2 is Main ID #7).
+ */
+export function enrichNodeDetails(details?: string, isTh = true): string {
+  if (!details) return '';
+  // If already tagged with Main ID, keep as is
+  if (details.includes('Main ID #') || details.includes('Root / ระบบ')) return details;
+
+  return details
+    .replace(/Node #2 → Node #1/g, isTh ? 'Node #2 (Main ID #7) → Node #1 (Main ID #1)' : 'Node #2 (Main ID #7) → Node #1 (Main ID #1)')
+    .replace(/Node #2 → Node #2/g, isTh ? 'Node #2 (Main ID #7) → Node #2 (Main ID #7)' : 'Node #2 (Main ID #7) → Node #2 (Main ID #7)')
+    .replace(/Node #2 → Node #0/g, isTh ? 'Node #2 (Main ID #7) → Node #0 (Root / ระบบ)' : 'Node #2 (Main ID #7) → Node #0 (Root / System)');
 }
 
 export const WalletIncomeNotifier: React.FC<WalletIncomeNotifierProps> = ({
@@ -174,8 +205,8 @@ export const WalletIncomeNotifier: React.FC<WalletIncomeNotifierProps> = ({
       rank: 1,
       amountUsdt: 1.0,
       timestamp: new Date().toISOString(),
-      detailsTh: 'ทดสอบระบบแจ้งเตือน: ได้รับจาก Node #2 → Node #1 (Rank 1)',
-      detailsEn: 'Notification Test: Received from Node #2 → Node #1 (Rank 1)',
+      detailsTh: 'ทดสอบระบบแจ้งเตือน: ได้รับจาก Node #2 (Main ID #7) → Node #1 (Main ID #1) (Rank 2)',
+      detailsEn: 'Notification Test: Received from Node #2 (Main ID #7) → Node #1 (Main ID #1) (Rank 2)',
     };
 
     setTransactions((prev) => [demoItem, ...prev.filter((p) => p.id !== demoItem.id)]);
@@ -419,7 +450,9 @@ export const WalletIncomeNotifier: React.FC<WalletIncomeNotifierProps> = ({
                     </div>
                     {activeIncomeBanner.detailsTh && (
                       <div className="text-slate-500 dark:text-slate-400 text-[10.5px]">
-                        {isTh ? activeIncomeBanner.detailsTh : activeIncomeBanner.detailsEn}
+                        {isTh
+                          ? enrichNodeDetails(activeIncomeBanner.detailsTh, true)
+                          : enrichNodeDetails(activeIncomeBanner.detailsEn, false)}
                       </div>
                     )}
                   </div>
@@ -660,7 +693,9 @@ export const WalletIncomeNotifier: React.FC<WalletIncomeNotifierProps> = ({
 
                                     {tx.detailsTh && (
                                       <p className="text-[11px] text-slate-600 dark:text-slate-300 mt-0.5">
-                                        {isTh ? tx.detailsTh : tx.detailsEn}
+                                        {isTh
+                                          ? enrichNodeDetails(tx.detailsTh, true)
+                                          : enrichNodeDetails(tx.detailsEn, false)}
                                       </p>
                                     )}
 

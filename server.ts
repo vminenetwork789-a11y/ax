@@ -20,6 +20,63 @@ export function setWssServer(wss: WebSocketServer) {
   wssServer = wss;
 }
 
+export function formatNodeIdentityLabel(rankNum: number, nodeId: number): { th: string; en: string } {
+  const nId = Number(nodeId);
+  const rNum = Number(rankNum) || 1;
+  if (nId === 0) {
+    return {
+      th: 'Node #0 (Root / ระบบ)',
+      en: 'Node #0 (Root System)',
+    };
+  }
+
+  // 1. Look up in rankNum
+  const rankNodes = matrixDB?.nodesByRank?.[rNum] || [];
+  let node = rankNodes.find((n) => Number(n.id) === nId);
+
+  // 2. If not found in rankNum, look in Rank 1 or other ranks
+  if (!node && rNum !== 1) {
+    node = (matrixDB?.nodesByRank?.[1] || []).find((n) => Number(n.id) === nId);
+  }
+
+  if (!node && matrixDB?.nodesByRank) {
+    for (let r = 1; r <= 18; r++) {
+      const list = matrixDB.nodesByRank[r] || [];
+      const cand = list.find((n) => Number(n.id) === nId);
+      if (cand) {
+        node = cand;
+        break;
+      }
+    }
+  }
+
+  if (!node) {
+    return {
+      th: `Node #${nId}`,
+      en: `Node #${nId}`,
+    };
+  }
+
+  const originMainId = node.originMainId || node.id;
+  if (node.isClone) {
+    return {
+      th: `Node #${nId} (Clone #${nId} ของ Main ID #${originMainId})`,
+      en: `Node #${nId} (Clone #${nId} of Main ID #${originMainId})`,
+    };
+  }
+  if (node.isExtraId) {
+    return {
+      th: `Node #${nId} (Extra ID #${nId})`,
+      en: `Node #${nId} (Extra ID #${nId})`,
+    };
+  }
+
+  return {
+    th: `Node #${nId} (Main ID #${originMainId})`,
+    en: `Node #${nId} (Main ID #${originMainId})`,
+  };
+}
+
 export function getAggregatedTransactions(addressFilter?: string) {
   const transactions: any[] = [];
   const lowerAddr = addressFilter ? addressFilter.toLowerCase() : null;
@@ -110,8 +167,8 @@ export function getAggregatedTransactions(addressFilter?: string) {
         amountUsdt: amt,
         timestamp: rTime,
         blockNumber: r.blockNumber,
-        detailsTh: `ได้รับจาก Node #${r.fromNodeId} → Node #${r.toNodeId} (Rank ${r.rank})`,
-        detailsEn: `Received from Node #${r.fromNodeId} → Node #${r.toNodeId} (Rank ${r.rank})`,
+        detailsTh: `ได้รับจาก ${formatNodeIdentityLabel(Number(r.rank || 1), Number(r.fromNodeId)).th} → ${formatNodeIdentityLabel(Number(r.rank || 1), Number(r.toNodeId)).th} (Rank ${r.rank})`,
+        detailsEn: `Received from ${formatNodeIdentityLabel(Number(r.rank || 1), Number(r.fromNodeId)).en} → ${formatNodeIdentityLabel(Number(r.rank || 1), Number(r.toNodeId)).en} (Rank ${r.rank})`,
       });
     });
 
@@ -8939,8 +8996,8 @@ async function startApp() {
           amountUsdt: amt,
           timestamp: rTime,
           blockNumber: r.blockNumber,
-          detailsTh: `ได้รับจาก Node #${r.fromNodeId} → Node #${r.toNodeId} (Rank ${r.rank})`,
-          detailsEn: `Received from Node #${r.fromNodeId} → Node #${r.toNodeId} (Rank ${r.rank})`,
+          detailsTh: `ได้รับจาก ${formatNodeIdentityLabel(Number(r.rank || 1), Number(r.fromNodeId)).th} → ${formatNodeIdentityLabel(Number(r.rank || 1), Number(r.toNodeId)).th} (Rank ${r.rank})`,
+          detailsEn: `Received from ${formatNodeIdentityLabel(Number(r.rank || 1), Number(r.fromNodeId)).en} → ${formatNodeIdentityLabel(Number(r.rank || 1), Number(r.toNodeId)).en} (Rank ${r.rank})`,
         });
       });
 
