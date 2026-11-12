@@ -94,40 +94,48 @@ function playIncomeCoinChime() {
 }
 
 /**
- * Helper to identify and filter out Member Registrations, Node Creations, and Rank Upgrades
- * so that the Wallet Income Notifier strictly contains real incoming income, bonuses & payouts only.
+ * Strictly validates that a transaction is a genuine incoming income/reward/payout.
+ * Excludes any rank upgrade (payment made to upgrade) and member registration.
  */
-export function isRegistrationTransaction(tx: WalletTransactionItem): boolean {
+export function isIncomePayoutTransaction(tx: WalletTransactionItem): boolean {
   if (!tx) return false;
   const cat = String(tx.category || '').toUpperCase();
-  // Filter out registrations
-  if (cat === 'REGISTRATION' || cat === 'REGISTER') return true;
-  // Filter out rank upgrades (payments made by a user to upgrade rank, not an income reward)
-  if (cat === 'UPGRADE' || cat === 'RANK_UPGRADE') return true;
+  // Forbid any upgrade or registration
+  if (cat.includes('UPGRADE') || cat.includes('REGIST') || cat.includes('REGISTER')) return false;
 
+  const titleTh = String(tx.titleTh || '');
+  const titleEn = String(tx.titleEn || '');
+
+  // Forbid any upgrade text or registration text
   if (
-    tx.titleTh &&
-    (tx.titleTh.includes('สมัครสมาชิก') ||
-      tx.titleTh.includes('สร้างรหัส') ||
-      tx.titleTh.includes('อัพเกรด') ||
-      tx.titleTh.includes('อัพเกรดผังแรงค์') ||
-      tx.titleTh.includes('อัพเกรดแรงค์') ||
-      tx.titleTh.includes('เลื่อนแรงค์'))
+    titleTh.includes('อัพเกรด') ||
+    titleTh.includes('เลื่อนแรงค์') ||
+    titleTh.includes('สมัครสมาชิก') ||
+    titleTh.includes('สร้างรหัส') ||
+    titleEn.toLowerCase().includes('upgrade') ||
+    titleEn.toLowerCase().includes('registration') ||
+    titleEn.toLowerCase().includes('registered') ||
+    titleEn.toLowerCase().includes('node created') ||
+    titleEn.toLowerCase().includes('clone created')
   ) {
-    return true;
+    return false;
   }
-  if (
-    tx.titleEn &&
-    (tx.titleEn.toLowerCase().includes('registration') ||
-      tx.titleEn.toLowerCase().includes('member registration') ||
-      tx.titleEn.toLowerCase().includes('node created') ||
-      tx.titleEn.toLowerCase().includes('clone created') ||
-      tx.titleEn.toLowerCase().includes('rank upgrade') ||
-      tx.titleEn.toLowerCase().includes('upgrade'))
-  ) {
-    return true;
-  }
-  return false;
+
+  // Must be PAYOUT or reward/bonus
+  return (
+    cat === 'PAYOUT' ||
+    cat === 'REWARD' ||
+    cat === 'BONUS' ||
+    titleTh.includes('รับโบนัส') ||
+    titleTh.includes('ค่าคอมมิชชั่น') ||
+    titleEn.toLowerCase().includes('payout') ||
+    titleEn.toLowerCase().includes('reward') ||
+    titleEn.toLowerCase().includes('bonus')
+  );
+}
+
+export function isRegistrationTransaction(tx: WalletTransactionItem): boolean {
+  return !isIncomePayoutTransaction(tx);
 }
 
 /**
@@ -225,7 +233,7 @@ export const WalletIncomeNotifier: React.FC<WalletIncomeNotifierProps> = ({
   // Sync transactions from server
   const fetchTransactions = useCallback(async () => {
     try {
-      const res = await fetch('/api/transactions?limit=60', {
+      const res = await fetch('/api/transactions?category=payout&limit=100', {
         headers: { Accept: 'application/json' },
       });
       if (!res.ok) return;
@@ -233,8 +241,8 @@ export const WalletIncomeNotifier: React.FC<WalletIncomeNotifierProps> = ({
       if (!json?.success || !Array.isArray(json.data)) return;
 
       const rawTxs: WalletTransactionItem[] = json.data;
-      // Exclude registration items completely so this notification center strictly tracks income & payouts
-      const serverTxs: WalletTransactionItem[] = rawTxs.filter((tx) => !isRegistrationTransaction(tx));
+      // Strictly include ONLY valid payout/reward transactions (zero registrations, zero upgrades)
+      const serverTxs: WalletTransactionItem[] = rawTxs.filter(isIncomePayoutTransaction);
 
       // Check for brand new incoming transactions to the user's wallet
       if (initialLoadDoneRef.current) {
@@ -274,7 +282,7 @@ export const WalletIncomeNotifier: React.FC<WalletIncomeNotifierProps> = ({
             combined.unshift(p);
           }
         }
-        return combined.filter((tx) => !isRegistrationTransaction(tx));
+        return combined.filter(isIncomePayoutTransaction);
       });
     } catch (e) {
       console.warn('[WalletIncomeNotifier fetch error]:', e);
@@ -316,7 +324,7 @@ export const WalletIncomeNotifier: React.FC<WalletIncomeNotifierProps> = ({
   const userAddrNormalized = account?.toLowerCase();
 
   const myIncomeTransactions = useMemo(() => {
-    const pureIncomeList = transactions.filter((t) => !isRegistrationTransaction(t));
+    const pureIncomeList = transactions.filter(isIncomePayoutTransaction);
     if (!userAddrNormalized) return pureIncomeList.filter((t) => t.category === 'PAYOUT' || (t.amountUsdt !== undefined && t.amountUsdt > 0));
     return pureIncomeList.filter(
       (t) =>
@@ -327,7 +335,7 @@ export const WalletIncomeNotifier: React.FC<WalletIncomeNotifierProps> = ({
   }, [transactions, userAddrNormalized]);
 
   const displayedTransactions = useMemo(() => {
-    const pureIncomeList = transactions.filter((t) => !isRegistrationTransaction(t));
+    const pureIncomeList = transactions.filter(isIncomePayoutTransaction);
     if (filterMode === 'my') {
       return myIncomeTransactions;
     }
@@ -586,7 +594,7 @@ export const WalletIncomeNotifier: React.FC<WalletIncomeNotifierProps> = ({
                           >
                             <span>🌐 {isTh ? 'โบนัสทั้งหมด' : 'All Rewards'}</span>
                             <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-blue-100 dark:bg-indigo-950 font-mono">
-                              {transactions.filter((t) => !isRegistrationTransaction(t)).length}
+                              {transactions.filter(isIncomePayoutTransaction).length}
                             </span>
                           </button>
                         </div>
