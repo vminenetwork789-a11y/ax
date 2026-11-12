@@ -2010,6 +2010,8 @@ export function useWeb3() {
           targetUser: resolvedAddress || (isAddr ? raw : undefined),
           mainId: resolvedMainId > 0 ? resolvedMainId : isId ? parseInt(raw, 10) : undefined,
           targetRank: parsedTargetRank,
+          onChainConfirmed: Boolean(txHash),
+          txHash: txHash || undefined,
         }),
       });
       const data = await res.json();

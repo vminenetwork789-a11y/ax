@@ -2478,7 +2478,31 @@ function reconcileAutoExtraIdsAcrossRanks(): Array<{
   for (let r = 1; r <= 18; r++) {
     const rList = matrixDB.nodesByRank[r];
     if (!Array.isArray(rList) || rList.length === 0) continue;
-    const realNodes = rList.filter((n) => !n.isSyntheticExtra);
+    const onChainMainOrigins = new Set(
+      rList
+        .filter((n) => !n.isSyntheticExtra && !n.isLocalUpgrade && !n.isClone && !n.isExtraId)
+        .map((n) => n.originMainId || n.id)
+    );
+    const hasUnmergedLocalMains = rList.some(
+      (n) =>
+        !n.isSyntheticExtra &&
+        n.isLocalUpgrade &&
+        !n.isClone &&
+        !n.isExtraId &&
+        !onChainMainOrigins.has(n.originMainId || n.id)
+    );
+    const realNodes = rList.filter((n) => {
+      if (n.isSyntheticExtra) return false;
+      if (n.isLocalUpgrade) {
+        if (!n.isClone && !n.isExtraId && onChainMainOrigins.has(n.originMainId || n.id)) {
+          return false;
+        }
+        if (n.isClone && !hasUnmergedLocalMains) {
+          return false;
+        }
+      }
+      return true;
+    });
     const realIds = new Set(realNodes.map((n) => n.id));
     for (const n of realNodes) {
       if (n.leftChild > 0 && !realIds.has(n.leftChild)) n.leftChild = 0;
@@ -2491,6 +2515,75 @@ function reconcileAutoExtraIdsAcrossRanks(): Array<{
     }
     matrixDB.nodesByRank[r] = reconcileRankTreeLinks(realNodes);
     matrixDB.rankCounts[r] = Math.max(1, matrixDB.nodesByRank[r].length);
+  }
+
+  // 1b. Auto-detect on-chain Admin Free Rank Upgrades (adminUpgradeRankForMainId / adminUpgradeRank) from Rank 18 down to Rank 2:
+  // On the smart contract, _payCommission is false for Admin Free Upgrades, so left-child placements (or clones triggered by right-child Admin Free Upgrades)
+  // add 0 to the parent Main ID's nodeUpgradeVault.
+  const r1AllNodes = matrixDB.nodesByRank[1] || [];
+  const r1Root = r1AllNodes.find((n) => n.id === 1);
+  const r1RootRawV = Number(r1Root?.rawNodeVault ?? r1Root?.nodeVault ?? 0);
+  for (let r = 18; r >= 2; r--) {
+    const rList = matrixDB.nodesByRank[r] || [];
+    if (rList.length <= 1) continue;
+    const byIdR = new Map<number, IndexedTreeNode>();
+    for (const n of rList) byIdR.set(n.id, n);
+
+    for (const mNode of rList) {
+      if (mNode.isClone || mNode.isExtraId) continue;
+      const mR1Id = mNode.id === 1 ? 1 : mNode.originMainId || mNode.id;
+      const rawV = Number(mNode.rawNodeVault ?? mNode.nodeVault ?? 0);
+      if (rawV > 1e-6) continue;
+
+      let vaultWasNeverSpentInRankR = false;
+      if (mR1Id === 1) {
+        if (r <= 3) {
+          // _deductVaultRange deducts from r=1 first, then r=2, then r=3
+          const r2Root = (matrixDB.nodesByRank[2] || []).find((n) => n.id === 1);
+          const r2RootRawV = Number(r2Root?.rawNodeVault ?? r2Root?.nodeVault ?? 0);
+          if (r === 2 && r1RootRawV > 1e-6) vaultWasNeverSpentInRankR = true;
+          if (r === 3 && (r1RootRawV > 1e-6 || r2RootRawV > 1e-6)) vaultWasNeverSpentInRankR = true;
+        } else {
+          const hasExtraSpawned = Object.values(matrixDB.nodesByRank).some((list) =>
+            (list || []).some((x) => x.isExtraId && !x.isClone)
+          );
+          if (!hasExtraSpawned) vaultWasNeverSpentInRankR = true;
+        }
+      } else {
+        const nextRList = matrixDB.nodesByRank[r + 1] || [];
+        const nodeInNextR = nextRList.find(
+          (x) => !x.isClone && !x.isExtraId && x.originMainId === mR1Id
+        );
+        if (!nodeInNextR || nodeInNextR.isAdminFreeUpgrade) {
+          vaultWasNeverSpentInRankR = true;
+        }
+      }
+
+      if (vaultWasNeverSpentInRankR) {
+        for (const sn of rList) {
+          const snOrig = sn.originMainId || sn.id;
+          const isSameMain =
+            sn.id === mNode.id ||
+            (sn.isClone && !sn.isExtraId && (snOrig === mNode.id || snOrig === mR1Id));
+          if (isSameMain && sn.leftChild > 0) {
+            const lcNode = byIdR.get(sn.leftChild);
+            if (lcNode) {
+              lcNode.isAdminFreeUpgrade = true;
+              // If lcNode is a clone, the right-child node immediately preceding lcNode that triggered it was also an Admin Free Upgrade
+              if (lcNode.isClone) {
+                const triggerNode = byIdR.get(lcNode.id - 1);
+                if (triggerNode && !triggerNode.isClone && triggerNode.parentId > 0) {
+                  const trigParent = byIdR.get(triggerNode.parentId);
+                  if (trigParent && trigParent.rightChild === triggerNode.id) {
+                    triggerNode.isAdminFreeUpgrade = true;
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
   }
 
   // 2. Reconcile real on-chain Rank 1 Auto Main IDs first
@@ -2582,7 +2675,7 @@ function reconcileAutoExtraIdsAcrossRanks(): Array<{
         totalScaledRawR1To3 = Number((totalScaledRawR1To3 + scaledV).toFixed(4));
       }
       const expectedRemR1To3 = Math.max(0, Number((totalGrossR1To3 - totalAutoDeduct).toFixed(4)));
-      if (Math.abs(totalScaledRawR1To3 - expectedRemR1To3) <= 0.05) {
+      if (Math.abs(totalScaledRawR1To3 - expectedRemR1To3) <= 0.05 || totalScaledRawR1To3 <= expectedRemR1To3) {
         for (let r = 1; r <= 3; r++) {
           const cNode = correspByRank.get(r);
           if (!cNode) continue;
@@ -4656,7 +4749,21 @@ async function startApp() {
             );
           }
           for (const loc of localUpgradedNodes) {
-            mergedMap.set(loc.id, { ...loc });
+            if (loc.isClone) continue;
+            const chainMatch = Array.from(mergedMap.values()).find(
+              (n) =>
+                !n.isLocalUpgrade &&
+                !n.isClone &&
+                !n.isExtraId &&
+                n.originMainId === loc.originMainId
+            );
+            if (chainMatch) {
+              if (loc.isAdminFreeUpgrade) chainMatch.isAdminFreeUpgrade = true;
+              continue;
+            }
+            if (loc.isLocalUpgrade) {
+              mergedMap.set(loc.id, { ...loc });
+            }
           }
           const fastList = reconcileRankTreeLinks(Array.from(mergedMap.values()));
           matrixDB.nodesByRank[rankNum] = fastList;
@@ -4712,19 +4819,27 @@ async function startApp() {
           }
         }
 
-        // Re-attach any local/admin database-upgraded nodes (both Main IDs and their triggered Clones)
+        // Re-attach any un-synced local database-upgraded Main IDs (never re-attach stale local clones on top of on-chain clones)
         for (const loc of localUpgradedNodes) {
-          const alreadyOnChain =
-            !loc.isClone &&
-            Array.from(mergedMap.values()).some(
-              (n) =>
-                !n.isLocalUpgrade &&
-                !n.isAdminFreeUpgrade &&
-                !n.isClone &&
-                !n.isExtraId &&
-                n.originMainId === loc.originMainId
-            );
-          if (alreadyOnChain) continue;
+          if (loc.isClone) continue;
+          const matchingChainNode = Array.from(mergedMap.values()).find(
+            (n) =>
+              !n.isLocalUpgrade &&
+              !n.isClone &&
+              !n.isExtraId &&
+              n.originMainId === loc.originMainId
+          );
+          if (matchingChainNode) {
+            if (loc.isAdminFreeUpgrade) {
+              matchingChainNode.isAdminFreeUpgrade = true;
+              const trigClone = mergedMap.get(matchingChainNode.id + 1);
+              if (trigClone && trigClone.isClone) {
+                trigClone.isAdminFreeUpgrade = true;
+              }
+            }
+            continue;
+          }
+          if (!loc.isLocalUpgrade) continue;
 
           const locCopy = { ...loc };
           if (mergedMap.has(locCopy.id)) {
@@ -7685,9 +7800,18 @@ async function startApp() {
       }
 
       const parsedRank = Math.min(18, Math.max(2, Number(targetRank) || 2));
-      if (!matrixDB.nodesByRank[1] || matrixDB.nodesByRank[1].length <= 1) {
-        await syncRankIntoDatabase(1, CONTRACT_ADDRESS, false).catch(() => {});
+      const onChainConfirmed = Boolean(req.body?.onChainConfirmed);
+      const clientTxHash = String(req.body?.txHash || '').trim();
+
+      if (!matrixDB.nodesByRank[1] || matrixDB.nodesByRank[1].length <= 1 || onChainConfirmed) {
+        await syncRankIntoDatabase(1, CONTRACT_ADDRESS, onChainConfirmed).catch(() => {});
       }
+      // Always sync target ranks 2..parsedRank from the smart contract first when onChainConfirmed is true
+      // (or when ranks haven't been synced yet) so we never create duplicate local nodes/clones on top of on-chain nodes!
+      for (let r = 2; r <= parsedRank; r++) {
+        await syncRankIntoDatabase(r, CONTRACT_ADDRESS, true).catch(() => {});
+      }
+
       const r1Nodes = matrixDB.nodesByRank[1] || [];
       let userR1Node: IndexedTreeNode | undefined;
       let normalizedUser = '';
@@ -7732,6 +7856,65 @@ async function startApp() {
       const mainIdNum = userR1Node.id;
       const sponsorAddr = userR1Node.directSponsor || matrixDB.systemWallets.rootOwner;
       const r1SponsorMainId = userR1Node.directSponsorNodeId > 0 ? userR1Node.directSponsorNodeId : 1;
+
+      // If the upgrade was just confirmed on-chain via adminUpgradeRankForMainId / adminUpgradeRank,
+      // mark the synced on-chain node(s) and their triggered clone(s) as isAdminFreeUpgrade = true and return without creating duplicate local nodes!
+      if (onChainConfirmed) {
+        const onChainUpgradedRanks: number[] = [];
+        const onChainCreatedNodes: any[] = [];
+        let onChainClonesCount = 0;
+
+        for (let r = 2; r <= parsedRank; r++) {
+          const rList = (matrixDB.nodesByRank[r] || []).filter(
+            (n) => !n.isSyntheticExtra && !n.isLocalUpgrade
+          );
+          const chainNode = rList.find(
+            (n) => !n.isClone && !n.isExtraId && n.originMainId === mainIdNum
+          );
+          if (chainNode) {
+            chainNode.isAdminFreeUpgrade = true;
+            const pNode = rList.find((n) => n.id === chainNode.parentId);
+            const isLeft = pNode ? pNode.leftChild === chainNode.id : true;
+            if (pNode && pNode.rightChild === chainNode.id) {
+              const trigClone = rList.find((n) => n.id === chainNode.id + 1 && n.isClone);
+              if (trigClone) {
+                trigClone.isAdminFreeUpgrade = true;
+                onChainClonesCount++;
+              }
+            }
+            onChainUpgradedRanks.push(r);
+            onChainCreatedNodes.push({
+              rank: r,
+              nodeId: chainNode.id,
+              parentId: chainNode.parentId,
+              side: isLeft ? 'LEFT' : 'RIGHT',
+            });
+          }
+          matrixDB.nodesByRank[r] = reconcileRankTreeLinks(rList);
+          matrixDB.rankCounts[r] = matrixDB.nodesByRank[r].length;
+        }
+
+        reconcileAutoExtraIdsAcrossRanks();
+        rebuildDatabaseRewardLogsFromNodes();
+        rebuildDatabaseUpgradeLogsFromNodes();
+        matrixDB.lastSyncedAt = new Date().toISOString();
+        saveMatrixDBToDisk(true);
+        broadcastAllMatrixUpdates();
+
+        return res.json({
+          success: true,
+          source: 'ONCHAIN_ADMIN_UPGRADE',
+          txHash: clientTxHash || undefined,
+          mainId: mainIdNum,
+          targetUser: normalizedUser,
+          fromRank: Math.max(1, parsedRank - 1),
+          targetRank: parsedRank,
+          upgradedRanks: onChainUpgradedRanks,
+          createdNodes: onChainCreatedNodes,
+          clonesCreated: onChainClonesCount,
+          message: `✅ Admin Upgrade สำเร็จ! อัพ Rank รหัส #${mainIdNum} ให้ฟรีสู่ Rank ${parsedRank} บนบล็อกเชนเรียบร้อยแล้ว (ไม่จ่ายค่าคอมเมื่อวางซ้าย และระบบโคลนนิ่งทำงานปกติเมื่อวางขวา)`,
+        });
+      }
 
       // Determine current rank specifically for THIS Main ID (`mainIdNum`), not across the whole wallet
       let currentRank = mainIdNum === 1 ? 18 : 1;
