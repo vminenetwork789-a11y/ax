@@ -93,6 +93,27 @@ function playIncomeCoinChime() {
   }
 }
 
+/**
+ * Helper to identify and filter out Member Registrations and Node Creations
+ * so that the Wallet Income Notifier only contains real income, bonuses & payouts.
+ */
+export function isRegistrationTransaction(tx: WalletTransactionItem): boolean {
+  if (!tx) return false;
+  const cat = String(tx.category || '').toUpperCase();
+  if (cat === 'REGISTRATION' || cat === 'REGISTER') return true;
+  if (tx.titleTh && (tx.titleTh.includes('สมัครสมาชิก') || tx.titleTh.includes('สร้างรหัส'))) return true;
+  if (
+    tx.titleEn &&
+    (tx.titleEn.toLowerCase().includes('registration') ||
+      tx.titleEn.toLowerCase().includes('member registration') ||
+      tx.titleEn.toLowerCase().includes('node created') ||
+      tx.titleEn.toLowerCase().includes('clone created'))
+  ) {
+    return true;
+  }
+  return false;
+}
+
 export const WalletIncomeNotifier: React.FC<WalletIncomeNotifierProps> = ({
   account,
   language = 'th',
@@ -180,7 +201,9 @@ export const WalletIncomeNotifier: React.FC<WalletIncomeNotifierProps> = ({
       const json = await res.json();
       if (!json?.success || !Array.isArray(json.data)) return;
 
-      const serverTxs: WalletTransactionItem[] = json.data;
+      const rawTxs: WalletTransactionItem[] = json.data;
+      // Exclude registration items completely so this notification center strictly tracks income & payouts
+      const serverTxs: WalletTransactionItem[] = rawTxs.filter((tx) => !isRegistrationTransaction(tx));
 
       // Check for brand new incoming transactions to the user's wallet
       if (initialLoadDoneRef.current) {
@@ -220,7 +243,7 @@ export const WalletIncomeNotifier: React.FC<WalletIncomeNotifierProps> = ({
             combined.unshift(p);
           }
         }
-        return combined;
+        return combined.filter((tx) => !isRegistrationTransaction(tx));
       });
     } catch (e) {
       console.warn('[WalletIncomeNotifier fetch error]:', e);
@@ -258,31 +281,33 @@ export const WalletIncomeNotifier: React.FC<WalletIncomeNotifierProps> = ({
     }
   };
 
-  // Filter transactions
+  // Filter transactions (strictly income / payouts only, zero registration records)
   const userAddrNormalized = account?.toLowerCase();
 
   const myIncomeTransactions = useMemo(() => {
-    if (!userAddrNormalized) return transactions.filter((t) => t.category === 'PAYOUT');
-    return transactions.filter(
+    const pureIncomeList = transactions.filter((t) => !isRegistrationTransaction(t));
+    if (!userAddrNormalized) return pureIncomeList.filter((t) => t.category === 'PAYOUT' || (t.amountUsdt !== undefined && t.amountUsdt > 0));
+    return pureIncomeList.filter(
       (t) =>
         t.userAddress &&
         t.userAddress.toLowerCase() === userAddrNormalized &&
-        (t.category === 'PAYOUT' || (t.amountUsdt && t.amountUsdt > 0))
+        (t.category === 'PAYOUT' || (t.amountUsdt !== undefined && t.amountUsdt > 0))
     );
   }, [transactions, userAddrNormalized]);
 
   const displayedTransactions = useMemo(() => {
+    const pureIncomeList = transactions.filter((t) => !isRegistrationTransaction(t));
     if (filterMode === 'my') {
       return myIncomeTransactions;
     }
-    return transactions;
+    return pureIncomeList;
   }, [filterMode, myIncomeTransactions, transactions]);
 
   // Count unread for the current user
   const unreadCount = useMemo(() => {
-    const list = myIncomeTransactions.length > 0 ? myIncomeTransactions : transactions;
+    const list = myIncomeTransactions.length > 0 ? myIncomeTransactions : displayedTransactions;
     return list.filter((t) => !readTxIds.has(t.id)).length;
-  }, [myIncomeTransactions, transactions, readTxIds]);
+  }, [myIncomeTransactions, displayedTransactions, readTxIds]);
 
   // Total income received by current wallet
   const totalMyIncomeUsdt = useMemo(() => {
@@ -526,9 +551,9 @@ export const WalletIncomeNotifier: React.FC<WalletIncomeNotifierProps> = ({
                                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
                             }`}
                           >
-                            <span>🌐 {isTh ? 'ทั้งหมด' : 'All Activity'}</span>
+                            <span>🌐 {isTh ? 'โบนัสทั้งหมด' : 'All Rewards'}</span>
                             <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-blue-100 dark:bg-indigo-950 font-mono">
-                              {transactions.length}
+                              {transactions.filter((t) => !isRegistrationTransaction(t)).length}
                             </span>
                           </button>
                         </div>
@@ -704,6 +729,67 @@ export const WalletIncomeNotifier: React.FC<WalletIncomeNotifierProps> = ({
                 </div>
               )}
             </AnimatePresence>
+
+            {/* 4. Floating Action Button (FAB) at Bottom-Right Corner - Always Follows Screen */}
+            <div className="fixed bottom-5 right-5 sm:bottom-6 sm:right-6 z-[9990] pointer-events-auto">
+              <motion.button
+                type="button"
+                whileHover={{ scale: 1.08 }}
+                whileTap={{ scale: 0.94 }}
+                onClick={() => {
+                  setIsOpen((prev) => !prev);
+                  if (!isOpen && unreadCount > 0) {
+                    handleMarkAllRead();
+                  }
+                }}
+                className={`group relative flex items-center justify-center rounded-full p-3.5 sm:p-4 transition-all duration-300 cursor-pointer backdrop-blur-md ${
+                  unreadCount > 0
+                    ? 'bg-white dark:bg-[#0b1020] border-2 border-emerald-400 dark:border-emerald-500 shadow-[0_10px_30px_rgba(16,185,129,0.45)] hover:shadow-[0_12px_36px_rgba(16,185,129,0.6)] text-emerald-600 dark:text-emerald-400'
+                    : 'bg-white/95 dark:bg-[#0f172a]/95 border-2 border-slate-200/90 dark:border-slate-700/80 shadow-[0_10px_25px_rgba(0,0,0,0.15)] hover:shadow-[0_12px_30px_rgba(16,185,129,0.25)] hover:border-emerald-400/80 text-slate-700 dark:text-slate-200'
+                }`}
+                aria-label={isTh ? 'ศูนย์แจ้งเตือนเงินเข้ากระเป๋า' : 'Wallet Income Alerts'}
+                title={isTh ? 'กระดิ่งแจ้งเตือนเงินเข้า (คลิกเพื่อเปิดศูนย์แจ้งเตือน)' : 'Wallet Income Alerts (Click to open)'}
+              >
+                {/* Outer pulsing radar ring when unread notifications exist */}
+                {unreadCount > 0 && (
+                  <span className="absolute -inset-1 rounded-full bg-emerald-400/35 dark:bg-emerald-500/40 animate-ping pointer-events-none" />
+                )}
+
+                {/* Bell Icon with animation */}
+                <div className="relative">
+                  <Bell
+                    className={`w-6 h-6 sm:w-6 sm:h-6 transition-transform duration-200 ${
+                      unreadCount > 0 ? 'animate-bounce text-[#15803D] dark:text-emerald-400' : 'group-hover:rotate-12'
+                    }`}
+                  />
+                  {/* Glow point behind bell */}
+                  {unreadCount > 0 && (
+                    <span className="absolute inset-0 bg-emerald-400/20 blur-xs rounded-full pointer-events-none" />
+                  )}
+                </div>
+
+                {/* Unread Badge Counter */}
+                {unreadCount > 0 ? (
+                  <span className="absolute -top-1 -right-1 min-w-[22px] h-[22px] px-1 rounded-full bg-emerald-600 text-white font-mono font-black text-[11px] flex items-center justify-center border-2 border-white dark:border-slate-900 shadow-md animate-pulse">
+                    {unreadCount > 99 ? '99+' : unreadCount}
+                  </span>
+                ) : (
+                  /* Subtle live green indicator dot when 0 unread */
+                  <span className="absolute top-0 right-0 w-3 h-3 rounded-full bg-emerald-500 border-2 border-white dark:border-slate-900" />
+                )}
+
+                {/* Floating text label on hover (desktop tooltip / pill) */}
+                <span className="absolute right-full mr-3 px-2.5 py-1 rounded-xl bg-slate-900/90 dark:bg-slate-800/95 text-white text-[11px] font-bold whitespace-nowrap shadow-xl opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-200 flex items-center gap-1.5 border border-slate-700/60">
+                  <Coins className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>{isTh ? 'แจ้งเตือนเงินเข้า' : 'Income Alerts'}</span>
+                  {unreadCount > 0 && (
+                    <span className="px-1 py-0.2 rounded bg-emerald-500 text-[10px] font-mono font-black">
+                      +{unreadCount}
+                    </span>
+                  )}
+                </span>
+              </motion.button>
+            </div>
           </>,
           document.body
         )}
