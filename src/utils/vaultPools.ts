@@ -121,7 +121,7 @@ export function calculateMainIdVaultPools(
     window5Start <= 1
       ? 'ทุก Rank 1-3 อยู่ใน 5 rank ย้อนหลัง (ยังไม่มียอดที่หลุดกรอบ)'
       : window5Start >= 4
-      ? 'Rank 1-3 ทั้งหมดหลุดจาก 5 rank ย้อนหลังแล้ว (สะสมเต็มจำนวนสำหรับออก Auto ID 10 USDT)'
+      ? 'Rank 1-3 ทั้งหมดหลุดจาก 5 rank ย้อนหลังแล้ว (สะสมเต็มจำนวนสำหรับออก Auto ID 5 USDT)'
       : `Rank 1 ถึง Rank ${window5Start - 1} ที่หลุดจาก 5 rank ย้อนหลัง`;
 
   const extraIdPoolDescriptionTh =

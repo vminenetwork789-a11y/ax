@@ -825,7 +825,7 @@ export function useWeb3() {
     return null;
   };
 
-  // 1. Single/Multi Register with Automatic Placement Finder & FIFO Queue Lock (10 USDT - Rank 1)
+  // 1. Single/Multi Register with Automatic Placement Finder & FIFO Queue Lock (5 USDT - Rank 1)
   const handleRegister = async (
     sponsorNodeId: number,
     autoOptions?: {
@@ -924,12 +924,7 @@ export function useWeb3() {
 
       // 2. Get Rank 1 price (5 USDT)
       const r1UnitPrice = RANK_PRICES_USDT[0] || 5;
-      let price: bigint;
-      try {
-        price = await matrixContract.rankPrice(1);
-      } catch {
-        price = ethers.parseUnits(String(r1UnitPrice), usdtDecimals);
-      }
+      const price: bigint = ethers.parseUnits(String(r1UnitPrice), usdtDecimals);
       const totalCost = price * BigInt(countToReg);
 
       // 3. Verify USDT Balance
@@ -996,7 +991,7 @@ export function useWeb3() {
 
       setTxState((prev) => ({
         ...prev,
-        step: `กำลังตรวจสอบการอนุมัติเหรียญ (USDT Allowance ${countToReg * 10} USDT)...`,
+        step: `กำลังตรวจสอบการอนุมัติเหรียญ (USDT Allowance ${countToReg * r1UnitPrice} USDT)...`,
       }));
 
       let currentAllowance: bigint = BigInt(0);
@@ -1051,7 +1046,7 @@ export function useWeb3() {
         step:
           autoParentId > 0
             ? `ขั้นตอนที่ 2/2: ส่งลงตำแหน่ง (ต่อติดตัวผู้แนะนำตรง/โคลนนิ่ง) Parent #${autoParentId} (${sideLabel})... กรุณายืนยันใน MetaMask`
-            : `ขั้นตอนที่ 2/2: ส่งคำสั่งสมัครใต้ผู้แนะนำ #${sponsorNodeId} ค่าสมัคร ${countToReg * 10} USDT... กรุณายืนยันใน MetaMask`,
+            : `ขั้นตอนที่ 2/2: ส่งคำสั่งสมัครใต้ผู้แนะนำ #${sponsorNodeId} ค่าสมัคร ${countToReg * r1UnitPrice} USDT... กรุณายืนยันใน MetaMask`,
       }));
 
       let regTx;
@@ -1092,7 +1087,7 @@ export function useWeb3() {
         successMessage:
           autoParentId > 0
             ? `🎉 สมัครสมาชิกสำเร็จ! ลงตำแหน่งออโต้ที่ Parent #${autoParentId} (${sideLabel}) ภายใต้ผู้แนะนำ #${sponsorNodeId} (จองผ่าน FIFO Queue)`
-            : `🎉 สมัครสมาชิก FractalFlowMatrix27 (Rank 1 - ${countToReg * 10} USDT) สำเร็จเรียบร้อย! (Sponsor Node ID: #${sponsorNodeId})`,
+            : `🎉 สมัครสมาชิก Fractal Flow (Rank 1 - ${countToReg * r1UnitPrice} USDT) สำเร็จเรียบร้อย! (Sponsor Node ID: #${sponsorNodeId})`,
       });
 
       await fetch('/api/db/sync', { method: 'POST' }).catch(() => {});
@@ -1167,12 +1162,7 @@ export function useWeb3() {
       }
 
       const r1UnitPrice = RANK_PRICES_USDT[0] || 5;
-      let unitPrice: bigint;
-      try {
-        unitPrice = await matrixContract.rankPrice(1);
-      } catch {
-        unitPrice = ethers.parseUnits(String(r1UnitPrice), usdtDecimals);
-      }
+      const unitPrice: bigint = ethers.parseUnits(String(r1UnitPrice), usdtDecimals);
 
       const totalCost = unitPrice * BigInt(count);
 
@@ -1361,27 +1351,11 @@ export function useWeb3() {
             return;
           }
 
-          let targetPrice: bigint;
-          try {
-            targetPrice = await matrixContract.rankPrice(targetRank);
-          } catch {
-            targetPrice = ethers.parseUnits(nominalPrice.toString(), usdtDecimals);
-          }
-
-          let savedInVault: bigint = BigInt(0);
-          try {
-            if (mIdNum > 0 && typeof matrixContract.getAccumulatedVaultForMainId === 'function') {
-              try {
-                savedInVault = await matrixContract.getAccumulatedVaultForMainId(BigInt(mIdNum));
-              } catch {
-                savedInVault = ethers.parseUnits(dbUpgradeRankPool.toFixed(2), usdtDecimals);
-              }
-            } else {
-              savedInVault = await matrixContract.getAccumulatedVault(userAddr, Number(targetRank));
-            }
-          } catch {
-            savedInVault = ethers.parseUnits(dbUpgradeRankPool.toFixed(2), usdtDecimals);
-          }
+          const targetPrice: bigint = ethers.parseUnits(nominalPrice.toString(), usdtDecimals);
+          const savedInVault: bigint = ethers.parseUnits(
+            Math.max(0, dbUpgradeRankPool).toFixed(2),
+            usdtDecimals
+          );
 
           const amountToPay = targetPrice > savedInVault ? targetPrice - savedInVault : BigInt(0);
           const formattedDiffUsdt = Number(ethers.formatUnits(amountToPay, usdtDecimals)).toFixed(2);

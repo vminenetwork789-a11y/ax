@@ -5,6 +5,7 @@ import {
   USDT_ADDRESS,
   BSC_TESTNET_RPC,
   BSC_TESTNET_PARAMS,
+  RANK_PRICES_USDT,
 } from '../contracts/config';
 
 export type PlacementMode = 'auto_under_sponsor' | 'global_bfs' | 'contract_round';
@@ -1106,12 +1107,7 @@ export async function executeOffChainSimulationAndBatch(
     const count = applicantsQueue.length;
     if (count === 0) throw new Error('จำนวนโหนดที่สมัครต้องมากกว่า 0');
 
-    let rankPrice: bigint;
-    try {
-      rankPrice = await contract.rankPrice(1);
-    } catch {
-      rankPrice = ethers.parseUnits('5', 18);
-    }
+    const rankPrice: bigint = ethers.parseUnits(String(RANK_PRICES_USDT[0] || 5), 18);
 
     let usdtAddress: string = USDT_ADDRESS;
     try {
