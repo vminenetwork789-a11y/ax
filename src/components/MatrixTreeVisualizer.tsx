@@ -55,6 +55,9 @@ import {
   ArrowDownLeft,
   ArrowDownRight,
   Info,
+  Bot,
+  Zap,
+  Crown,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { emitTransactionToast } from './TransactionToast';
@@ -656,6 +659,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
   const [collapsedNodeIds, setCollapsedNodeIds] = useState<Set<number>>(new Set());
   const hasUserInteractedCollapseRef = useRef<boolean>(false);
   const [selectedTreeNodeId, setSelectedTreeNodeId] = useState<number | null>(null);
+  const [highlightedStatusFilter, setHighlightedStatusFilter] = useState<'all' | 'main' | 'auto' | 'extra' | 'clone'>('all');
   const [isDraggingTree, setIsDraggingTree] = useState<boolean>(false);
 
   // Real-Time Auto Sync State (Default: 15 seconds for smooth, stable automatic tree extension)
@@ -5137,6 +5141,83 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
     return counts;
   }, [activeNodesMap]);
 
+  const statusCountsInRank = useMemo(() => {
+    let main = 0;
+    let auto = 0;
+    let extra = 0;
+    let clone = 0;
+    for (const node of activeNodesMap.values()) {
+      if (node.isClone) clone++;
+      else if (node.isExtraId) extra++;
+      else if (node.isAutoMainId) auto++;
+      else main++;
+    }
+    return {
+      total: activeNodesMap.size,
+      main,
+      auto,
+      extra,
+      clone,
+    };
+  }, [activeNodesMap]);
+
+  const getNodeStatusMeta = (node: EnrichedBinaryNode) => {
+    if (node.isClone) {
+      return {
+        key: 'clone' as const,
+        tagText: `CLONE ID • รอบ ${node.cloneRound || 1}`,
+        compactTagText: `โคลน R${node.cloneRound || 1}`,
+        thaiLabel: 'โคลนนิ่ง (Cloning ID)',
+        floatingBadgeClass:
+          'bg-[#15803D] text-white border-emerald-400 dark:bg-gradient-to-r dark:from-emerald-400 dark:to-teal-300 dark:text-slate-950 dark:border-emerald-200',
+        inlineBadgeClass:
+          'bg-[#DCFCE7] text-[#15803D] border-emerald-300 dark:bg-emerald-500/20 dark:text-emerald-300 dark:border-emerald-400/50',
+        dotClass: 'bg-emerald-500',
+        Icon: Dna,
+      };
+    }
+    if (node.isExtraId) {
+      return {
+        key: 'extra' as const,
+        tagText: 'EXTRA ID',
+        compactTagText: 'EXTRA',
+        thaiLabel: 'Extra ID (รหัสเสริม)',
+        floatingBadgeClass:
+          'bg-rose-600 text-white border-rose-400 dark:bg-gradient-to-r dark:from-red-500 dark:to-rose-500 dark:text-white dark:border-rose-300',
+        inlineBadgeClass:
+          'bg-[#FEE2E2] text-[#BE123C] border-rose-300 dark:bg-rose-500/25 dark:text-rose-200 dark:border-rose-400/50',
+        dotClass: 'bg-rose-500',
+        Icon: Zap,
+      };
+    }
+    if (node.isAutoMainId) {
+      return {
+        key: 'auto' as const,
+        tagText: 'AUTO ID',
+        compactTagText: 'AUTO',
+        thaiLabel: 'Auto ID (รหัสอัตโนมัติ)',
+        floatingBadgeClass:
+          'bg-amber-500 text-slate-950 border-amber-300 dark:bg-gradient-to-r dark:from-amber-400 dark:via-yellow-300 dark:to-amber-400 dark:text-slate-950 dark:border-amber-200',
+        inlineBadgeClass:
+          'bg-[#FEF3C7] text-[#B45309] border-amber-300 dark:bg-amber-500/20 dark:text-amber-300 dark:border-amber-400/50',
+        dotClass: 'bg-amber-400',
+        Icon: Bot,
+      };
+    }
+    return {
+      key: 'main' as const,
+      tagText: 'MAIN ID',
+      compactTagText: 'MAIN',
+      thaiLabel: 'Main ID (รหัสหลัก)',
+      floatingBadgeClass:
+        'bg-[#2563EB] text-white border-blue-400 dark:bg-sky-400 dark:text-slate-950 dark:border-sky-200',
+      inlineBadgeClass:
+        'bg-[#EFF6FF] text-[#1D4ED8] border-blue-300 dark:bg-sky-500/20 dark:text-sky-300 dark:border-sky-400/45',
+      dotClass: 'bg-blue-500',
+      Icon: Crown,
+    };
+  };
+
   const buildCollapsedAtDepth = useCallback(
     (expandedDepth: number) => {
       const toCollapse = new Set<number>();
@@ -5398,6 +5479,11 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
       ? '🟡'
       : '⚪';
 
+    const statusMeta = getNodeStatusMeta(node);
+    const StatusIcon = statusMeta.Icon;
+    const isDimmedByStatusFilter =
+      highlightedStatusFilter !== 'all' && highlightedStatusFilter !== statusMeta.key;
+
     const isNodeSelected = selectedTreeNodeId === node.id;
     const isNodeCollapsed = collapsedNodeIds.has(node.id);
     const hasAnyChildNode = node.leftChild > 0 || node.rightChild > 0;
@@ -5426,6 +5512,12 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             isNodeSelected
               ? 'ring-4 ring-blue-500/75 dark:ring-cyan-400/85 scale-[1.02]'
               : 'hover:ring-2 hover:ring-blue-400/50 dark:hover:ring-cyan-400/40'
+          } ${
+            isDimmedByStatusFilter
+              ? 'opacity-30 grayscale-[35%] scale-[0.98]'
+              : highlightedStatusFilter !== 'all'
+              ? 'ring-2 ring-offset-1 ring-offset-slate-950/30'
+              : ''
           } p-1.5 sm:p-2 text-left transition-all duration-200 select-none cursor-pointer`}
         >
           {/* Top-Left Floating Badges: ✨ มาใหม่ & ล่าสุด (สีตามประเภท ID) */}
@@ -5448,31 +5540,13 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             )}
           </div>
 
-          {/* Top-Right Floating Tinted Pill Badge */}
-          {node.isClone ? (
-            <div className="absolute -top-2 right-1.5 px-1.5 py-0.2 rounded-full bg-[#DCFCE7] text-[#15803D] border border-emerald-300 dark:bg-gradient-to-r dark:from-emerald-500 dark:to-teal-400 text-[8.5px] font-black dark:text-slate-950 shadow-2xs flex items-center gap-0.5 dark:border-emerald-200/70">
-              <Dna className="w-2.5 h-2.5 text-[#15803D] dark:text-slate-950" />
-              <span>CLONE ID • รอบ {node.cloneRound || 1}</span>
-            </div>
-          ) : (
-            <div
-              className={`absolute -top-2 right-1.5 px-1.5 py-0.2 rounded-full text-[8.5px] font-black shadow-2xs flex items-center gap-0.5 ${
-                node.isExtraId
-                  ? 'bg-[#FEE2E2] text-[#BE123C] border border-rose-300 dark:bg-gradient-to-r dark:from-red-600 dark:via-rose-500 dark:to-red-500 dark:text-white dark:border-red-200/80'
-                  : node.isAutoMainId
-                  ? 'bg-[#FEF3C7] text-[#B45309] border border-amber-300 dark:bg-gradient-to-r dark:from-amber-400 dark:via-yellow-400 dark:to-amber-500 dark:text-slate-950 dark:border-amber-200'
-                  : 'bg-[#EFF6FF] text-[#1D4ED8] border border-blue-200 dark:bg-white dark:text-slate-950 dark:border-white'
-              }`}
-            >
-              <span>
-                {node.isExtraId
-                  ? 'EXTRA ID'
-                  : node.isAutoMainId
-                  ? 'AUTO ID'
-                  : 'MAIN ID'}
-              </span>
-            </div>
-          )}
+          {/* Top-Right Floating Status Badge (Main ID / Auto ID / Extra ID / Cloning ID) */}
+          <div
+            className={`absolute -top-2.5 right-1.5 px-1.5 py-0.2 rounded-full border text-[8.5px] font-black shadow-sm flex items-center gap-1 z-20 ${statusMeta.floatingBadgeClass}`}
+          >
+            <StatusIcon className="w-2.5 h-2.5 shrink-0" />
+            <span>{statusMeta.tagText}</span>
+          </div>
 
           {/* 1. Header Section (Fixed Uniform Height) */}
           {node.isClone ? (
@@ -5497,11 +5571,14 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                     (โคลน #{node.id})
                   </span>
                 </button>
-                <div className="flex items-center gap-1">
-                  <span className="px-1 py-0.2 rounded bg-[#DCFCE7] dark:bg-emerald-500/20 border border-emerald-300 dark:border-emerald-400/50 text-[#15803D] dark:text-emerald-300 font-mono font-extrabold text-[8px] leading-none">
-                    รอบ {node.cloneRound || 1}
+                <div className="flex items-center gap-1 min-w-0">
+                  <span
+                    className={`px-1 py-0.2 rounded border font-mono font-black text-[8px] leading-none inline-flex items-center gap-0.5 shrink-0 ${statusMeta.inlineBadgeClass}`}
+                  >
+                    <StatusIcon className="w-2 h-2 shrink-0" />
+                    <span>{statusMeta.compactTagText}</span>
                   </span>
-                  <span className="px-1 py-0.2 rounded bg-[#FEF3C7] dark:bg-amber-500/15 border border-amber-300 dark:border-amber-500/40 text-[#B45309] dark:text-amber-400 font-mono font-bold text-[8.5px] leading-none">
+                  <span className="px-1 py-0.2 rounded bg-[#FEF3C7] dark:bg-amber-500/15 border border-amber-300 dark:border-amber-500/40 text-[#B45309] dark:text-amber-400 font-mono font-bold text-[8px] leading-none shrink-0">
                     R{node.rank}
                   </span>
                 </div>
@@ -5555,8 +5632,14 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                     </>
                   )}
                 </button>
-                <div className="flex items-center gap-1">
-                  <span className="px-1 py-0.2 rounded bg-[#FEF3C7] dark:bg-amber-500/15 border border-amber-300 dark:border-amber-500/40 text-[#B45309] dark:text-amber-400 font-mono font-bold text-[8.5px] leading-none">
+                <div className="flex items-center gap-1 min-w-0">
+                  <span
+                    className={`px-1 py-0.2 rounded border font-mono font-black text-[8px] leading-none inline-flex items-center gap-0.5 shrink-0 ${statusMeta.inlineBadgeClass}`}
+                  >
+                    <StatusIcon className="w-2 h-2 shrink-0" />
+                    <span>{statusMeta.compactTagText}</span>
+                  </span>
+                  <span className="px-1 py-0.2 rounded bg-[#FEF3C7] dark:bg-amber-500/15 border border-amber-300 dark:border-amber-500/40 text-[#B45309] dark:text-amber-400 font-mono font-bold text-[8px] leading-none shrink-0">
                     R{node.isExtraId ? node.rank : node.targetMainIdCurrentRank || node.rank}
                   </span>
                 </div>
@@ -6453,28 +6536,59 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             </div>
           </div>
 
-          {/* Compact Legend Dropdown Toggle */}
-          <div className="relative shrink-0">
+          {/* Compact Status Tag Filter & Legend Dropdown Toggle */}
+          <div className="relative shrink-0 flex items-center gap-1.5">
+            {highlightedStatusFilter !== 'all' && (
+              <button
+                type="button"
+                onClick={() => setHighlightedStatusFilter('all')}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-xl bg-blue-600 text-white text-[10.5px] font-bold shadow-xs cursor-pointer hover:bg-blue-700 transition"
+                title="ล้างตัวกรองไฮไลท์สถานะโหนด"
+              >
+                <span>
+                  เน้น:{' '}
+                  {highlightedStatusFilter === 'main'
+                    ? 'MAIN ID'
+                    : highlightedStatusFilter === 'auto'
+                    ? 'AUTO ID'
+                    : highlightedStatusFilter === 'extra'
+                    ? 'EXTRA ID'
+                    : 'CLONE ID'}
+                </span>
+                <X className="w-3 h-3" />
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setIsLegendOpen((prev) => !prev)}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-[#F8FAFC] hover:bg-slate-100 dark:bg-slate-900 dark:hover:bg-slate-800 border border-slate-200/80 dark:border-slate-800 text-[11px] font-bold text-[#334155] dark:text-slate-300 transition cursor-pointer shadow-2xs"
-              title="คลิกเพื่อดูคำอธิบายสีกรอบสถานะโหนด"
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl border text-[11px] font-bold transition cursor-pointer shadow-2xs ${
+                highlightedStatusFilter !== 'all'
+                  ? 'bg-[#EFF6FF] border-blue-300 text-[#1D4ED8] dark:bg-indigo-950/70 dark:border-indigo-400/60 dark:text-indigo-200'
+                  : 'bg-[#F8FAFC] hover:bg-slate-100 dark:bg-slate-900 dark:hover:bg-slate-800 border-slate-200/80 dark:border-slate-800 text-[#334155] dark:text-slate-300'
+              }`}
+              title="คลิกเพื่อดูคำอธิบายสีกรอบและแท็กสถานะโหนด (คลิกเลือกไฮไลท์ได้)"
             >
               <span className="flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />
                 <span className="w-2 h-2 rounded-full bg-blue-500 inline-block" />
                 <span className="w-2 h-2 rounded-full bg-amber-400 inline-block" />
                 <span className="w-2 h-2 rounded-full bg-rose-500 inline-block" />
+                <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />
               </span>
-              <span>สีกรอบ</span>
+              <span>สถานะ / สีกรอบ</span>
               <ChevronDown className={`w-3 h-3 text-[#64748B] transition-transform duration-200 ${isLegendOpen ? 'rotate-180' : ''}`} />
             </button>
 
             {isLegendOpen && (
-              <div className="absolute right-0 top-full mt-1.5 z-40 w-72 p-2.5 bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-xl shadow-xl flex flex-col gap-1.5 text-[11px] animate-in fade-in zoom-in-95">
-                <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-1.5 mb-0.5">
-                  <span className="font-bold text-[#0F172A] dark:text-white">คำอธิบายสีกรอบสถานะ</span>
+              <div className="absolute right-0 top-full mt-1.5 z-40 w-80 p-3 bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-700 rounded-xl shadow-xl flex flex-col gap-2 text-[11px] animate-in fade-in zoom-in-95">
+                <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-1.5">
+                  <div>
+                    <span className="font-bold text-[#0F172A] dark:text-white block">
+                      ป้ายสถานะโหนด (Node Status Tags)
+                    </span>
+                    <span className="text-[10px] text-slate-500 dark:text-slate-400">
+                      คลิกเพื่อไฮไลท์เฉพาะสถานะในผัง R{selectedRank}
+                    </span>
+                  </div>
                   <button
                     type="button"
                     onClick={() => setIsLegendOpen(false)}
@@ -6483,18 +6597,77 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                     <X className="w-3.5 h-3.5" />
                   </button>
                 </div>
-                <div className="flex items-center gap-2 p-1.5 rounded-lg bg-[#DCFCE7] border border-emerald-300 text-[#15803D] dark:bg-emerald-950/70 dark:border-emerald-500/40 dark:text-emerald-300 font-bold">
-                  <span>🟢 โคลนนิ่ง = กรอบสีเขียว</span>
-                </div>
-                <div className="flex items-center gap-2 p-1.5 rounded-lg bg-[#EFF6FF] border border-blue-200 text-[#1D4ED8] dark:bg-slate-900 dark:border-white/60 dark:text-white font-bold">
-                  <span>⚪ Main ID = กรอบสีขาว/น้ำเงิน</span>
-                </div>
-                <div className="flex items-center gap-2 p-1.5 rounded-lg bg-[#FEF3C7] border border-amber-300 text-[#B45309] dark:bg-amber-950/70 dark:border-amber-500/40 dark:text-amber-300 font-bold">
-                  <span>🟡 Auto ID = กรอบสีทอง</span>
-                </div>
-                <div className="flex items-center gap-2 p-1.5 rounded-lg bg-[#FEE2E2] border border-rose-300 text-[#BE123C] dark:bg-red-950/70 dark:border-red-500/40 dark:text-red-300 font-bold">
-                  <span>🔴 Extra ID = กรอบสีแดง</span>
-                </div>
+
+                {[
+                  {
+                    key: 'main' as const,
+                    badge: 'MAIN ID',
+                    label: 'รหัสหลัก (Main ID)',
+                    count: statusCountsInRank.main,
+                    Icon: Crown,
+                    badgeClass: 'bg-[#2563EB] text-white dark:bg-sky-400 dark:text-slate-950',
+                    rowClass:
+                      'bg-[#EFF6FF] border-blue-200 text-[#1D4ED8] dark:bg-slate-800/80 dark:border-sky-400/40 dark:text-sky-200',
+                  },
+                  {
+                    key: 'auto' as const,
+                    badge: 'AUTO ID',
+                    label: 'รหัสอัตโนมัติ (Auto ID)',
+                    count: statusCountsInRank.auto,
+                    Icon: Bot,
+                    badgeClass: 'bg-amber-500 text-slate-950 dark:bg-amber-400 dark:text-slate-950',
+                    rowClass:
+                      'bg-[#FEF3C7] border-amber-300 text-[#B45309] dark:bg-amber-950/60 dark:border-amber-500/40 dark:text-amber-300',
+                  },
+                  {
+                    key: 'extra' as const,
+                    badge: 'EXTRA ID',
+                    label: 'รหัสเสริม (Extra ID)',
+                    count: statusCountsInRank.extra,
+                    Icon: Zap,
+                    badgeClass: 'bg-rose-600 text-white dark:bg-rose-500 dark:text-white',
+                    rowClass:
+                      'bg-[#FEE2E2] border-rose-300 text-[#BE123C] dark:bg-rose-950/60 dark:border-rose-500/40 dark:text-rose-300',
+                  },
+                  {
+                    key: 'clone' as const,
+                    badge: 'CLONE ID',
+                    label: 'รหัสโคลนนิ่ง (Cloning ID)',
+                    count: statusCountsInRank.clone,
+                    Icon: Dna,
+                    badgeClass: 'bg-[#15803D] text-white dark:bg-emerald-400 dark:text-slate-950',
+                    rowClass:
+                      'bg-[#DCFCE7] border-emerald-300 text-[#15803D] dark:bg-emerald-950/60 dark:border-emerald-500/40 dark:text-emerald-300',
+                  },
+                ].map((item) => {
+                  const ItemIcon = item.Icon;
+                  const isActive = highlightedStatusFilter === item.key;
+                  return (
+                    <button
+                      key={`legend-status-${item.key}`}
+                      type="button"
+                      onClick={() =>
+                        setHighlightedStatusFilter((prev) => (prev === item.key ? 'all' : item.key))
+                      }
+                      className={`w-full flex items-center justify-between gap-2 p-1.5 rounded-lg border font-bold transition cursor-pointer ${item.rowClass} ${
+                        isActive ? 'ring-2 ring-blue-500 dark:ring-cyan-400 shadow-sm' : 'hover:opacity-90'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span
+                          className={`px-1.5 py-0.5 rounded-full text-[9px] font-black inline-flex items-center gap-1 shrink-0 ${item.badgeClass}`}
+                        >
+                          <ItemIcon className="w-2.5 h-2.5 shrink-0" />
+                          <span>{item.badge}</span>
+                        </span>
+                        <span className="truncate">{item.label}</span>
+                      </div>
+                      <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-black/10 dark:bg-black/30 shrink-0">
+                        {item.count}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -6812,6 +6985,8 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         {/* Selected Member Quick-Inspect & Left (L) / Right (R) Downline Action Bar */}
         {selectedTreeNodeId !== null && activeNodesMap.has(selectedTreeNodeId) && (() => {
           const selNode = activeNodesMap.get(selectedTreeNodeId)!;
+          const selStatusMeta = getNodeStatusMeta(selNode);
+          const SelStatusIcon = selStatusMeta.Icon;
           const selDesc = descendantCountsMap.get(selNode.id);
           const selHasChildren = selNode.leftChild > 0 || selNode.rightChild > 0;
           const selCollapsed = collapsedNodeIds.has(selNode.id);
@@ -6833,6 +7008,12 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <span className="font-mono font-extrabold text-sm text-[#0F172A] dark:text-white">
                       {selLabel}
+                    </span>
+                    <span
+                      className={`px-2 py-0.5 rounded-full border font-mono font-black text-[10px] inline-flex items-center gap-1 ${selStatusMeta.floatingBadgeClass}`}
+                    >
+                      <SelStatusIcon className="w-3 h-3 shrink-0" />
+                      <span>{selStatusMeta.tagText}</span>
                     </span>
                     <span className="px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300 font-mono font-bold text-[10px]">
                       R{selNode.rank} • ชั้น {Math.min(MAX_TREE_DEPTH, selNode.level)}/{MAX_TREE_DEPTH}

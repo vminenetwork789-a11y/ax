@@ -36,7 +36,7 @@ interface FAQItem {
 
 export const FAQSection: React.FC<FAQSectionProps> = ({
   language,
-  contractAddress = '0x1700326ce4d4507A5DD88EB50156758581B6F4cB',
+  contractAddress = '0xaA38a606402DF541ee4Df81Ae0C8BcDAcDD12fe6',
   usdtAddress = '0x05f24E1F598DF1aE8d0B424ce978f8ea33bB752b',
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
