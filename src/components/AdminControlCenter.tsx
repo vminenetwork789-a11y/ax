@@ -341,7 +341,21 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
             details: `Function: ${actionName}`,
           }),
         }).catch(() => {});
-        await fetch('/api/db/sync', { method: 'POST' }).catch(() => {});
+        if (actionName === 'adminUpgradeRankForMainId' || actionName === 'adminUpgradeRank') {
+          await fetch('/api/admin/upgrade-rank', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              targetUser: params.targetUser,
+              mainId: params.mainId,
+              targetRank: params.targetRank,
+              onChainConfirmed: true,
+              txHash: hash,
+            }),
+          }).catch(() => {});
+        } else {
+          await fetch('/api/db/sync', { method: 'POST' }).catch(() => {});
+        }
         await fetchAdminOverview();
         onRefreshOnChainData();
         setActionStatus({

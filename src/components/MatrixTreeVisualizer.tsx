@@ -81,6 +81,7 @@ export interface EnrichedBinaryNode {
   isClone: boolean;
   isExtraId: boolean;
   isAutoMainId: boolean;
+  isAdminFreeUpgrade?: boolean;
   // Clone & Lineage Metadata
   originMainId: number; // รหัสหลัก (Primary Main ID of this owner/lineage, e.g. #1, #2, #7)
   spawnedFromNodeId: number; // Exact node whose Right child triggered this clone
@@ -3467,11 +3468,13 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
               // B. 15-Level Unilevel (2% per tier)
               let currUplineId = n.parentId;
               for (let tier = 1; tier <= 15 && currUplineId > 0; tier++) {
-                nodeUnilevelBonusMap.set(
-                  currUplineId,
-                  Number(((nodeUnilevelBonusMap.get(currUplineId) || 0) + unilevelBonusUnit).toFixed(4))
-                );
                 const upNode = rawNodes.get(currUplineId);
+                if (!upNode?.isAdminFreeUpgrade) {
+                  nodeUnilevelBonusMap.set(
+                    currUplineId,
+                    Number(((nodeUnilevelBonusMap.get(currUplineId) || 0) + unilevelBonusUnit).toFixed(4))
+                  );
+                }
                 currUplineId = upNode ? upNode.parentId : 0;
               }
 
@@ -4005,8 +4008,9 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             autoIdSourceMainMap.get(n.id) ||
             undefined,
           directUplineNodeId,
+          isAdminFreeUpgrade: Boolean(n.isAdminFreeUpgrade),
           directRewardThisNode: nodeDirectBonusMap.get(n.id) || 0,
-          unilevelRewardThisNode: nodeUnilevelBonusMap.get(n.id) || 0,
+          unilevelRewardThisNode: n.isAdminFreeUpgrade ? 0 : (nodeUnilevelBonusMap.get(n.id) || 0),
           directRewardAllNodes: 0,
           unilevelRewardAllNodes: 0,
           upgradeRankPool: 0,
@@ -4156,65 +4160,85 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           : crossRankExtraBreakdownText.get(targetMainId);
 
         // คำนวณรายละเอียดค่าชั้น 15 ชั้น (รับไปแล้วกี่ชั้น ชั้นละเท่าไร เหลืออีกกี่ชั้น) ของโหนดนี้
-        const tiersBreakdown: NonNullable<EnrichedBinaryNode['levelSummary']>['tiersBreakdown'] = [];
-        let currentFrontier: number[] = [node.id];
-        const visitedSub = new Set<number>([node.id]);
         const ratePerNode = Number((unitPrice * 0.02).toFixed(2));
-        let thisNodeLvlTotal = 0;
-
-        for (let tier = 1; tier <= 15; tier++) {
-          const nextFrontier: number[] = [];
-          const leftNodeIds: number[] = [];
-          const rightNodeIds: number[] = [];
-          for (const pId of currentFrontier) {
-            const pObj = rawNodes.get(pId);
-            if (!pObj) continue;
-            if (pObj.leftChild > 0 && rawNodes.has(pObj.leftChild) && !visitedSub.has(pObj.leftChild)) {
-              visitedSub.add(pObj.leftChild);
-              nextFrontier.push(pObj.leftChild);
-              leftNodeIds.push(pObj.leftChild);
-            }
-            if (pObj.rightChild > 0 && rawNodes.has(pObj.rightChild) && !visitedSub.has(pObj.rightChild)) {
-              visitedSub.add(pObj.rightChild);
-              nextFrontier.push(pObj.rightChild);
-              rightNodeIds.push(pObj.rightChild);
-            }
-          }
-          if (nextFrontier.length === 0) break;
-          const tierAmt = Number((leftNodeIds.length * ratePerNode).toFixed(2));
-          thisNodeLvlTotal = Number((thisNodeLvlTotal + tierAmt).toFixed(2));
-          tiersBreakdown.push({
-            tier,
-            maxCapacity: Math.pow(2, tier),
-            totalNodesInTier: nextFrontier.length,
-            leftPayingNodesCount: leftNodeIds.length,
-            rightRebirthNodesCount: rightNodeIds.length,
+        if (node.isAdminFreeUpgrade) {
+          // เงื่อนไข Admin อัพ Rank ฟรี: ค่าชั้นที่แสดงให้เป็น 0
+          node.unilevelRewardThisNode = 0;
+          node.levelSummary = {
+            maxLevels: 15,
+            receivedLevelsCount: 0,
+            remainingLevelsCount: 15,
             ratePerNodeUsdt: ratePerNode,
-            amountUsdt: tierAmt,
-            allNodeIds: nextFrontier,
-            leftNodeIds,
-            rightNodeIds,
-          });
-          currentFrontier = nextFrontier;
-        }
+            thisNodeLevelTotalUsdt: 0,
+            clonesLevelTotalUsdt: 0,
+            combinedLevelTotalUsdt: 0,
+            tiersBreakdown: [],
+          };
+        } else {
+          const tiersBreakdown: NonNullable<EnrichedBinaryNode['levelSummary']>['tiersBreakdown'] = [];
+          let currentFrontier: number[] = [node.id];
+          const visitedSub = new Set<number>([node.id]);
+          let thisNodeLvlTotal = 0;
 
-        const receivedLevelsCount = tiersBreakdown.length;
-        const remainingLevelsCount = Math.max(0, 15 - receivedLevelsCount);
-        const clonesLvlTotal = !node.isClone
-          ? Number(Math.max(0, node.unilevelRewardAllNodes - thisNodeLvlTotal).toFixed(2))
-          : 0;
-        node.levelSummary = {
-          maxLevels: 15,
-          receivedLevelsCount,
-          remainingLevelsCount,
-          ratePerNodeUsdt: ratePerNode,
-          thisNodeLevelTotalUsdt: thisNodeLvlTotal,
-          clonesLevelTotalUsdt: clonesLvlTotal,
-          combinedLevelTotalUsdt: !node.isClone
-            ? Number(node.unilevelRewardAllNodes.toFixed(2))
-            : thisNodeLvlTotal,
-          tiersBreakdown,
-        };
+          for (let tier = 1; tier <= 15; tier++) {
+            const nextFrontier: number[] = [];
+            const leftNodeIds: number[] = [];
+            const rightNodeIds: number[] = [];
+            for (const pId of currentFrontier) {
+              const pObj = rawNodes.get(pId);
+              if (!pObj) continue;
+              if (pObj.leftChild > 0 && rawNodes.has(pObj.leftChild) && !visitedSub.has(pObj.leftChild)) {
+                const lcObj = rawNodes.get(pObj.leftChild);
+                visitedSub.add(pObj.leftChild);
+                nextFrontier.push(pObj.leftChild);
+                if (!lcObj?.isAdminFreeUpgrade) {
+                  leftNodeIds.push(pObj.leftChild);
+                }
+              }
+              if (pObj.rightChild > 0 && rawNodes.has(pObj.rightChild) && !visitedSub.has(pObj.rightChild)) {
+                visitedSub.add(pObj.rightChild);
+                nextFrontier.push(pObj.rightChild);
+                rightNodeIds.push(pObj.rightChild);
+              }
+            }
+            if (nextFrontier.length === 0) break;
+            if (leftNodeIds.length > 0) {
+              const tierAmt = Number((leftNodeIds.length * ratePerNode).toFixed(2));
+              thisNodeLvlTotal = Number((thisNodeLvlTotal + tierAmt).toFixed(2));
+              tiersBreakdown.push({
+                tier,
+                maxCapacity: Math.pow(2, tier),
+                totalNodesInTier: nextFrontier.length,
+                leftPayingNodesCount: leftNodeIds.length,
+                rightRebirthNodesCount: rightNodeIds.length,
+                ratePerNodeUsdt: ratePerNode,
+                amountUsdt: tierAmt,
+                allNodeIds: nextFrontier,
+                leftNodeIds,
+                rightNodeIds,
+              });
+            }
+            currentFrontier = nextFrontier;
+          }
+
+          const receivedLevelsCount = tiersBreakdown.length;
+          const remainingLevelsCount = Math.max(0, 15 - receivedLevelsCount);
+          const clonesLvlTotal = !node.isClone
+            ? Number(Math.max(0, node.unilevelRewardAllNodes - thisNodeLvlTotal).toFixed(2))
+            : 0;
+          node.levelSummary = {
+            maxLevels: 15,
+            receivedLevelsCount,
+            remainingLevelsCount,
+            ratePerNodeUsdt: ratePerNode,
+            thisNodeLevelTotalUsdt: thisNodeLvlTotal,
+            clonesLevelTotalUsdt: clonesLvlTotal,
+            combinedLevelTotalUsdt: !node.isClone
+              ? Number(node.unilevelRewardAllNodes.toFixed(2))
+              : thisNodeLvlTotal,
+            tiersBreakdown,
+          };
+        }
       }
 
         // Detect newly arrived node IDs in this rank (e.g. when ID #6+ joins) so we can highlight & auto-extend the tree
@@ -5806,7 +5830,9 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                 </span>
               )}
               <div className="text-[7.5px] text-[#334155] dark:text-slate-300 font-mono leading-tight truncate">
-                {node.isExtraLineage
+                {leftChildNode?.isAdminFreeUpgrade
+                  ? 'Admin ฟรี • ค่าชั้น 0'
+                  : node.isExtraLineage
                   ? `30%|30%|35%→#${node.directUplineNodeId || 1}`
                   : '30% | 15ช | 35%'}
               </div>
@@ -5985,17 +6011,24 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           {/* 6. 15-Level Commission Breakdown Box (Fixed Height) */}
           {(() => {
             const ls = node.levelSummary;
-            const tiers = ls?.tiersBreakdown || [];
-            const receivedPayingNodes = tiers.reduce(
-              (acc, t) => acc + Number(t.leftPayingNodesCount || 0),
-              0
-            );
+            const tiers = node.isAdminFreeUpgrade ? [] : (ls?.tiersBreakdown || []);
+            const receivedPayingNodes = node.isAdminFreeUpgrade
+              ? 0
+              : tiers.reduce((acc, t) => acc + Number(t.leftPayingNodesCount || 0), 0);
 
             return (
               <div className="h-[22px] shrink-0 px-1.5 rounded-md bg-[#EFF6FF] dark:bg-[#091526] border border-blue-200/80 dark:border-cyan-500/35 text-[8px] font-mono flex items-center overflow-hidden">
                 <span className="text-[#1D4ED8] dark:text-cyan-300 font-extrabold truncate">
-                  🪜 ค่าชั้น: รับแล้ว{' '}
-                  <strong className="text-[#15803D] dark:text-emerald-300">{receivedPayingNodes.toLocaleString()}</strong> / 32,767
+                  {node.isAdminFreeUpgrade ? (
+                    <>
+                      🪜 ค่าชั้น: <strong className="text-[#15803D] dark:text-emerald-300">0</strong> (Admin อัพฟรี)
+                    </>
+                  ) : (
+                    <>
+                      🪜 ค่าชั้น: รับแล้ว{' '}
+                      <strong className="text-[#15803D] dark:text-emerald-300">{receivedPayingNodes.toLocaleString()}</strong> / 32,767
+                    </>
+                  )}
                 </span>
               </div>
             );
@@ -8390,7 +8423,8 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                       <div className="flex items-center justify-between">
                         <span className="text-slate-300">30% ค่าชั้น ยูนิเลเวล 15 ชั้น (เฉพาะโหนดนี้):</span>
                         <span className="font-extrabold text-cyan-300">
-                          +{modalNode.unilevelRewardThisNode.toFixed(2)} USDT
+                          +{(modalNode.isAdminFreeUpgrade ? 0 : modalNode.unilevelRewardThisNode).toFixed(2)} USDT
+                          {modalNode.isAdminFreeUpgrade ? ' (Admin อัพฟรี)' : ''}
                         </span>
                       </div>
                       <div className="flex items-center justify-between pt-1.5 border-t border-emerald-500/20">
@@ -8403,14 +8437,16 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                       {/* 15-Level Breakdown inside Box 2 */}
                       {(() => {
                         const ls = modalNode.levelSummary || idReport?.levelSummary;
-                        const tiers = ls?.tiersBreakdown || [];
+                        const tiers = modalNode.isAdminFreeUpgrade ? [] : (ls?.tiersBreakdown || []);
                         const ratePerNode =
                           ls?.ratePerNodeUsdt ??
                           Number(((RANK_PRICES_USDT[modalNode.rank - 1] || 5) * 0.02).toFixed(2));
-                        const receivedPayingNodes = tiers.reduce(
-                          (acc: number, t: any) => acc + Number(t.leftPayingNodesCount || 0),
-                          0
-                        );
+                        const receivedPayingNodes = modalNode.isAdminFreeUpgrade
+                          ? 0
+                          : tiers.reduce(
+                              (acc: number, t: any) => acc + Number(t.leftPayingNodesCount || 0),
+                              0
+                            );
                         const remainingPayingNodes = Math.max(0, 32767 - receivedPayingNodes);
                         const remainingUsdt = Number((remainingPayingNodes * ratePerNode).toFixed(2));
                         return (
@@ -8418,6 +8454,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                             <div className="flex items-center justify-between flex-wrap gap-1">
                               <span className="text-cyan-300 font-extrabold">
                                 🪜 ค่าชั้นโหนดนี้: รับแล้ว {receivedPayingNodes.toLocaleString()} / 32,767 รหัส
+                                {modalNode.isAdminFreeUpgrade ? ' (Admin อัพฟรี = 0)' : ''}
                               </span>
                               <span className="text-amber-300 font-bold">
                                 คงเหลืออีก {remainingPayingNodes.toLocaleString()} รหัส (
@@ -8450,7 +8487,9 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                               </div>
                             ) : (
                               <div className="text-slate-500 text-[10.5px]">
-                                ยังไม่มีชั้นที่รับค่าชั้นใต้โหนดนี้ (เหลืออีก 15 ชั้น)
+                                {modalNode.isAdminFreeUpgrade
+                                  ? 'เงื่อนไข Admin อัพ Rank ฟรี: ค่าชั้นที่แสดงเป็น 0'
+                                  : 'ยังไม่มีชั้นที่รับค่าชั้นใต้โหนดนี้ (เหลืออีก 15 ชั้น)'}
                               </div>
                             )}
                           </div>
@@ -9423,38 +9462,53 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                                       </div>
 
                                       {/* Earnings & Pools of this ID */}
-                                      <div className="grid grid-cols-3 gap-1.5 font-mono text-[10px]">
-                                        <div className="bg-slate-900/90 border border-emerald-500/30 rounded-lg p-1.5 text-center">
-                                          <span className="text-slate-400 block">30% แนะนำ</span>
-                                          <span className="text-emerald-400 font-extrabold text-xs">
-                                            +{Number(rep.direct30TotalUsdt || 0).toFixed(2)} U
-                                          </span>
-                                        </div>
-                                        <div className="bg-slate-900/90 border border-cyan-500/30 rounded-lg p-1.5 text-center">
-                                          <span className="text-slate-400 block">30% ค่าชั้น</span>
-                                          <span className="text-cyan-300 font-extrabold text-xs">
-                                            +{Number(rep.level30TotalUsdt || 0).toFixed(2)} U
-                                          </span>
-                                        </div>
-                                        <div className="bg-slate-900/90 border border-indigo-500/30 rounded-lg p-1.5 text-center">
-                                          <span className="text-slate-400 block">35% อัพเกรด</span>
-                                          <span className="text-indigo-300 font-extrabold text-xs">
-                                            +{Number(rep.vault35GrossTotalUsdt || 0).toFixed(2)} U
-                                          </span>
-                                        </div>
-                                      </div>
+                                      {(() => {
+                                        const isAdminFree = Boolean(
+                                          rep.isAdminFreeUpgrade || nodeInActiveRank?.isAdminFreeUpgrade
+                                        );
+                                        const shownLevelUsdt = isAdminFree
+                                          ? 0
+                                          : Number(rep.level30TotalUsdt || 0);
+                                        return (
+                                          <div className="grid grid-cols-3 gap-1.5 font-mono text-[10px]">
+                                            <div className="bg-slate-900/90 border border-emerald-500/30 rounded-lg p-1.5 text-center">
+                                              <span className="text-slate-400 block">30% แนะนำ</span>
+                                              <span className="text-emerald-400 font-extrabold text-xs">
+                                                +{Number(rep.direct30TotalUsdt || 0).toFixed(2)} U
+                                              </span>
+                                            </div>
+                                            <div className="bg-slate-900/90 border border-cyan-500/30 rounded-lg p-1.5 text-center">
+                                              <span className="text-slate-400 block">30% ค่าชั้น</span>
+                                              <span className="text-cyan-300 font-extrabold text-xs">
+                                                +{shownLevelUsdt.toFixed(2)} U
+                                              </span>
+                                            </div>
+                                            <div className="bg-slate-900/90 border border-indigo-500/30 rounded-lg p-1.5 text-center">
+                                              <span className="text-slate-400 block">35% อัพเกรด</span>
+                                              <span className="text-indigo-300 font-extrabold text-xs">
+                                                +{Number(rep.vault35GrossTotalUsdt || 0).toFixed(2)} U
+                                              </span>
+                                            </div>
+                                          </div>
+                                        );
+                                      })()}
 
                                       {/* 15-Level Breakdown per ID inside Wallet IDs Modal */}
                                       {(() => {
-                                        const ls = rep.levelSummary || nodeInActiveRank?.levelSummary;
-                                        const tiers = ls?.tiersBreakdown || [];
-                                        const thisTotal = ls?.thisNodeLevelTotalUsdt ?? 0;
-                                        const clonesTotal = ls?.clonesLevelTotalUsdt ?? 0;
-                                        const ratePerNode = ls?.ratePerNodeUsdt ?? 0.1;
-                                        const receivedPayingNodes = tiers.reduce(
-                                          (acc: number, t: any) => acc + Number(t.leftPayingNodesCount || 0),
-                                          0
+                                        const isAdminFree = Boolean(
+                                          rep.isAdminFreeUpgrade || nodeInActiveRank?.isAdminFreeUpgrade
                                         );
+                                        const ls = rep.levelSummary || nodeInActiveRank?.levelSummary;
+                                        const tiers = isAdminFree ? [] : ls?.tiersBreakdown || [];
+                                        const thisTotal = isAdminFree ? 0 : ls?.thisNodeLevelTotalUsdt ?? 0;
+                                        const clonesTotal = isAdminFree ? 0 : ls?.clonesLevelTotalUsdt ?? 0;
+                                        const ratePerNode = ls?.ratePerNodeUsdt ?? 0.1;
+                                        const receivedPayingNodes = isAdminFree
+                                          ? 0
+                                          : tiers.reduce(
+                                              (acc: number, t: any) => acc + Number(t.leftPayingNodesCount || 0),
+                                              0
+                                            );
                                         const remainingPayingNodes = Math.max(0, 32767 - receivedPayingNodes);
                                         const remainingUsdt = Number((remainingPayingNodes * ratePerNode).toFixed(2));
 
@@ -9467,16 +9521,26 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                                                   {receivedPayingNodes.toLocaleString()} / 32,767 รหัส
                                                 </strong>
                                               </span>
-                                              <span className="text-amber-300 font-bold">
-                                                คงเหลืออีก {remainingPayingNodes.toLocaleString()} รหัส (
-                                                {remainingUsdt.toLocaleString(undefined, {
-                                                  minimumFractionDigits: 2,
-                                                  maximumFractionDigits: 2,
-                                                })}{' '}
-                                                U)
-                                              </span>
+                                              {isAdminFree ? (
+                                                <span className="text-rose-300 font-bold">
+                                                  Admin อัพฟรี (ค่าชั้น = 0)
+                                                </span>
+                                              ) : (
+                                                <span className="text-amber-300 font-bold">
+                                                  คงเหลืออีก {remainingPayingNodes.toLocaleString()} รหัส (
+                                                  {remainingUsdt.toLocaleString(undefined, {
+                                                    minimumFractionDigits: 2,
+                                                    maximumFractionDigits: 2,
+                                                  })}{' '}
+                                                  U)
+                                                </span>
+                                              )}
                                             </div>
-                                            {tiers.length > 0 ? (
+                                            {isAdminFree ? (
+                                              <div className="text-rose-300/90">
+                                                เงื่อนไข Admin อัพ Rank ฟรี: ค่าชั้นที่แสดงเป็น 0
+                                              </div>
+                                            ) : tiers.length > 0 ? (
                                               <div className="flex flex-wrap items-center gap-1 pt-1 border-t border-slate-800">
                                                 {tiers.map((t: any) => (
                                                   <span

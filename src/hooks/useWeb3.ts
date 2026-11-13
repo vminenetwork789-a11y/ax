@@ -1287,7 +1287,21 @@ export function useWeb3() {
   // 3. Upgrade Rank: upgradeRankForMainId(uint256 _r1MainId, uint8 _targetRank) / upgradeRank(uint8 _targetRank)
   const handleUpgradeRank = async (targetRank: number, targetMainId?: number | string) => {
     const mIdNum = Number(targetMainId) || Number(profile?.mainNodeIdRank1) || 1;
-    const nominalPrice = RANK_PRICES_USDT[targetRank - 1] || 10;
+    let nominalPrice = RANK_PRICES_USDT[targetRank - 1] || 10;
+    try {
+      const currentContract = contractAddressRef.current || CONTRACT_ADDRESS;
+      const readContract = new ethers.Contract(
+        currentContract,
+        ['function rankPrice(uint8) view returns (uint256)'],
+        readOnlyBscProvider
+      );
+      const pWei = await readContract.rankPrice(targetRank);
+      if (pWei > 0n) {
+        nominalPrice = Number(ethers.formatUnits(pWei, 18));
+      }
+    } catch {
+      // fallback to RANK_PRICES_USDT
+    }
 
     setTxState({
       isLoading: true,
