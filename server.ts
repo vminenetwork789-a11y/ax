@@ -752,6 +752,35 @@ export interface IndexedTreeNode {
   createdAt?: string;
 }
 
+export type TxActionType =
+  | 'REGISTER'
+  | 'BATCH_REGISTER'
+  | 'UPGRADE'
+  | 'ADMIN_UPGRADE'
+  | 'AUTO_ID'
+  | 'EXTRA_ID'
+  | 'CLONE_BOT'
+  | 'ALLSELL_PAYOUT'
+  | 'ADMIN_ACTION'
+  | 'REWARD';
+
+export interface TransactionRecordModel {
+  id: string;
+  txHash: string;
+  actionType: TxActionType;
+  title: string;
+  userAddress: string;
+  mainNodeId?: number;
+  nodeId?: number;
+  rank?: number;
+  amountUsdt?: number;
+  blockNumber?: number;
+  source: 'ONCHAIN_EVENT' | 'ADMIN_SERVER' | 'WEB3_CLIENT' | 'WS_BOT' | 'ALLSELL_PAYOUT';
+  explorerUrl: string;
+  details?: string;
+  timestamp: string;
+}
+
 interface PersistentMatrixDatabase {
   contractAddress: string;
   usdtAddress: string;
@@ -768,6 +797,7 @@ interface PersistentMatrixDatabase {
   userRankVaults: Record<string, Record<number, number>>;
   rewardLogs: RewardLogModel[];
   upgradeLogs: UpgradeLogModel[];
+  transactionLogs: TransactionRecordModel[];
 }
 
 const MATRIX_DB_FILE_PATH = path.resolve(__dirname, 'prisma/matrix-db.json');
@@ -791,6 +821,7 @@ function createEmptyMatrixDB(contractAddr = CONTRACT_ADDRESS, usdtAddr = USDT_AD
     userRankVaults: {},
     rewardLogs: [],
     upgradeLogs: [],
+    transactionLogs: [],
   };
 }
 
@@ -832,6 +863,7 @@ function loadMatrixDBFromDisk(): PersistentMatrixDatabase {
           ...createEmptyMatrixDB(CONTRACT_ADDRESS, USDT_ADDRESS),
           ...parsed,
           upgradeLogs: Array.isArray(parsed.upgradeLogs) ? parsed.upgradeLogs : [],
+          transactionLogs: Array.isArray(parsed.transactionLogs) ? parsed.transactionLogs : [],
         };
         if (strippedAny) {
           try {
@@ -874,6 +906,106 @@ function saveMatrixDBToDisk(immediate = false) {
     dbWriteTimer = null;
     writeNow();
   }, 800);
+}
+
+function isRealTxHash(hash?: string | null): boolean {
+  return /^0x[a-fA-F0-9]{64}$/.test(String(hash || '').trim());
+}
+
+function recordRealTransactionLog(input: {
+  txHash?: string | null;
+  actionType: TxActionType;
+  title: string;
+  userAddress?: string;
+  mainNodeId?: number;
+  nodeId?: number;
+  rank?: number;
+  amountUsdt?: number;
+  blockNumber?: number;
+  source: TransactionRecordModel['source'];
+  details?: string;
+  timestamp?: string;
+  immediateSave?: boolean;
+}): TransactionRecordModel | null {
+  const hash = String(input.txHash || '').trim();
+  if (!isRealTxHash(hash)) return null;
+
+  if (!Array.isArray(matrixDB.transactionLogs)) {
+    matrixDB.transactionLogs = [];
+  }
+
+  const hashLower = hash.toLowerCase();
+  const normRank = Number(input.rank || 0) || undefined;
+  const normNode = Number(input.nodeId || 0) || undefined;
+  const normMain = Number(input.mainNodeId || 0) || undefined;
+  const cleanUser = String(input.userAddress || '').trim();
+  const ts = input.timestamp || new Date().toISOString();
+
+  const existing = matrixDB.transactionLogs.find(
+    (t) =>
+      t.txHash.toLowerCase() === hashLower &&
+      t.actionType === input.actionType &&
+      Number(t.rank || 0) === Number(normRank || 0) &&
+      Number(t.nodeId || t.mainNodeId || 0) === Number(normNode || normMain || 0)
+  );
+
+  if (existing) {
+    if (!existing.blockNumber && input.blockNumber) existing.blockNumber = input.blockNumber;
+    if (!existing.amountUsdt && input.amountUsdt) existing.amountUsdt = input.amountUsdt;
+    if (!existing.mainNodeId && normMain) existing.mainNodeId = normMain;
+    if (!existing.nodeId && normNode) existing.nodeId = normNode;
+    if (!existing.userAddress && cleanUser) existing.userAddress = cleanUser;
+    if (!existing.details && input.details) existing.details = input.details;
+    if (input.timestamp && (!existing.timestamp || input.source === 'ONCHAIN_EVENT')) {
+      existing.timestamp = input.timestamp;
+    }
+    saveMatrixDBToDisk(Boolean(input.immediateSave));
+    return existing;
+  }
+
+  const record: TransactionRecordModel = {
+    id: `tx-${hashLower.slice(2, 12)}-${input.actionType}-${normRank || 0}-${normNode || normMain || 0}`,
+    txHash: hash,
+    actionType: input.actionType,
+    title: input.title,
+    userAddress: cleanUser || ethers.ZeroAddress,
+    mainNodeId: normMain,
+    nodeId: normNode,
+    rank: normRank,
+    amountUsdt: input.amountUsdt !== undefined ? Number(input.amountUsdt) : undefined,
+    blockNumber: input.blockNumber ? Number(input.blockNumber) : undefined,
+    source: input.source,
+    explorerUrl: `https://testnet.bscscan.com/tx/${hash}`,
+    details: input.details,
+    timestamp: ts,
+  };
+
+  matrixDB.transactionLogs.unshift(record);
+  matrixDB.transactionLogs.sort((a, b) => {
+    const bDiff = Number(b.blockNumber || 0) - Number(a.blockNumber || 0);
+    if (bDiff !== 0) return bDiff;
+    return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
+  });
+  if (matrixDB.transactionLogs.length > 1500) {
+    matrixDB.transactionLogs = matrixDB.transactionLogs.slice(0, 1500);
+  }
+
+  // Attach real txHash to matching upgradeLogs when possible
+  if (normRank && (normMain || normNode) && Array.isArray(matrixDB.upgradeLogs)) {
+    for (const u of matrixDB.upgradeLogs) {
+      if (
+        u.toRank === normRank &&
+        (Number(u.mainNodeId) === normMain || Number(u.newNodeId) === normNode) &&
+        !isRealTxHash(u.txHash)
+      ) {
+        u.txHash = hash;
+        if (record.blockNumber) u.blockNumber = record.blockNumber;
+      }
+    }
+  }
+
+  saveMatrixDBToDisk(Boolean(input.immediateSave));
+  return record;
 }
 
 const inMemoryDB = {
@@ -3109,6 +3241,8 @@ const HEARTBEAT_INTERVAL_MS = Number(process.env.HEARTBEAT_INTERVAL_MS || 30000)
 const HEARTBEAT_TIMEOUT_MS = 10000;
 
 const WS_BOT_ABI = [
+  'event UserRegistered(address indexed user, address indexed sponsor, uint256 indexed sponsorNodeId, uint256 mainNodeId)',
+  'event BatchRegistered(address indexed user, uint256 count, uint256 totalCost)',
   'event CloneQueued(uint8 indexed rank, uint256 indexed parentId, uint256 pendingCount)',
   'event NodeCreated(uint8 indexed rank, uint256 indexed nodeId, address indexed owner, address directSponsor, uint256 parentId, bool isLeft, bool isClone, bool isExtraId)',
   'event RewardDistributed(uint256 indexed fromNodeId, uint256 indexed toNodeId, address indexed recipient, uint8 rank, string rewardType, uint256 amount)',
@@ -3336,8 +3470,18 @@ async function checkAndProcessBotCloneQueue(triggerReason: string): Promise<void
             `🚀 [WS-Bot] (${triggerReason}) ส่งธุรกรรม processCloneQueue(${batchSize.toString()}) ผ่าน HTTP Provider...`
           );
           const tx = await writeContract.processCloneQueue(batchSize);
-          await tx.wait(1);
-          recordWsBotEvent('processCloneQueue', `TX: ${tx.hash} (Batch: ${batchSize.toString()})`);
+          const receipt = await tx.wait(1);
+          const txHash = receipt?.hash || tx.hash;
+          recordRealTransactionLog({
+            txHash,
+            actionType: 'CLONE_BOT',
+            title: `Bot รันคิวโคลนนิ่งอัตโนมัติ (Batch ${batchSize.toString()})`,
+            userAddress: botSigner?.address || '',
+            blockNumber: receipt?.blockNumber,
+            source: 'WS_BOT',
+            details: `Trigger: ${triggerReason} | Pending: ${pendingCount.toString()}`,
+          });
+          recordWsBotEvent('processCloneQueue', `TX: ${txHash} (Batch: ${batchSize.toString()})`);
           didExecuteOnChain = true;
         } catch {
           // Skip silently if staticCall or tx reverts
@@ -3366,10 +3510,23 @@ async function checkAndProcessBotCloneQueue(triggerReason: string): Promise<void
               )} USDT (>= ${rank1Price} USDT) -> สั่ง checkAndProcessAutoNewMainIdForNode(${mainNode.id})`
             );
             const tx = await writeContract.checkAndProcessAutoNewMainIdForNode(mainNode.id);
-            await tx.wait(1);
+            const receipt = await tx.wait(1);
+            const txHash = receipt?.hash || tx.hash;
+            recordRealTransactionLog({
+              txHash,
+              actionType: 'AUTO_ID',
+              title: `Bot แตก Auto New Main ID จาก Main #${mainNode.id}`,
+              userAddress: mainNode.owner,
+              mainNodeId: mainNode.id,
+              rank: 1,
+              amountUsdt: rank1Price,
+              blockNumber: receipt?.blockNumber,
+              source: 'WS_BOT',
+              details: `Trigger: ${triggerReason}`,
+            });
             recordWsBotEvent(
               'AutoNewMainId',
-              `Main #${mainNode.id} แตก Auto ID สำเร็จ (TX: ${tx.hash.slice(0, 10)}...)`
+              `Main #${mainNode.id} แตก Auto ID สำเร็จ (TX: ${txHash.slice(0, 10)}...)`
             );
             didExecuteOnChain = true;
           } catch {
@@ -3406,10 +3563,23 @@ async function checkAndProcessBotCloneQueue(triggerReason: string): Promise<void
                 }, 2)`
               );
               const tx = await writeContract.processPendingExtraIdQueue(mainNode.id, 2);
-              await tx.wait(1);
+              const receipt = await tx.wait(1);
+              const txHash = receipt?.hash || tx.hash;
+              recordRealTransactionLog({
+                txHash,
+                actionType: 'EXTRA_ID',
+                title: `Bot แตก Extra ID (R${eligibleTargetRank}) จาก Main #${mainNode.id}`,
+                userAddress: mainNode.owner,
+                mainNodeId: mainNode.id,
+                rank: eligibleTargetRank,
+                amountUsdt: RANK_PRICES_USDT[eligibleTargetRank - 1] || 10,
+                blockNumber: receipt?.blockNumber,
+                source: 'WS_BOT',
+                details: `Trigger: ${triggerReason}`,
+              });
               recordWsBotEvent(
                 'AutoExtraIdQueue',
-                `Main #${mainNode.id} แตก Extra ID R${eligibleTargetRank} สำเร็จ (TX: ${tx.hash.slice(
+                `Main #${mainNode.id} แตก Extra ID R${eligibleTargetRank} สำเร็จ (TX: ${txHash.slice(
                   0,
                   10
                 )}...)`
@@ -3504,6 +3674,49 @@ async function startEventListener(): Promise<void> {
 
     wsBotContract = new ethers.Contract(CONTRACT_ADDRESS, WS_BOT_ABI, wsBotProvider);
 
+    wsBotContract.on(
+      'UserRegistered',
+      (user: string, _sponsor: string, sponsorNodeId: bigint, mainNodeId: bigint, payload: any) => {
+        const txHash = payload?.log?.transactionHash || payload?.transactionHash;
+        const blockNumber = payload?.log?.blockNumber || payload?.blockNumber;
+        recordRealTransactionLog({
+          txHash,
+          actionType: 'REGISTER',
+          title: `สมัครสมาชิก Main ID #${mainNodeId.toString()}`,
+          userAddress: user,
+          mainNodeId: Number(mainNodeId),
+          nodeId: Number(mainNodeId),
+          rank: 1,
+          amountUsdt: RANK_PRICES_USDT[0] || 5,
+          blockNumber,
+          source: 'ONCHAIN_EVENT',
+          details: `Sponsor #${sponsorNodeId.toString()}`,
+        });
+        recordWsBotEvent('UserRegistered', `Main #${mainNodeId.toString()} (${user.slice(0, 8)}...)`);
+      }
+    );
+
+    wsBotContract.on(
+      'BatchRegistered',
+      (user: string, count: bigint, totalCost: bigint, payload: any) => {
+        const txHash = payload?.log?.transactionHash || payload?.transactionHash;
+        const blockNumber = payload?.log?.blockNumber || payload?.blockNumber;
+        const costNum = Number(ethers.formatUnits(totalCost, activeUsdtDecimals || 18));
+        recordRealTransactionLog({
+          txHash,
+          actionType: 'BATCH_REGISTER',
+          title: `สมัครแบบกลุ่ม (Batch ${count.toString()} โหนด)`,
+          userAddress: user,
+          rank: 1,
+          amountUsdt: Number.isFinite(costNum) ? costNum : Number(count) * 5,
+          blockNumber,
+          source: 'ONCHAIN_EVENT',
+          details: `Batch ${count.toString()} Nodes`,
+        });
+        recordWsBotEvent('BatchRegistered', `${user.slice(0, 8)}... (${count.toString()} nodes)`);
+      }
+    );
+
     wsBotContract.on('CloneQueued', (rank: bigint, parentId: bigint, pendingCount: bigint) => {
       const details = `Rank ${rank.toString()} | Parent #${parentId.toString()} | Pending: ${pendingCount.toString()}`;
       recordWsBotEvent('CloneQueued', details);
@@ -3520,10 +3733,32 @@ async function startEventListener(): Promise<void> {
         parentId: bigint,
         isLeft: boolean,
         isClone: boolean,
-        isExtraId: boolean
+        isExtraId: boolean,
+        payload: any
       ) => {
         const leg = isLeft ? 'LEFT' : 'RIGHT';
         const kind = isExtraId ? 'EXTRA_ID' : isClone ? 'CLONE' : 'MAIN';
+        const txHash = payload?.log?.transactionHash || payload?.transactionHash;
+        const blockNumber = payload?.log?.blockNumber || payload?.blockNumber;
+        const rNum = Number(rank);
+        recordRealTransactionLog({
+          txHash,
+          actionType: isExtraId ? 'EXTRA_ID' : isClone ? 'CLONE_BOT' : rNum === 1 ? 'REGISTER' : 'UPGRADE',
+          title: isExtraId
+            ? `สร้าง Extra ID R${rNum}-#${nodeId.toString()}`
+            : isClone
+            ? `สร้างโคลนนิ่ง R${rNum}-#${nodeId.toString()}`
+            : rNum === 1
+            ? `สร้างโหนด R1-#${nodeId.toString()}`
+            : `สร้างโหนด R${rNum}-#${nodeId.toString()}`,
+          userAddress: owner,
+          nodeId: Number(nodeId),
+          rank: rNum,
+          amountUsdt: RANK_PRICES_USDT[rNum - 1] || 0,
+          blockNumber,
+          source: 'ONCHAIN_EVENT',
+          details: `Parent #${parentId.toString()} [${leg}]`,
+        });
         recordWsBotEvent(
           'NodeCreated',
           `R${rank.toString()} #${nodeId.toString()} (${kind}) -> Parent #${parentId.toString()} [${leg}] (${owner.slice(0, 8)}...)`
@@ -3534,7 +3769,22 @@ async function startEventListener(): Promise<void> {
 
     wsBotContract.on(
       'RankUpgraded',
-      (user: string, fromRank: bigint, toRank: bigint, newNodeId: bigint, isAutoUpgrade: boolean) => {
+      (user: string, fromRank: bigint, toRank: bigint, newNodeId: bigint, isAutoUpgrade: boolean, payload: any) => {
+        const txHash = payload?.log?.transactionHash || payload?.transactionHash;
+        const blockNumber = payload?.log?.blockNumber || payload?.blockNumber;
+        const toR = Number(toRank);
+        recordRealTransactionLog({
+          txHash,
+          actionType: 'UPGRADE',
+          title: `อัปเกรดแรงค์ R${fromRank.toString()} → R${toR} (Node #${newNodeId.toString()})`,
+          userAddress: user,
+          nodeId: Number(newNodeId),
+          rank: toR,
+          amountUsdt: RANK_PRICES_USDT[toR - 1] || 0,
+          blockNumber,
+          source: 'ONCHAIN_EVENT',
+          details: isAutoUpgrade ? 'Auto-Vault Upgrade' : 'Wallet Upgrade',
+        });
         recordWsBotEvent(
           'RankUpgraded',
           `${user.slice(0, 8)}... R${fromRank.toString()}->R${toRank.toString()} (#${newNodeId.toString()}, auto=${isAutoUpgrade})`
@@ -3542,6 +3792,38 @@ async function startEventListener(): Promise<void> {
         checkAndProcessBotCloneQueue(`RankUpgraded(R${toRank},#${newNodeId})`).catch(() => {});
       }
     );
+
+    wsBotContract.on('AutoNewMainIdCreated', (user: string, count: bigint, _vaultDiff: bigint, payload: any) => {
+      const txHash = payload?.log?.transactionHash || payload?.transactionHash;
+      const blockNumber = payload?.log?.blockNumber || payload?.blockNumber;
+      recordRealTransactionLog({
+        txHash,
+        actionType: 'AUTO_ID',
+        title: `แตก Auto New Main ID (+${count.toString()} รหัส)`,
+        userAddress: user,
+        rank: 1,
+        amountUsdt: Number(count) * (RANK_PRICES_USDT[0] || 5),
+        blockNumber,
+        source: 'ONCHAIN_EVENT',
+      });
+    });
+
+    wsBotContract.on('AutoExtraIdCreated', (user: string, rank: bigint, nodeId: bigint, payload: any) => {
+      const txHash = payload?.log?.transactionHash || payload?.transactionHash;
+      const blockNumber = payload?.log?.blockNumber || payload?.blockNumber;
+      const rNum = Number(rank);
+      recordRealTransactionLog({
+        txHash,
+        actionType: 'EXTRA_ID',
+        title: `แตก Extra ID R${rNum}-#${nodeId.toString()}`,
+        userAddress: user,
+        nodeId: Number(nodeId),
+        rank: rNum,
+        amountUsdt: RANK_PRICES_USDT[rNum - 1] || 10,
+        blockNumber,
+        source: 'ONCHAIN_EVENT',
+      });
+    });
 
     // เริ่ม Heartbeat ดึงเลขบล็อกทุกๆ 30 วินาที
     startWsHeartbeat();
@@ -4978,6 +5260,206 @@ async function startApp() {
     return syncPromise;
   }
 
+  let lastChainTxSyncAt = 0;
+  let chainTxSyncInFlight: Promise<number> | null = null;
+
+  async function syncRecentOnChainTxHashes(
+    targetContract: string = CONTRACT_ADDRESS,
+    lookbackBlocks = 35000
+  ): Promise<number> {
+    if (chainTxSyncInFlight) return chainTxSyncInFlight;
+
+    chainTxSyncInFlight = (async () => {
+      let addedCount = 0;
+      try {
+        const provider = getProvider();
+        const latestBlock = await provider.getBlockNumber().catch(() => 0);
+        if (!latestBlock || latestBlock <= 0) return 0;
+
+        const eventAbi = [
+          'event UserRegistered(address indexed user, address indexed sponsor, uint256 indexed sponsorNodeId, uint256 mainNodeId)',
+          'event BatchRegistered(address indexed user, uint256 count, uint256 totalCost)',
+          'event NodeCreated(uint8 indexed rank, uint256 indexed nodeId, address indexed owner, address directSponsor, uint256 parentId, bool isLeft, bool isClone, bool isExtraId)',
+          'event RankUpgraded(address indexed user, uint8 fromRank, uint8 toRank, uint256 newNodeId, bool isAutoUpgrade)',
+          'event AutoNewMainIdCreated(address indexed user, uint256 count, uint256 vaultDiff)',
+          'event AutoExtraIdCreated(address indexed user, uint8 indexed rank, uint256 nodeId)',
+        ];
+        const contract = new ethers.Contract(targetContract, eventAbi, provider);
+        const startBlock = Math.max(0, latestBlock - lookbackBlocks);
+        const chunkSize = 4800; // Safe chunk under BSC Testnet 5000-block getLogs limit
+        const blockTimeCache = new Map<number, string>();
+
+        const resolveBlockIso = async (bn: number): Promise<string> => {
+          if (blockTimeCache.has(bn)) return blockTimeCache.get(bn)!;
+          try {
+            const blk = await provider.getBlock(bn);
+            const iso = blk?.timestamp
+              ? new Date(Number(blk.timestamp) * 1000).toISOString()
+              : new Date().toISOString();
+            blockTimeCache.set(bn, iso);
+            return iso;
+          } catch {
+            return new Date().toISOString();
+          }
+        };
+
+        const beforeLen = (matrixDB.transactionLogs || []).length;
+
+        // Scan newest chunks first (up to ~35,000 blocks)
+        for (let toBlk = latestBlock; toBlk >= startBlock; toBlk -= chunkSize) {
+          const fromBlk = Math.max(startBlock, toBlk - chunkSize + 1);
+          try {
+            const [regLogs, batchLogs, nodeLogs, upgLogs, autoLogs, extraLogs] = await Promise.all([
+              contract.queryFilter(contract.filters.UserRegistered(), fromBlk, toBlk).catch(() => []),
+              contract.queryFilter(contract.filters.BatchRegistered(), fromBlk, toBlk).catch(() => []),
+              contract.queryFilter(contract.filters.NodeCreated(), fromBlk, toBlk).catch(() => []),
+              contract.queryFilter(contract.filters.RankUpgraded(), fromBlk, toBlk).catch(() => []),
+              contract.queryFilter(contract.filters.AutoNewMainIdCreated(), fromBlk, toBlk).catch(() => []),
+              contract.queryFilter(contract.filters.AutoExtraIdCreated(), fromBlk, toBlk).catch(() => []),
+            ]);
+
+            const allLogs = [
+              ...regLogs.map((l) => ({ kind: 'UserRegistered', log: l })),
+              ...batchLogs.map((l) => ({ kind: 'BatchRegistered', log: l })),
+              ...nodeLogs.map((l) => ({ kind: 'NodeCreated', log: l })),
+              ...upgLogs.map((l) => ({ kind: 'RankUpgraded', log: l })),
+              ...autoLogs.map((l) => ({ kind: 'AutoNewMainIdCreated', log: l })),
+              ...extraLogs.map((l) => ({ kind: 'AutoExtraIdCreated', log: l })),
+            ];
+
+            if (allLogs.length > 0) {
+              const uniqueBlocks = Array.from(new Set(allLogs.map((x) => Number(x.log.blockNumber || 0)).filter(Boolean)));
+              await Promise.all(uniqueBlocks.slice(0, 25).map((bn) => resolveBlockIso(bn)));
+
+              for (const item of allLogs) {
+                const ev: any = item.log;
+                const args = ev?.args;
+                const txHash = ev?.transactionHash;
+                const bn = Number(ev?.blockNumber || 0) || undefined;
+                const ts = bn ? blockTimeCache.get(bn) : undefined;
+                if (!txHash || !args) continue;
+
+                if (item.kind === 'UserRegistered') {
+                  const mainId = Number(args.mainNodeId || 0);
+                  recordRealTransactionLog({
+                    txHash,
+                    actionType: 'REGISTER',
+                    title: `สมัครสมาชิก Main ID #${mainId}`,
+                    userAddress: String(args.user || ''),
+                    mainNodeId: mainId,
+                    nodeId: mainId,
+                    rank: 1,
+                    amountUsdt: RANK_PRICES_USDT[0] || 5,
+                    blockNumber: bn,
+                    source: 'ONCHAIN_EVENT',
+                    details: `Sponsor #${Number(args.sponsorNodeId || 1)}`,
+                    timestamp: ts,
+                  });
+                } else if (item.kind === 'BatchRegistered') {
+                  const cnt = Number(args.count || 1);
+                  const costNum = Number(ethers.formatUnits(args.totalCost || 0n, activeUsdtDecimals || 18));
+                  recordRealTransactionLog({
+                    txHash,
+                    actionType: 'BATCH_REGISTER',
+                    title: `สมัครแบบกลุ่ม (Batch ${cnt} โหนด)`,
+                    userAddress: String(args.user || ''),
+                    rank: 1,
+                    amountUsdt: Number.isFinite(costNum) && costNum > 0 ? costNum : cnt * 5,
+                    blockNumber: bn,
+                    source: 'ONCHAIN_EVENT',
+                    timestamp: ts,
+                  });
+                } else if (item.kind === 'NodeCreated') {
+                  const rNum = Number(args.rank || 1);
+                  const nId = Number(args.nodeId || 0);
+                  const isClone = Boolean(args.isClone);
+                  const isExtra = Boolean(args.isExtraId);
+                  recordRealTransactionLog({
+                    txHash,
+                    actionType: isExtra ? 'EXTRA_ID' : isClone ? 'CLONE_BOT' : rNum === 1 ? 'REGISTER' : 'UPGRADE',
+                    title: isExtra
+                      ? `สร้าง Extra ID R${rNum}-#${nId}`
+                      : isClone
+                      ? `สร้างโคลนนิ่ง R${rNum}-#${nId}`
+                      : rNum === 1
+                      ? `สร้างโหนด R1-#${nId}`
+                      : `สร้างโหนด R${rNum}-#${nId}`,
+                    userAddress: String(args.owner || ''),
+                    nodeId: nId,
+                    rank: rNum,
+                    amountUsdt: RANK_PRICES_USDT[rNum - 1] || 0,
+                    blockNumber: bn,
+                    source: 'ONCHAIN_EVENT',
+                    details: `Parent #${Number(args.parentId || 0)} [${args.isLeft ? 'LEFT' : 'RIGHT'}]`,
+                    timestamp: ts,
+                  });
+                } else if (item.kind === 'RankUpgraded') {
+                  const toR = Number(args.toRank || 2);
+                  const nId = Number(args.newNodeId || 0);
+                  recordRealTransactionLog({
+                    txHash,
+                    actionType: 'UPGRADE',
+                    title: `อัปเกรดแรงค์ R${Number(args.fromRank || 1)} → R${toR} (Node #${nId})`,
+                    userAddress: String(args.user || ''),
+                    nodeId: nId,
+                    rank: toR,
+                    amountUsdt: RANK_PRICES_USDT[toR - 1] || 0,
+                    blockNumber: bn,
+                    source: 'ONCHAIN_EVENT',
+                    details: args.isAutoUpgrade ? 'Auto-Vault Upgrade' : 'Wallet Upgrade',
+                    timestamp: ts,
+                  });
+                } else if (item.kind === 'AutoNewMainIdCreated') {
+                  const cnt = Number(args.count || 1);
+                  recordRealTransactionLog({
+                    txHash,
+                    actionType: 'AUTO_ID',
+                    title: `แตก Auto New Main ID (+${cnt} รหัส)`,
+                    userAddress: String(args.user || ''),
+                    rank: 1,
+                    amountUsdt: cnt * (RANK_PRICES_USDT[0] || 5),
+                    blockNumber: bn,
+                    source: 'ONCHAIN_EVENT',
+                    timestamp: ts,
+                  });
+                } else if (item.kind === 'AutoExtraIdCreated') {
+                  const rNum = Number(args.rank || 2);
+                  const nId = Number(args.nodeId || 0);
+                  recordRealTransactionLog({
+                    txHash,
+                    actionType: 'EXTRA_ID',
+                    title: `แตก Extra ID R${rNum}-#${nId}`,
+                    userAddress: String(args.user || ''),
+                    nodeId: nId,
+                    rank: rNum,
+                    amountUsdt: RANK_PRICES_USDT[rNum - 1] || 10,
+                    blockNumber: bn,
+                    source: 'ONCHAIN_EVENT',
+                    timestamp: ts,
+                  });
+                }
+              }
+            }
+          } catch {
+            // Ignore single-chunk RPC limits and proceed to next chunk
+          }
+          if (fromBlk <= 0) break;
+        }
+
+        addedCount = Math.max(0, (matrixDB.transactionLogs || []).length - beforeLen);
+        lastChainTxSyncAt = Date.now();
+        saveMatrixDBToDisk();
+      } catch (err) {
+        console.warn('[MatrixDB TxHash Sync] Notice:', err);
+      } finally {
+        chainTxSyncInFlight = null;
+      }
+      return addedCount;
+    })();
+
+    return chainTxSyncInFlight;
+  }
+
   triggerMatrixDatabaseSync = syncAllMatrixDatabase;
   async function syncAllMatrixDatabase(targetContract: string = CONTRACT_ADDRESS, force = false): Promise<void> {
     if (fullSyncInFlight && !force) return fullSyncInFlight;
@@ -5088,6 +5570,9 @@ async function startApp() {
         rebuildDatabaseUpgradeLogsFromNodes();
         matrixDB.lastSyncedAt = new Date().toISOString();
         saveMatrixDBToDisk();
+        if (force || Date.now() - lastChainTxSyncAt > 45000 || (matrixDB.transactionLogs || []).length === 0) {
+          syncRecentOnChainTxHashes(targetContract, 35000).catch(() => {});
+        }
         syncAllMatrixDBToPostgres().catch(() => {});
       } catch (err) {
         console.warn('[MatrixDB Full Sync] Notice:', err);
@@ -5380,6 +5865,16 @@ async function startApp() {
           const tx = await writeContract.processPendingExtraIdQueue(mainIdNum, 2);
           const receipt = await tx.wait(1);
           txHash = receipt?.hash || tx.hash;
+          recordRealTransactionLog({
+            txHash,
+            actionType: 'EXTRA_ID',
+            title: `สั่งแตก Extra ID จาก Main #${mainIdNum}`,
+            userAddress: botSigner.address,
+            mainNodeId: mainIdNum,
+            rank: 2,
+            blockNumber: receipt?.blockNumber,
+            source: 'WS_BOT',
+          });
           recordWsBotEvent(
             'AutoExtraIdQueue',
             `API Trigger Main #${mainIdNum} -> TX: ${String(txHash).slice(0, 10)}...`
@@ -7187,6 +7682,17 @@ async function startApp() {
             txHash = receipt?.hash || tx.hash;
             mode = 'ONCHAIN_TRANSFER';
             signerUsdtBal = Math.max(0, signerUsdtBal - sharePerId);
+            recordRealTransactionLog({
+              txHash,
+              actionType: 'ALLSELL_PAYOUT',
+              title: `โอนจ่าย AllSell ${pDef.titleTh} -> Main #${qMain.id}`,
+              userAddress: qMain.owner,
+              mainNodeId: qMain.id,
+              amountUsdt: sharePerId,
+              blockNumber: receipt?.blockNumber,
+              source: 'ALLSELL_PAYOUT',
+              details: `Cycle: ${cycleLabelTh}`,
+            });
           } catch {
             // fallback to recorded cycle settlement
           }
@@ -7895,6 +8401,19 @@ async function startApp() {
           matrixDB.rankCounts[r] = matrixDB.nodesByRank[r].length;
         }
 
+        if (isRealTxHash(clientTxHash)) {
+          recordRealTransactionLog({
+            txHash: clientTxHash,
+            actionType: 'ADMIN_UPGRADE',
+            title: `Admin อัปเกรดฟรี Main #${mainIdNum} → Rank ${parsedRank}`,
+            userAddress: normalizedUser,
+            mainNodeId: mainIdNum,
+            rank: parsedRank,
+            amountUsdt: 0,
+            source: 'WEB3_CLIENT',
+            details: `Ranks: ${onChainUpgradedRanks.map((r) => `R${r}`).join(', ')}`,
+          });
+        }
         reconcileAutoExtraIdsAcrossRanks();
         rebuildDatabaseRewardLogsFromNodes();
         rebuildDatabaseUpgradeLogsFromNodes();
@@ -8317,6 +8836,8 @@ async function startApp() {
           nextCycleInfo: cycleInfo,
           history: allSellAutoStore.history.slice(0, 20),
         },
+        transactionLogs: (matrixDB.transactionLogs || []).slice(0, 200),
+        totalTransactionLogs: (matrixDB.transactionLogs || []).length,
       });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
@@ -8510,6 +9031,25 @@ async function startApp() {
         ),
       ]);
       const txHash = receipt?.hash || tx.hash;
+      const inferredType: TxActionType = action.includes('Upgrade')
+        ? 'ADMIN_UPGRADE'
+        : action.includes('AutoNewMainId')
+        ? 'AUTO_ID'
+        : action.includes('ExtraId')
+        ? 'EXTRA_ID'
+        : 'ADMIN_ACTION';
+      recordRealTransactionLog({
+        txHash,
+        actionType: inferredType,
+        title: `Admin: ${actionDesc}`,
+        userAddress: String(params?.targetUser || params?.user || params?.newOwner || wallet.address),
+        mainNodeId: Number(params?.mainId || params?.mainNodeId || params?.r1MainId || 0) || undefined,
+        rank: Number(params?.targetRank || params?.currentRank || 0) || undefined,
+        blockNumber: receipt?.blockNumber,
+        source: 'ADMIN_SERVER',
+        details: `Executed by ${wallet.address}`,
+        immediateSave: true,
+      });
       await syncAllMatrixDatabase(CONTRACT_ADDRESS, true).catch(() => {});
 
       res.json({
@@ -8525,6 +9065,88 @@ async function startApp() {
         success: false,
         error: err?.shortMessage || err?.reason || err?.message || 'ธุรกรรมบนเชนล้มเหลว',
       });
+    }
+  });
+
+  // Record confirmed on-chain txHash from Web3 clients / Admin wallet
+  app.post('/api/transactions/record', (req: Request, res: Response) => {
+    try {
+      const {
+        txHash,
+        actionType = 'ADMIN_ACTION',
+        title,
+        userAddress,
+        mainNodeId,
+        nodeId,
+        rank,
+        amountUsdt,
+        blockNumber,
+        source = 'WEB3_CLIENT',
+        details,
+      } = req.body || {};
+
+      if (!isRealTxHash(txHash)) {
+        return res.status(400).json({ success: false, error: 'Invalid transaction hash' });
+      }
+
+      const record = recordRealTransactionLog({
+        txHash,
+        actionType,
+        title: String(title || actionType),
+        userAddress: String(userAddress || ''),
+        mainNodeId: mainNodeId ? Number(mainNodeId) : undefined,
+        nodeId: nodeId ? Number(nodeId) : undefined,
+        rank: rank ? Number(rank) : undefined,
+        amountUsdt: amountUsdt !== undefined ? Number(amountUsdt) : undefined,
+        blockNumber: blockNumber ? Number(blockNumber) : undefined,
+        source,
+        details: details ? String(details) : undefined,
+        immediateSave: true,
+      });
+
+      res.json({ success: true, record, total: (matrixDB.transactionLogs || []).length });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'Failed to record txHash' });
+    }
+  });
+
+  // Admin Transaction Hashes Directory + On-chain Event Backfill
+  app.get('/api/admin/transactions', async (req: Request, res: Response) => {
+    try {
+      const shouldSync = req.query.sync === '1' || req.query.forceSync === '1';
+      const lookback = Math.min(100000, Math.max(5000, Number(req.query.lookback || 45000)));
+      let newlyAdded = 0;
+      if (shouldSync) {
+        newlyAdded = await syncRecentOnChainTxHashes(CONTRACT_ADDRESS, lookback);
+      }
+
+      const logs = Array.isArray(matrixDB.transactionLogs) ? matrixDB.transactionLogs : [];
+      const countsByType: Record<string, number> = {
+        REGISTER: 0,
+        BATCH_REGISTER: 0,
+        UPGRADE: 0,
+        ADMIN_UPGRADE: 0,
+        AUTO_ID: 0,
+        EXTRA_ID: 0,
+        CLONE_BOT: 0,
+        ALLSELL_PAYOUT: 0,
+        ADMIN_ACTION: 0,
+        REWARD: 0,
+      };
+      for (const item of logs) {
+        countsByType[item.actionType] = (countsByType[item.actionType] || 0) + 1;
+      }
+
+      res.json({
+        success: true,
+        contractAddress: CONTRACT_ADDRESS,
+        newlyAdded,
+        total: logs.length,
+        countsByType,
+        data: logs,
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'Failed to load admin transactions' });
     }
   });
 
@@ -9196,6 +9818,18 @@ async function startApp() {
       return res.status(400).json({ success: false, error: 'ticketId is required' });
     }
     const confirmed = confirmReservation(ticketId, txHash);
+    if (isRealTxHash(txHash)) {
+      recordRealTransactionLog({
+        txHash,
+        actionType: 'REGISTER',
+        title: 'สมัครสมาชิกใหม่ (Rank 1)',
+        userAddress: '',
+        rank: 1,
+        amountUsdt: RANK_PRICES_USDT[0] || 5,
+        source: 'WEB3_CLIENT',
+        details: `Queue Ticket: ${ticketId}`,
+      });
+    }
     // Immediately sync the database with the newly confirmed on-chain transaction
     syncAllMatrixDatabase(CONTRACT_ADDRESS, true).catch(() => {});
     res.json({ success: true, confirmed });
@@ -9396,6 +10030,13 @@ async function startApp() {
         const typeLabel = isClone ? 'Clone ID' : isAuto ? 'Auto ID' : 'Main ID Registration';
         const isLeft = nodeAny.isLeft !== undefined ? Boolean(nodeAny.isLeft) : node.parentId > 0;
 
+        const realTxForNode = (matrixDB.transactionLogs || []).find(
+          (t) =>
+            (t.actionType === 'REGISTER' || t.actionType === 'BATCH_REGISTER' || t.actionType === 'AUTO_ID' || t.actionType === 'CLONE_BOT') &&
+            Number(t.rank || 1) === 1 &&
+            (Number(t.nodeId || 0) === node.id || Number(t.mainNodeId || 0) === node.id)
+        );
+
         transactions.push({
           id: `reg-r1-${node.id}`,
           category: 'REGISTRATION',
@@ -9405,8 +10046,9 @@ async function startApp() {
           mainNodeId: node.originMainId || node.id,
           rank: 1,
           amountUsdt: RANK_PRICES_USDT[0] || 5,
-          timestamp: nodeAny.createdAt || matrixDB.lastSyncedAt || new Date().toISOString(),
-          blockNumber: nodeAny.blockNumber,
+          timestamp: realTxForNode?.timestamp || nodeAny.createdAt || matrixDB.lastSyncedAt || new Date().toISOString(),
+          blockNumber: realTxForNode?.blockNumber || nodeAny.blockNumber,
+          txHash: realTxForNode?.txHash,
           detailsTh: `ต่อสายใต้ อัพไลน์ #${node.parentId} (${isLeft ? '↙ ฝั่งซ้าย' : '↘ ฝั่งขวา'}) • ผู้แนะนำ: ${node.directSponsor ? `${node.directSponsor.slice(0, 6)}...${node.directSponsor.slice(-4)}` : 'Root'}`,
           detailsEn: `Placed under Parent #${node.parentId} (${isLeft ? 'Left' : 'Right'}) • Sponsor: ${node.directSponsor ? `${node.directSponsor.slice(0, 6)}...${node.directSponsor.slice(-4)}` : 'Root'}`,
         });
@@ -9424,6 +10066,16 @@ async function startApp() {
           RANK_PRICES_USDT[Number(u.toRank) - 1] ||
           10;
 
+        const realUpgTx = !isRealTxHash(u.txHash)
+          ? (matrixDB.transactionLogs || []).find(
+              (t) =>
+                (t.actionType === 'UPGRADE' || t.actionType === 'ADMIN_UPGRADE') &&
+                Number(t.rank || 0) === Number(u.toRank) &&
+                (Number(t.mainNodeId || 0) === Number(u.mainNodeId) ||
+                  Number(t.nodeId || 0) === Number(u.newNodeId))
+            )
+          : undefined;
+
         transactions.push({
           id: `upg-${u.id || `${u.mainNodeId}-${u.toRank}`}`,
           category: 'UPGRADE',
@@ -9433,8 +10085,9 @@ async function startApp() {
           mainNodeId: Number(u.mainNodeId),
           rank: Number(u.toRank),
           amountUsdt: uCost,
-          timestamp: u.createdAt || matrixDB.lastSyncedAt || new Date().toISOString(),
-          txHash: u.txHash,
+          timestamp: realUpgTx?.timestamp || u.createdAt || matrixDB.lastSyncedAt || new Date().toISOString(),
+          blockNumber: realUpgTx?.blockNumber || u.blockNumber,
+          txHash: isRealTxHash(u.txHash) ? u.txHash : realUpgTx?.txHash,
           detailsTh: `เลื่อนแรงค์จาก R${u.fromRank} ไปยัง R${u.toRank} (${uCost.toFixed(2)} USDT)`,
           detailsEn: `Upgraded from R${u.fromRank} to R${u.toRank} (${uCost.toFixed(2)} USDT)`,
         });

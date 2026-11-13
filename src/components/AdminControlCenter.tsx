@@ -29,6 +29,7 @@ import {
   Bot,
   Crown,
   Dna,
+  History,
 } from 'lucide-react';
 
 interface AdminControlCenterProps {
@@ -66,7 +67,7 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
   onClose,
 }) => {
   const [activeSection, setActiveSection] = useState<
-    'all' | 'owner' | 'autopools' | 'allsell' | 'database' | 'members'
+    'all' | 'owner' | 'autopools' | 'allsell' | 'database' | 'members' | 'transactions'
   >('all');
   const [execMode, setExecMode] = useState<'server_key' | 'web3_wallet'>(
     typeof window !== 'undefined' && (window as any).ethereum ? 'web3_wallet' : 'server_key'
@@ -131,6 +132,15 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
   const [memberStatusTab, setMemberStatusTab] = useState<'all' | 'main' | 'auto' | 'extra' | 'clone'>('all');
   const [memberPage, setMemberPage] = useState<number>(1);
 
+  // 8. Transaction Hashes Directory State
+  const [txLogs, setTxLogs] = useState<any[]>([]);
+  const [txSyncing, setTxSyncing] = useState<boolean>(false);
+  const [txTypeFilter, setTxTypeFilter] = useState<
+    'all' | 'REGISTER' | 'UPGRADE' | 'AUTO_EXTRA' | 'CLONE_BOT' | 'ADMIN' | 'ALLSELL'
+  >('all');
+  const [txSearch, setTxSearch] = useState<string>('');
+  const [txPage, setTxPage] = useState<number>(1);
+
   const handleCopy = (text: string) => {
     if (!text) return;
     navigator.clipboard.writeText(text);
@@ -141,16 +151,23 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
   const fetchAdminOverview = useCallback(async () => {
     setLoadingOverview(true);
     try {
-      const [ovRes, bqRes, botRes] = await Promise.all([
+      const [ovRes, bqRes, botRes, txRes] = await Promise.all([
         fetch('/api/admin/overview').then((r) => r.json()).catch(() => null),
         fetch('/api/batch-queue').then((r) => r.json()).catch(() => null),
         fetch('/api/ws-bot/status').then((r) => r.json()).catch(() => null),
+        fetch('/api/admin/transactions').then((r) => r.json()).catch(() => null),
       ]);
       if (ovRes?.success) {
         setOverview(ovRes);
         setSysAllSell((prev) => prev || ovRes.wallets?.allSell?.address || '');
         setSysBot((prev) => prev || ovRes.wallets?.bot?.address || '');
         setSysFamily((prev) => prev || ovRes.wallets?.familyPool?.address || '');
+        if (!txRes?.success && Array.isArray(ovRes.transactionLogs)) {
+          setTxLogs(ovRes.transactionLogs);
+        }
+      }
+      if (txRes?.success && Array.isArray(txRes.data)) {
+        setTxLogs(txRes.data);
       }
       if (bqRes) {
         setBatchStatus(bqRes);
@@ -162,6 +179,30 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
       setLoadingOverview(false);
     }
   }, []);
+
+  const handleSyncChainTransactions = async () => {
+    setTxSyncing(true);
+    try {
+      const res = await fetch('/api/admin/transactions?sync=1&lookback=50000');
+      const data = await res.json();
+      if (data?.success && Array.isArray(data.data)) {
+        setTxLogs(data.data);
+        setActionStatus({
+          type: 'success',
+          title: 'ดึงรหัสธุรกรรมจากบล็อกเชนสำเร็จ!',
+          message: `พบและจัดเก็บรหัสธุรกรรมทั้งหมด ${data.total} รายการ (เพิ่มใหม่ในรอบนี้ +${data.newlyAdded || 0} รายการ)`,
+        });
+      }
+    } catch (err: any) {
+      setActionStatus({
+        type: 'error',
+        title: 'ดึงรหัสธุรกรรมจากเชนไม่สำเร็จ',
+        message: err?.message || 'เกิดข้อผิดพลาดในการเชื่อมต่อ RPC',
+      });
+    } finally {
+      setTxSyncing(false);
+    }
+  };
 
   useEffect(() => {
     fetchAdminOverview();
@@ -278,6 +319,28 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
 
         const receipt: any = await waitWith2_5MinTimeout(tx);
         const hash = receipt?.hash || tx.hash;
+        const signerAddr = await signer.getAddress().catch(() => account || '');
+        await fetch('/api/transactions/record', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            txHash: hash,
+            actionType: actionName.includes('Upgrade')
+              ? 'ADMIN_UPGRADE'
+              : actionName.includes('AutoNewMainId')
+              ? 'AUTO_ID'
+              : actionName.includes('ExtraId')
+              ? 'EXTRA_ID'
+              : 'ADMIN_ACTION',
+            title: `Admin Web3: ${labelTh}`,
+            userAddress: params.targetUser || params.user || params.newOwner || signerAddr,
+            mainNodeId: Number(params.mainId || params.mainNodeId || params.r1MainId || 0) || undefined,
+            rank: Number(params.targetRank || params.currentRank || 0) || undefined,
+            blockNumber: receipt?.blockNumber,
+            source: 'WEB3_CLIENT',
+            details: `Function: ${actionName}`,
+          }),
+        }).catch(() => {});
         await fetch('/api/db/sync', { method: 'POST' }).catch(() => {});
         await fetchAdminOverview();
         onRefreshOnChainData();
@@ -726,6 +789,7 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
             { id: 'allsell', label: '3. จัดการโอนจ่าย AllSell 4%' },
             { id: 'database', label: '4. สัญญา & ซิงค์ Database' },
             { id: 'members', label: '5. ข้อมูล ID ทั้ง 4 สถานะ (Main/Auto/Extra/โคลน)' },
+            { id: 'transactions', label: `6. รหัสธุรกรรม (${txLogs.length})` },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -2058,6 +2122,302 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
           )}
         </div>
       )}
+
+      {/* =====================================================================
+          SECTION 6: ON-CHAIN TRANSACTION HASHES DIRECTORY (TX HASH LOG)
+         ===================================================================== */}
+      {showSection('transactions') && (() => {
+        const TX_PAGE_SIZE = 15;
+        const countByGroup = {
+          all: txLogs.length,
+          REGISTER: txLogs.filter((t) => t.actionType === 'REGISTER' || t.actionType === 'BATCH_REGISTER').length,
+          UPGRADE: txLogs.filter((t) => t.actionType === 'UPGRADE' || t.actionType === 'ADMIN_UPGRADE').length,
+          AUTO_EXTRA: txLogs.filter((t) => t.actionType === 'AUTO_ID' || t.actionType === 'EXTRA_ID').length,
+          CLONE_BOT: txLogs.filter((t) => t.actionType === 'CLONE_BOT').length,
+          ADMIN: txLogs.filter((t) => t.actionType === 'ADMIN_ACTION' || t.actionType === 'ADMIN_UPGRADE').length,
+          ALLSELL: txLogs.filter((t) => t.actionType === 'ALLSELL_PAYOUT').length,
+        };
+
+        const qTx = txSearch.trim().toLowerCase();
+        const filteredTxLogs = txLogs.filter((t) => {
+          if (txTypeFilter === 'REGISTER' && t.actionType !== 'REGISTER' && t.actionType !== 'BATCH_REGISTER') return false;
+          if (txTypeFilter === 'UPGRADE' && t.actionType !== 'UPGRADE' && t.actionType !== 'ADMIN_UPGRADE') return false;
+          if (txTypeFilter === 'AUTO_EXTRA' && t.actionType !== 'AUTO_ID' && t.actionType !== 'EXTRA_ID') return false;
+          if (txTypeFilter === 'CLONE_BOT' && t.actionType !== 'CLONE_BOT') return false;
+          if (txTypeFilter === 'ADMIN' && t.actionType !== 'ADMIN_ACTION' && t.actionType !== 'ADMIN_UPGRADE') return false;
+          if (txTypeFilter === 'ALLSELL' && t.actionType !== 'ALLSELL_PAYOUT') return false;
+
+          if (!qTx) return true;
+          return (
+            String(t.txHash || '').toLowerCase().includes(qTx) ||
+            String(t.userAddress || '').toLowerCase().includes(qTx) ||
+            String(t.title || '').toLowerCase().includes(qTx) ||
+            String(t.details || '').toLowerCase().includes(qTx) ||
+            String(t.mainNodeId || '').includes(qTx) ||
+            String(t.nodeId || '').includes(qTx) ||
+            String(t.blockNumber || '').includes(qTx) ||
+            String(t.actionType || '').toLowerCase().includes(qTx)
+          );
+        });
+
+        const txTotalPages = Math.max(1, Math.ceil(filteredTxLogs.length / TX_PAGE_SIZE));
+        const safeTxPage = Math.min(txPage, txTotalPages);
+        const pagedTxLogs = filteredTxLogs.slice((safeTxPage - 1) * TX_PAGE_SIZE, safeTxPage * TX_PAGE_SIZE);
+
+        const getTxTypeMeta = (actionType: string) => {
+          switch (actionType) {
+            case 'REGISTER':
+            case 'BATCH_REGISTER':
+              return { label: actionType === 'BATCH_REGISTER' ? 'BATCH REG' : 'REGISTER', cls: 'bg-sky-500/20 text-sky-300 border-sky-500/40' };
+            case 'UPGRADE':
+              return { label: 'UPGRADE', cls: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40' };
+            case 'ADMIN_UPGRADE':
+              return { label: 'ADMIN UPGRADE', cls: 'bg-rose-500/20 text-rose-300 border-rose-500/40' };
+            case 'AUTO_ID':
+              return { label: 'AUTO ID', cls: 'bg-amber-500/20 text-amber-300 border-amber-500/40' };
+            case 'EXTRA_ID':
+              return { label: 'EXTRA ID', cls: 'bg-pink-500/20 text-pink-300 border-pink-500/40' };
+            case 'CLONE_BOT':
+              return { label: 'CLONE BOT', cls: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' };
+            case 'ALLSELL_PAYOUT':
+              return { label: 'ALLSELL 4%', cls: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40' };
+            default:
+              return { label: 'ADMIN TX', cls: 'bg-purple-500/20 text-purple-300 border-purple-500/40' };
+          }
+        };
+
+        return (
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-800 pb-3">
+              <div>
+                <h2 className="text-base font-bold text-white flex items-center gap-2">
+                  <History className="w-4 h-4 text-cyan-400" />
+                  <span>
+                    หมวดที่ 6: ประวัติรหัสธุรกรรมบนบล็อกเชน ({txLogs.length} Tx Hash)
+                  </span>
+                </h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  จัดเก็บรหัสธุรกรรม (Tx Hash) จริงจากทุกช่องทาง: สมัครสมาชิก, อัปเกรด, แตก Auto/Extra ID, บอทโคลน, AllSell 4%, Admin และดึงย้อนหลังจาก Event บนเชน
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleSyncChainTransactions}
+                  disabled={txSyncing}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/40 text-cyan-300 text-xs font-bold cursor-pointer disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${txSyncing ? 'animate-spin' : ''}`} />
+                  <span>{txSyncing ? 'กำลังดึงจากเชน...' : 'ดึง Tx Hash ล่าสุดจากเชน'}</span>
+                </button>
+
+                <div className="relative w-full sm:w-72">
+                  <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={txSearch}
+                    onChange={(e) => {
+                      setTxSearch(e.target.value);
+                      setTxPage(1);
+                    }}
+                    placeholder="ค้นหา Tx Hash (0x...), กระเป๋า, #ID, Block..."
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-1.5 text-xs text-white focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Filter Pills */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              {[
+                { key: 'all', label: `ทั้งหมด (${countByGroup.all})`, activeCls: 'bg-slate-200 text-slate-950 border-slate-200' },
+                { key: 'REGISTER', label: `สมัคร / Batch (${countByGroup.REGISTER})`, activeCls: 'bg-sky-500 text-slate-950 border-sky-400' },
+                { key: 'UPGRADE', label: `อัปเกรดแรงค์ (${countByGroup.UPGRADE})`, activeCls: 'bg-indigo-500 text-white border-indigo-400' },
+                { key: 'AUTO_EXTRA', label: `Auto / Extra ID (${countByGroup.AUTO_EXTRA})`, activeCls: 'bg-amber-500 text-slate-950 border-amber-400' },
+                { key: 'CLONE_BOT', label: `บอทโคลนนิ่ง (${countByGroup.CLONE_BOT})`, activeCls: 'bg-emerald-500 text-slate-950 border-emerald-400' },
+                { key: 'ADMIN', label: `คำสั่ง Admin (${countByGroup.ADMIN})`, activeCls: 'bg-rose-500 text-white border-rose-400' },
+                { key: 'ALLSELL', label: `AllSell 4% (${countByGroup.ALLSELL})`, activeCls: 'bg-cyan-500 text-slate-950 border-cyan-400' },
+              ].map((pill) => (
+                <button
+                  key={pill.key}
+                  type="button"
+                  onClick={() => {
+                    setTxTypeFilter(pill.key as any);
+                    setTxPage(1);
+                  }}
+                  className={`px-3 py-1.5 rounded-lg border text-xs font-semibold transition cursor-pointer ${
+                    txTypeFilter === pill.key
+                      ? pill.activeCls
+                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white hover:border-slate-700'
+                  }`}
+                >
+                  {pill.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Transaction Hashes Table */}
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs font-mono">
+                <thead>
+                  <tr className="border-b border-slate-800 text-slate-400">
+                    <th className="py-2.5 px-3">เวลา / Block</th>
+                    <th className="py-2.5 px-3">ประเภท</th>
+                    <th className="py-2.5 px-3">รายละเอียดธุรกรรม</th>
+                    <th className="py-2.5 px-3 text-right">จำนวน</th>
+                    <th className="py-2.5 px-3">กระเป๋า (Wallet)</th>
+                    <th className="py-2.5 px-3">รหัสธุรกรรม (Tx Hash)</th>
+                    <th className="py-2.5 px-3 text-right">แหล่งที่มา / ตรวจสอบ</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60">
+                  {pagedTxLogs.map((tx: any) => {
+                    const meta = getTxTypeMeta(tx.actionType);
+                    const shortHash = tx.txHash
+                      ? `${tx.txHash.slice(0, 10)}...${tx.txHash.slice(-8)}`
+                      : '-';
+                    const shortUser = tx.userAddress && tx.userAddress !== ethers.ZeroAddress
+                      ? `${tx.userAddress.slice(0, 6)}...${tx.userAddress.slice(-4)}`
+                      : '-';
+                    const formattedDate = tx.timestamp
+                      ? new Date(tx.timestamp).toLocaleString('th-TH', {
+                          day: '2-digit',
+                          month: '2-digit',
+                          year: '2-digit',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          second: '2-digit',
+                        })
+                      : '-';
+
+                    return (
+                      <tr key={tx.id || tx.txHash} className="hover:bg-slate-800/40">
+                        <td className="py-2.5 px-3 whitespace-nowrap">
+                          <div className="text-slate-200">{formattedDate}</div>
+                          {tx.blockNumber ? (
+                            <div className="text-[10px] text-slate-500">Block #{tx.blockNumber}</div>
+                          ) : null}
+                        </td>
+                        <td className="py-2.5 px-3 whitespace-nowrap font-sans">
+                          <span className={`inline-flex px-2 py-0.5 rounded-full border text-[10.5px] font-bold ${meta.cls}`}>
+                            {meta.label}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3 font-sans">
+                          <div className="text-white font-medium">{tx.title}</div>
+                          <div className="text-[11px] text-slate-400 flex flex-wrap items-center gap-2 mt-0.5">
+                            {tx.mainNodeId ? <span className="text-amber-300">Main #{tx.mainNodeId}</span> : null}
+                            {tx.nodeId ? <span className="text-cyan-300">Node #{tx.nodeId}</span> : null}
+                            {tx.rank ? <span className="text-emerald-300">Rank {tx.rank}</span> : null}
+                            {tx.details ? <span>• {tx.details}</span> : null}
+                          </div>
+                        </td>
+                        <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                          {tx.amountUsdt !== undefined && Number(tx.amountUsdt) > 0 ? (
+                            <span className="text-emerald-400 font-bold">
+                              {Number(tx.amountUsdt).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} U
+                            </span>
+                          ) : (
+                            <span className="text-slate-500">-</span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 whitespace-nowrap text-slate-300">
+                          <div className="flex items-center gap-1.5">
+                            <span>{shortUser}</span>
+                            {tx.userAddress && tx.userAddress !== ethers.ZeroAddress && (
+                              <button
+                                type="button"
+                                onClick={() => handleCopy(tx.userAddress)}
+                                className="text-slate-500 hover:text-white cursor-pointer"
+                                title="คัดลอกที่อยู่กระเป๋า"
+                              >
+                                {copiedText === tx.userAddress ? (
+                                  <Check className="w-3 h-3 text-emerald-400" />
+                                ) : (
+                                  <Copy className="w-3 h-3" />
+                                )}
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-2.5 px-3 whitespace-nowrap">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-cyan-300 font-semibold select-all" title={tx.txHash}>
+                              {shortHash}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleCopy(tx.txHash)}
+                              className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer"
+                              title="คัดลอก Tx Hash แบบเต็ม"
+                            >
+                              {copiedText === tx.txHash ? (
+                                <Check className="w-3 h-3 text-emerald-400" />
+                              ) : (
+                                <Copy className="w-3 h-3" />
+                              )}
+                            </button>
+                          </div>
+                        </td>
+                        <td className="py-2.5 px-3 text-right whitespace-nowrap font-sans">
+                          <div className="inline-flex items-center gap-2">
+                            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
+                              {tx.source}
+                            </span>
+                            <a
+                              href={tx.explorerUrl || `https://testnet.bscscan.com/tx/${tx.txHash}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/30 border border-cyan-500/30 text-cyan-300 text-[11px] font-semibold"
+                            >
+                              <span>BscScan</span>
+                              <ExternalLink className="w-3 h-3" />
+                            </a>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {pagedTxLogs.length === 0 && (
+                    <tr>
+                      <td colSpan={7} className="py-8 text-center text-slate-500 font-sans">
+                        {txSyncing
+                          ? 'กำลังสแกน Event บนบล็อกเชนเพื่อดึง Tx Hash...'
+                          : 'ยังไม่มีรายการรหัสธุรกรรมที่บันทึกไว้ — กดปุ่ม "ดึง Tx Hash ล่าสุดจากเชน" ด้านบนเพื่อสแกนธุรกรรมย้อนหลัง'}
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {filteredTxLogs.length > TX_PAGE_SIZE && (
+              <div className="flex items-center justify-between gap-2 pt-3 border-t border-slate-800 text-xs font-mono">
+                <button
+                  type="button"
+                  disabled={safeTxPage <= 1}
+                  onClick={() => setTxPage((p) => Math.max(1, p - 1))}
+                  className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
+                >
+                  ◀ ก่อนหน้า
+                </button>
+                <span className="text-slate-400">
+                  หน้า <strong className="text-cyan-300">{safeTxPage}</strong> / {txTotalPages} (ทั้งหมด {filteredTxLogs.length} รายการ)
+                </span>
+                <button
+                  type="button"
+                  disabled={safeTxPage >= txTotalPages}
+                  onClick={() => setTxPage((p) => Math.min(txTotalPages, p + 1))}
+                  className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
+                >
+                  ถัดไป ▶
+                </button>
+              </div>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 };

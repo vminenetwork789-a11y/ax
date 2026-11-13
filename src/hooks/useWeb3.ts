@@ -803,6 +803,26 @@ export function useWeb3() {
     }
   };
 
+  const reportTxToServer = (payload: {
+    txHash?: string | null;
+    actionType: string;
+    title: string;
+    userAddress?: string;
+    mainNodeId?: number;
+    nodeId?: number;
+    rank?: number;
+    amountUsdt?: number;
+    blockNumber?: number;
+    details?: string;
+  }) => {
+    if (!payload.txHash || !/^0x[a-fA-F0-9]{64}$/.test(payload.txHash)) return;
+    fetch('/api/transactions/record', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...payload, source: 'WEB3_CLIENT' }),
+    }).catch(() => {});
+  };
+
   const releaseQueueTicket = async (ticketId: string) => {
     try {
       await fetch('/api/queue/release', {
@@ -1078,6 +1098,19 @@ export function useWeb3() {
       if (activeTicket?.ticketId) {
         await confirmQueueTicket(activeTicket.ticketId, receipt.hash);
       }
+      reportTxToServer({
+        txHash: receipt?.hash || regTx.hash,
+        actionType: countToReg > 1 ? 'BATCH_REGISTER' : 'REGISTER',
+        title:
+          countToReg > 1
+            ? `สมัครแบบกลุ่ม (${countToReg} โหนด)`
+            : `สมัครสมาชิกใหม่ (Rank 1)`,
+        userAddress: userAddr,
+        rank: 1,
+        amountUsdt: countToReg * r1UnitPrice,
+        blockNumber: receipt?.blockNumber,
+        details: `Sponsor #${sponsorNodeId}`,
+      });
 
       setTxState({
         isLoading: false,
@@ -1210,6 +1243,17 @@ export function useWeb3() {
       }));
 
       const receipt = await batchTx.wait();
+
+      reportTxToServer({
+        txHash: receipt?.hash || batchTx.hash,
+        actionType: 'BATCH_REGISTER',
+        title: `สมัครแบบกลุ่ม (Batch ${count} โหนด)`,
+        userAddress: userAddr,
+        rank: 1,
+        amountUsdt: count * 5,
+        blockNumber: receipt?.blockNumber,
+        details: `Sponsor #${sponsorNodeId}`,
+      });
 
       setTxState({
         isLoading: false,
@@ -1438,6 +1482,17 @@ export function useWeb3() {
           const upgradeTimeoutMsg = `หมดเวลาการตรวจสอบธุรกรรมอัปเกรดแรงค์ ${targetRank} (เกิน 2.5 นาที) การอัปเกรดไม่สำเร็จทันที`;
           const receipt = await waitTxWithTimeout(upgradeTx, RANK_UPGRADE_TIMEOUT_MS, upgradeTimeoutMsg);
 
+          reportTxToServer({
+            txHash: receipt?.hash || upgradeTx.hash,
+            actionType: 'UPGRADE',
+            title: `อัปเกรด${mIdNum > 0 ? `รหัสหลัก #${mIdNum} ` : ''}→ Rank ${targetRank}`,
+            userAddress: mainIdOwner || userAddr,
+            mainNodeId: mIdNum > 0 ? mIdNum : undefined,
+            rank: targetRank,
+            amountUsdt: nominalPrice,
+            blockNumber: receipt?.blockNumber,
+          });
+
           setTxState({
             isLoading: false,
             step: 'สำเร็จ!',
@@ -1580,6 +1635,15 @@ export function useWeb3() {
       }));
 
       const receipt = await tx.wait();
+      reportTxToServer({
+        txHash: receipt?.hash || tx.hash,
+        actionType: 'AUTO_ID',
+        title: `แตก Auto New Main ID${mIdNum > 0 ? ` (Main #${mIdNum})` : ''}`,
+        userAddress: userAddr,
+        mainNodeId: mIdNum > 0 ? mIdNum : undefined,
+        rank: 1,
+        blockNumber: receipt?.blockNumber,
+      });
       const totalAfter = Number(await matrixContract.totalNodesInRank(1).catch(() => BigInt(totalBefore)));
       const createdNodesCount = Math.max(0, totalAfter - totalBefore);
 
@@ -1661,6 +1725,15 @@ export function useWeb3() {
         }));
 
         receipt = await tx.wait();
+        reportTxToServer({
+          txHash: receipt?.hash || tx.hash,
+          actionType: 'EXTRA_ID',
+          title: `แตก Auto Extra ID${mIdNum > 0 ? ` (Main #${mIdNum})` : ''} ใน Rank ${currentRank}`,
+          userAddress: userAddr,
+          mainNodeId: mIdNum > 0 ? mIdNum : undefined,
+          rank: currentRank,
+          blockNumber: receipt?.blockNumber,
+        });
         const totalAfter = Number(await matrixContract.totalNodesInRank(currentRank).catch(() => BigInt(totalBefore)));
         createdNodesCount = Math.max(0, totalAfter - totalBefore);
       } catch (chainErr) {
