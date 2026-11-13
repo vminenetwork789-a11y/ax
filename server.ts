@@ -2039,7 +2039,7 @@ function reconcileRankTreeLinks(nodes: IndexedTreeNode[]): IndexedTreeNode[] {
   return nodes;
 }
 
-// Reconcile Pool 3 (New Extra ID Pool: Vault R4-27) -> Loop Rank 27 down to Rank 2 (10,000 -> ... -> 10 USDT)
+// Reconcile Pool 3 (New Extra ID Pool: Vault R4-18) -> Loop Rank 18 down to Rank 2 (5,000 -> ... -> 10 USDT)
 function findExtraIdPlacementInRankNodes(
   rNodes: IndexedTreeNode[],
   sponsorMainId: number
@@ -2370,12 +2370,19 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
   const extraR2To3MinR1IdByMain = new Map<number, number>();
   const usedExtraR2To3 = new Set<number>();
 
-  const LEGACY_CONTRACT_PRICES_USDT = [
-    10, 20, 30, 40, 50, 60, 80, 100, 200, 300,
-    500, 700, 1000, 1500, 2000, 4000, 6000, 10000,
-  ];
   const activeContractLower = (matrixDB.contractAddress || CONTRACT_ADDRESS).toLowerCase();
+  const LEGACY_CONTRACT_PRICES_USDT =
+    activeContractLower === '0xaa38a606402df541ee4df81ae0c8bcdacdd12fe6'
+      ? [
+          10, 20, 30, 40, 50, 60, 80, 100, 200, 300,
+          500, 700, 900, 1000, 2000, 3000, 4000, 5000,
+        ]
+      : [
+          10, 20, 30, 40, 50, 60, 80, 100, 200, 300,
+          500, 700, 1000, 1500, 2000, 4000, 6000, 10000,
+        ];
   const usesLegacyOnChainScale =
+    activeContractLower === '0xaa38a606402df541ee4df81ae0c8bcdacdd12fe6' ||
     activeContractLower === '0x49a754084903678b7d46ff2934edb037cd1ab518' ||
     activeContractLower === '0x8b2ef84f543f5c1dfa8240a1853d63efe66006eb' ||
     sortedR1.some((m) => {
@@ -2723,13 +2730,20 @@ function reconcileAutoExtraIdsAcrossRanks(): Array<{
   const autoMainSourceMap = reconcileRank1AutoMainIds();
 
   // 3. Normalize per-rank nodeVaults to strictly match the 5 USDT base price schedule (RANK_PRICES_USDT)
-  const LEGACY_CONTRACT_PRICES_USDT = [
-    10, 20, 30, 40, 50, 60, 80, 100, 200, 300,
-    500, 700, 1000, 1500, 2000, 4000, 6000, 10000,
-  ];
   const r1Nodes = matrixDB.nodesByRank[1] || [];
   const activeContractAddrLower = (matrixDB.contractAddress || CONTRACT_ADDRESS).toLowerCase();
+  const LEGACY_CONTRACT_PRICES_USDT =
+    activeContractAddrLower === '0xaa38a606402df541ee4df81ae0c8bcdacdd12fe6'
+      ? [
+          10, 20, 30, 40, 50, 60, 80, 100, 200, 300,
+          500, 700, 900, 1000, 2000, 3000, 4000, 5000,
+        ]
+      : [
+          10, 20, 30, 40, 50, 60, 80, 100, 200, 300,
+          500, 700, 1000, 1500, 2000, 4000, 6000, 10000,
+        ];
   const isLegacyContract =
+    activeContractAddrLower === '0xaa38a606402df541ee4df81ae0c8bcdacdd12fe6' ||
     activeContractAddrLower === '0x49a754084903678b7d46ff2934edb037cd1ab518' ||
     activeContractAddrLower === '0x8b2ef84f543f5c1dfa8240a1853d63efe66006eb';
 
@@ -3337,6 +3351,9 @@ async function cleanupWebSocket(): Promise<void> {
         if (typeof rawWs.removeAllListeners === 'function') {
           rawWs.removeAllListeners();
         }
+        if (typeof rawWs.on === 'function') {
+          rawWs.on('error', () => {});
+        }
         rawWs.onerror = () => {};
         rawWs.onclose = () => {};
       }
@@ -3420,7 +3437,7 @@ function startWsHeartbeat(): void {
 }
 
 /**
- * ตรวจสอบคิวโคลนตกค้าง + คิวแตก Auto ID (10 USDT) + คิวแตก Extra ID (R18->R2) ผ่าน HTTP Provider
+ * ตรวจสอบคิวโคลนตกค้าง + คิวแตก Auto ID (5 USDT) + คิวแตก Extra ID (R18->R2) ผ่าน HTTP Provider
  * และซิงค์ฐานข้อมูลผังไบนารี่ทันที
  */
 async function checkAndProcessBotCloneQueue(triggerReason: string): Promise<void> {
@@ -5065,8 +5082,11 @@ async function startApp() {
           );
           for (const item of chunkResults) {
             if (item) {
-              const prevCreatedAt = mergedMap.get(item.id)?.createdAt;
-              item.createdAt = prevCreatedAt || new Date().toISOString();
+              const prevExisting = mergedMap.get(item.id);
+              item.createdAt = prevExisting?.createdAt || new Date().toISOString();
+              if (prevExisting?.isAdminFreeUpgrade) {
+                item.isAdminFreeUpgrade = true;
+              }
               mergedMap.set(item.id, item);
               newlyFetchedNodes.push(item);
             }
@@ -5094,17 +5114,26 @@ async function startApp() {
             );
             for (const pItem of refreshedNodes) {
               if (pItem) {
-                const prevCreatedAt = mergedMap.get(pItem.id)?.createdAt;
-                if (prevCreatedAt) pItem.createdAt = prevCreatedAt;
+                const prevExisting = mergedMap.get(pItem.id);
+                if (prevExisting?.createdAt) pItem.createdAt = prevExisting.createdAt;
+                if (prevExisting?.isAdminFreeUpgrade) pItem.isAdminFreeUpgrade = true;
                 mergedMap.set(pItem.id, pItem);
               }
             }
           }
         }
 
-        // Re-attach any un-synced local database-upgraded Main IDs (never re-attach stale local clones on top of on-chain clones)
+        // Re-attach any un-synced local database-upgraded Main IDs & preserve isAdminFreeUpgrade flags across clones
         for (const loc of localUpgradedNodes) {
-          if (loc.isClone) continue;
+          if (loc.isClone) {
+            if (loc.isAdminFreeUpgrade && mergedMap.has(loc.id)) {
+              const existingClone = mergedMap.get(loc.id)!;
+              if (existingClone.isClone) {
+                existingClone.isAdminFreeUpgrade = true;
+              }
+            }
+            continue;
+          }
           const matchingChainNode = Array.from(mergedMap.values()).find(
             (n) =>
               !n.isLocalUpgrade &&
@@ -5115,9 +5144,12 @@ async function startApp() {
           if (matchingChainNode) {
             if (loc.isAdminFreeUpgrade) {
               matchingChainNode.isAdminFreeUpgrade = true;
-              const trigClone = mergedMap.get(matchingChainNode.id + 1);
-              if (trigClone && trigClone.isClone) {
+              let scanId = matchingChainNode.id + 1;
+              while (true) {
+                const trigClone = mergedMap.get(scanId);
+                if (!trigClone || !trigClone.isClone) break;
                 trigClone.isAdminFreeUpgrade = true;
+                scanId++;
               }
             }
             continue;
@@ -6248,7 +6280,10 @@ async function startApp() {
             if (pObj.leftChild > 0 && r1NodesMap.has(pObj.leftChild) && !visitedSubtree.has(pObj.leftChild)) {
               visitedSubtree.add(pObj.leftChild);
               nextFrontier.push(pObj.leftChild);
-              leftNodeIds.push(pObj.leftChild);
+              const lcObj = r1NodesMap.get(pObj.leftChild);
+              if (!lcObj?.isAdminFreeUpgrade) {
+                leftNodeIds.push(pObj.leftChild);
+              }
             }
             if (pObj.rightChild > 0 && r1NodesMap.has(pObj.rightChild) && !visitedSubtree.has(pObj.rightChild)) {
               visitedSubtree.add(pObj.rightChild);
@@ -6274,9 +6309,10 @@ async function startApp() {
           currentFrontier = nextFrontier;
         }
 
-        const receivedLevelsCount = tiersBreakdown.filter((t) => t.leftPayingNodesCount > 0 || t.totalNodesInTier > 0).length;
+        const receivedLevelsCount = tiersBreakdown.filter((t) => t.leftPayingNodesCount > 0).length;
         const remainingLevelsCount = Math.max(0, 15 - receivedLevelsCount);
         const perTierStr = tiersBreakdown
+          .filter((t) => t.leftPayingNodesCount > 0)
           .map((t) => `ชั้น ${t.tier}: ${t.amountUsdt.toFixed(2)} USDT (${t.leftPayingNodesCount} เม็ดซ้าย)`)
           .join(', ');
 
@@ -8383,10 +8419,13 @@ async function startApp() {
             const pNode = rList.find((n) => n.id === chainNode.parentId);
             const isLeft = pNode ? pNode.leftChild === chainNode.id : true;
             if (pNode && pNode.rightChild === chainNode.id) {
-              const trigClone = rList.find((n) => n.id === chainNode.id + 1 && n.isClone);
-              if (trigClone) {
+              let scanId = chainNode.id + 1;
+              while (true) {
+                const trigClone = rList.find((n) => n.id === scanId);
+                if (!trigClone || !trigClone.isClone) break;
                 trigClone.isAdminFreeUpgrade = true;
                 onChainClonesCount++;
+                scanId++;
               }
             }
             onChainUpgradedRanks.push(r);
@@ -9051,6 +9090,43 @@ async function startApp() {
         immediateSave: true,
       });
       await syncAllMatrixDatabase(CONTRACT_ADDRESS, true).catch(() => {});
+
+      // If Admin executed adminUpgradeRank / adminUpgradeRankForMainId on-chain, tag all NodeCreated nodes & clones from this receipt as isAdminFreeUpgrade = true
+      if (action === 'adminUpgradeRankForMainId' || action === 'adminUpgradeRank') {
+        try {
+          const eventIface = new ethers.Interface([
+            'event NodeCreated(uint8 indexed rank, uint256 indexed nodeId, address indexed owner, address directSponsor, uint256 parentId, bool isLeft, bool isClone, bool isExtraId)',
+          ]);
+          let taggedAny = false;
+          for (const log of receipt?.logs || []) {
+            try {
+              const parsed = eventIface.parseLog(log);
+              if (parsed && parsed.name === 'NodeCreated') {
+                const evRank = Number(parsed.args.rank || 0);
+                const evNodeId = Number(parsed.args.nodeId || 0);
+                if (evRank >= 2 && evRank <= 18 && evNodeId > 1) {
+                  const targetNode = (matrixDB.nodesByRank[evRank] || []).find((n) => n.id === evNodeId);
+                  if (targetNode) {
+                    targetNode.isAdminFreeUpgrade = true;
+                    taggedAny = true;
+                  }
+                }
+              }
+            } catch {
+              // ignore non-NodeCreated logs
+            }
+          }
+          if (taggedAny) {
+            reconcileAutoExtraIdsAcrossRanks();
+            rebuildDatabaseRewardLogsFromNodes();
+            rebuildDatabaseUpgradeLogsFromNodes();
+            saveMatrixDBToDisk(true);
+            broadcastAllMatrixUpdates();
+          }
+        } catch {
+          // ignore parse errors
+        }
+      }
 
       res.json({
         success: true,
@@ -9876,7 +9952,7 @@ async function startApp() {
       return res.json({
         success: true,
         message: `Deploy บน ${networkName} สำเร็จ! (1 กระเป๋าสมัครได้ไม่จำกัด)`,
-        logs: `Compiling contracts/FractalFlowMatrix27.sol (Solidity ^0.8.20)...\nNetwork: ${networkName} (Chain ID: ${chainId})\nUSDT Token: ${usdtAddress}\nConstructor Args: (_usdt: ${usdtAddress}, _allSellWallet, _botWallet, _familyPool, _rootUser, _usdtDecimals: 6)\nInitialized 27 Ranks (5 USDT -> 10,000 USDT)\nContract deployed at: ${simulatedNewAddress}\nTransaction: ${txHash}`,
+        logs: `Compiling contracts/FractalFlowMatrix27.sol (Solidity ^0.8.20)...\nNetwork: ${networkName} (Chain ID: ${chainId})\nUSDT Token: ${usdtAddress}\nConstructor Args: (_usdt: ${usdtAddress}, _allSellWallet, _botWallet, _familyPool, _rootUser, _usdtDecimals: 6)\nInitialized 18 Ranks (5 USDT -> 5,000 USDT)\nContract deployed at: ${simulatedNewAddress}\nTransaction: ${txHash}`,
         data: {
           deployedContractAddress: simulatedNewAddress,
           txHash,
@@ -10362,7 +10438,7 @@ async function startApp() {
     process.env.DISABLE_HMR = 'true';
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true, hmr: false, ws: false, watch: null },
+      server: { middlewareMode: true, hmr: false, ws: false, watch: null, allowedHosts: true },
       appType: 'spa',
     });
     app.use(vite.middlewares);

@@ -341,7 +341,21 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
             details: `Function: ${actionName}`,
           }),
         }).catch(() => {});
-        await fetch('/api/db/sync', { method: 'POST' }).catch(() => {});
+        if (actionName === 'adminUpgradeRankForMainId' || actionName === 'adminUpgradeRank') {
+          await fetch('/api/admin/upgrade-rank', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              targetUser: params.targetUser,
+              mainId: params.mainId ? Number(params.mainId) : undefined,
+              targetRank: Number(params.targetRank),
+              onChainConfirmed: true,
+              txHash: hash,
+            }),
+          }).catch(() => {});
+        } else {
+          await fetch('/api/db/sync', { method: 'POST' }).catch(() => {});
+        }
         await fetchAdminOverview();
         onRefreshOnChainData();
         setActionStatus({
@@ -1239,7 +1253,7 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4">
               <div className="border-b border-slate-800 pb-3">
                 <h3 className="text-sm font-bold text-amber-300">
-                  8 & 9. สั่งประมวลผลกระปุก Pool 2 เพื่อแตก Auto ID (10 USDT) ในผัง Rank 1
+                  8 & 9. สั่งประมวลผลกระปุก Pool 2 เพื่อแตก Auto ID (5 USDT) ในผัง Rank 1
                 </h3>
                 <p className="text-[11px] font-mono text-slate-400 mt-0.5">
                   checkAndProcessAutoNewMainIdForNode(uint256 _mainNodeId) & checkAndProcessAutoNewMainId(address _user)
@@ -1428,7 +1442,7 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
                       setActionStatus({
                         type: 'loading',
                         title: 'กำลังสั่งรัน WS-Bot Keeper ตรวจสอบทุก Main ID...',
-                        message: 'ตรวจสอบคิว Auto ID (10 USDT), Extra ID (R18->R2) และซิงค์ข้อมูลจากเชน',
+                        message: 'ตรวจสอบคิว Auto ID (5 USDT), Extra ID (R18->R2) และซิงค์ข้อมูลจากเชน',
                       });
                       try {
                         const res = await fetch('/api/ws-bot/trigger-check', { method: 'POST' });

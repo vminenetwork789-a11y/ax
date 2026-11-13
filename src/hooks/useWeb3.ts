@@ -942,8 +942,22 @@ export function useWeb3() {
         throw new Error(`Sponsor Node ID #${sponsorNodeId} ไม่ถูกต้อง: ${reason}`);
       }
 
-      // 2. Get Rank 1 price (5 USDT)
+      // 2. Get Rank 1 price (5 USDT) and verify deployed contract price matches
       const r1UnitPrice = RANK_PRICES_USDT[0] || 5;
+      try {
+        const onChainR1Raw: bigint = await matrixContract.rankPrice(1);
+        const onChainR1Usdt = Number(ethers.formatUnits(onChainR1Raw, usdtDecimals));
+        if (Math.abs(onChainR1Usdt - r1UnitPrice) > 0.01) {
+          throw new Error(
+            `ONCHAIN_PRICE_MISMATCH: สัญญาบนเชนตั้งราคา Rank 1 ไว้ที่ ${onChainR1Usdt} USDT ไม่ตรงกับราคาปัจจุบัน (${r1UnitPrice} USDT) — ใช้ระบบสมัครราคา ${r1UnitPrice} USDT`
+          );
+        }
+      } catch (priceCheckErr: any) {
+        if (String(priceCheckErr?.message || '').includes('ONCHAIN_PRICE_MISMATCH')) {
+          throw priceCheckErr;
+        }
+      }
+
       const price: bigint = ethers.parseUnits(String(r1UnitPrice), usdtDecimals);
       const totalCost = price * BigInt(countToReg);
 
@@ -1195,6 +1209,20 @@ export function useWeb3() {
       }
 
       const r1UnitPrice = RANK_PRICES_USDT[0] || 5;
+      try {
+        const onChainR1Raw: bigint = await matrixContract.rankPrice(1);
+        const onChainR1Usdt = Number(ethers.formatUnits(onChainR1Raw, usdtDecimals));
+        if (Math.abs(onChainR1Usdt - r1UnitPrice) > 0.01) {
+          throw new Error(
+            `ONCHAIN_PRICE_MISMATCH: สัญญาบนเชนตั้งราคา Rank 1 ไว้ที่ ${onChainR1Usdt} USDT ไม่ตรงกับราคาปัจจุบัน (${r1UnitPrice} USDT)`
+          );
+        }
+      } catch (priceCheckErr: any) {
+        if (String(priceCheckErr?.message || '').includes('ONCHAIN_PRICE_MISMATCH')) {
+          throw priceCheckErr;
+        }
+      }
+
       const unitPrice: bigint = ethers.parseUnits(String(r1UnitPrice), usdtDecimals);
 
       const totalCost = unitPrice * BigInt(count);
@@ -1250,7 +1278,7 @@ export function useWeb3() {
         title: `สมัครแบบกลุ่ม (Batch ${count} โหนด)`,
         userAddress: userAddr,
         rank: 1,
-        amountUsdt: count * 5,
+        amountUsdt: count * r1UnitPrice,
         blockNumber: receipt?.blockNumber,
         details: `Sponsor #${sponsorNodeId}`,
       });
@@ -1260,7 +1288,7 @@ export function useWeb3() {
         step: 'สำเร็จ!',
         txHash: receipt.hash,
         error: null,
-        successMessage: `🎉 สมัครแบบกลุ่ม (Batch Registration ${count} โหนด = ${count * 5} USDT) สำเร็จเรียบร้อย!`,
+        successMessage: `🎉 สมัครแบบกลุ่ม (Batch Registration ${count} โหนด = ${count * r1UnitPrice} USDT) สำเร็จเรียบร้อย!`,
       });
 
       await fetch('/api/db/sync', { method: 'POST' }).catch(() => {});
@@ -1272,6 +1300,45 @@ export function useWeb3() {
       }
       return receipt;
     } catch (err: any) {
+      const msgStr = String(err?.message || '');
+      if (msgStr.includes('ONCHAIN_PRICE_MISMATCH')) {
+        try {
+          const targetOwner = account || '';
+          if (targetOwner) {
+            const regRes = await fetch('/api/matrix/register', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                owner: targetOwner,
+                sponsorNodeId,
+                targetParentId: targetParentIds?.[0],
+                isLeft: isLefts?.[0],
+                count,
+              }),
+            });
+            const regData = await regRes.json();
+            if (regRes.ok && regData?.success) {
+              const r1UnitPrice = RANK_PRICES_USDT[0] || 5;
+              setTxState({
+                isLoading: false,
+                step: 'สำเร็จ!',
+                txHash: regData.txHash || null,
+                error: null,
+                successMessage:
+                  regData.message ||
+                  `🎉 สมัครแบบกลุ่ม (${count} โหนด = ${count * r1UnitPrice} USDT) สำเร็จเรียบร้อย!`,
+              });
+              await refreshUserData(regData.owner || targetOwner);
+              if (typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('matrix:tree:refresh'));
+              }
+              return regData;
+            }
+          }
+        } catch (dbErr) {
+          console.error('Database fallback batch register error:', dbErr);
+        }
+      }
       console.error('Batch Register error:', err);
       const errorMsg = err?.reason || err?.shortMessage || err?.message || 'การทำรายการ registerBatch ล้มเหลว';
       setTxState({
@@ -1393,6 +1460,21 @@ export function useWeb3() {
               successMessage: null,
             });
             return;
+          }
+
+          // 2. Verify deployed contract rankPrice(targetRank) matches nominalPrice before sending on-chain tx
+          try {
+            const onChainRankPriceRaw: bigint = await matrixContract.rankPrice(targetRank);
+            const onChainRankPriceUsdt = Number(ethers.formatUnits(onChainRankPriceRaw, usdtDecimals));
+            if (Math.abs(onChainRankPriceUsdt - nominalPrice) > 0.01) {
+              throw new Error(
+                `ONCHAIN_PRICE_MISMATCH: สัญญาบนเชนตั้งราคา Rank ${targetRank} ไว้ที่ ${onChainRankPriceUsdt} USDT ไม่ตรงกับตารางราคาใหม่ (${nominalPrice} USDT) — ระบบดำเนินการผ่าน Upgrade Engine ในราคา ${nominalPrice} USDT`
+              );
+            }
+          } catch (priceErr: any) {
+            if (String(priceErr?.message || '').includes('ONCHAIN_PRICE_MISMATCH')) {
+              throw priceErr;
+            }
           }
 
           const targetPrice: bigint = ethers.parseUnits(nominalPrice.toString(), usdtDecimals);
@@ -1952,11 +2034,7 @@ export function useWeb3() {
             }
             const dec = effectiveVaultBn >= 100000000000000n || rankInfo[3] >= 100000000000000n ? 18 : 6;
             formattedVault = Number(ethers.formatUnits(effectiveVaultBn, dec)).toFixed(2);
-            if (rankInfo[3] > 0n) {
-              formattedNextPrice = `${Number(ethers.formatUnits(rankInfo[3], dec)).toFixed(2)} USDT`;
-            } else {
-              formattedNextPrice = 'Max Rank';
-            }
+            formattedNextPrice = nextPriceNum > 0 ? `${nextPriceNum.toFixed(2)} USDT` : 'Max Rank';
           } catch {
             formattedVault = '0.00';
           }

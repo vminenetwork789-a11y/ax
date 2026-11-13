@@ -81,6 +81,7 @@ export interface EnrichedBinaryNode {
   isClone: boolean;
   isExtraId: boolean;
   isAutoMainId: boolean;
+  isAdminFreeUpgrade?: boolean;
   // Clone & Lineage Metadata
   originMainId: number; // รหัสหลัก (Primary Main ID of this owner/lineage, e.g. #1, #2, #7)
   spawnedFromNodeId: number; // Exact node whose Right child triggered this clone
@@ -1974,6 +1975,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                 rightChild: 0,
                 isClone: true,
                 isExtraId: false,
+                isAdminFreeUpgrade: Boolean(template?.isAdminFreeUpgrade || trigOriginNode?.isAdminFreeUpgrade),
                 originMainId: cloneOrigMainId,
                 directSponsorNodeId: savedSponsorId,
                 nodeVault: 0,
@@ -3300,7 +3302,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         const ownerKey = n.owner.toLowerCase();
         const firstMainOfOwner = ownerPrimaryNodeMap.get(ownerKey) || n.id;
 
-        // 1. Check if this node was spawned as an Auto New Main ID from Pool 2 (Rank 1..3 Vault >= 10 USDT)
+        // 1. Check if this node was spawned as an Auto New Main ID from Pool 2 (Rank 1..3 Vault >= 5 USDT)
         if (!n.isClone && !n.isExtraId && n.id > firstMainOfOwner) {
           const explicitSponsorId = onChainSponsorNodeMap.get(n.id) || 0;
           const isBackendTaggedAuto =
@@ -3978,6 +3980,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           rightChild: n.rightChild,
           isClone: n.isClone,
           isExtraId: n.isExtraId,
+          isAdminFreeUpgrade: Boolean(n.isAdminFreeUpgrade),
           isAutoMainId:
             !n.isClone &&
             !n.isExtraId &&
@@ -4172,7 +4175,10 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             if (pObj.leftChild > 0 && rawNodes.has(pObj.leftChild) && !visitedSub.has(pObj.leftChild)) {
               visitedSub.add(pObj.leftChild);
               nextFrontier.push(pObj.leftChild);
-              leftNodeIds.push(pObj.leftChild);
+              const lcObj = rawNodes.get(pObj.leftChild);
+              if (!lcObj?.isAdminFreeUpgrade) {
+                leftNodeIds.push(pObj.leftChild);
+              }
             }
             if (pObj.rightChild > 0 && rawNodes.has(pObj.rightChild) && !visitedSub.has(pObj.rightChild)) {
               visitedSub.add(pObj.rightChild);
@@ -4198,7 +4204,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           currentFrontier = nextFrontier;
         }
 
-        const receivedLevelsCount = tiersBreakdown.length;
+        const receivedLevelsCount = tiersBreakdown.filter((t) => t.leftPayingNodesCount > 0).length;
         const remainingLevelsCount = Math.max(0, 15 - receivedLevelsCount);
         const clonesLvlTotal = !node.isClone
           ? Number(Math.max(0, node.unilevelRewardAllNodes - thisNodeLvlTotal).toFixed(2))
@@ -8025,7 +8031,10 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
               )}
 
               {/* Section 1: Summary Cards (Node Earnings + Main ID Cumulative & 3 Pools) */}
-              {modalNode.isExtraLineage ? (
+              {modalNode.isExtraLineage ? (() => {
+                const extraLeftNode = modalNode.leftChild > 0 ? activeNodesMap.get(modalNode.leftChild) : undefined;
+                const isPayingExtraLeft = modalNode.leftChild > 0 && !extraLeftNode?.isAdminFreeUpgrade;
+                return (
                 <div className="rounded-xl bg-[#0d1829] border border-cyan-500/45 p-3.5 space-y-2 text-xs">
                   <div className="flex items-center justify-between border-b border-cyan-500/20 pb-2">
                     <span className="font-bold text-cyan-300 text-sm">
@@ -8041,7 +8050,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                         30% ค่าแนะนำ → ส่งให้ #{modalNode.directUplineNodeId || 1}
                       </span>
                       <span className="text-emerald-400 font-extrabold text-sm">
-                        {modalNode.leftChild > 0
+                        {isPayingExtraLeft
                           ? `+${((RANK_PRICES_USDT[modalNode.rank - 1] || 10) * 0.3).toFixed(2)} USDT`
                           : '0.00 USDT'}
                       </span>
@@ -8051,7 +8060,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                         30% ค่าชั้น → ส่งให้ #{modalNode.directUplineNodeId || 1}
                       </span>
                       <span className="text-cyan-300 font-extrabold text-sm">
-                        {modalNode.leftChild > 0
+                        {isPayingExtraLeft
                           ? `+${((RANK_PRICES_USDT[modalNode.rank - 1] || 10) * 0.3).toFixed(2)} USDT`
                           : '0.00 USDT'}
                       </span>
@@ -8061,14 +8070,15 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                         35% Vault → เข้า Extra Pool ของ #{modalNode.directUplineNodeId || 1}
                       </span>
                       <span className="text-rose-400 font-extrabold text-sm">
-                        {modalNode.leftChild > 0
+                        {isPayingExtraLeft
                           ? `+${((RANK_PRICES_USDT[modalNode.rank - 1] || 10) * 0.35).toFixed(2)} USDT`
                           : '0.00 USDT'}
                       </span>
                     </div>
                   </div>
                 </div>
-              ) : (
+                );
+              })() : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {/* Box 1 (Moved to Top): ผลประโยชน์สะสมของรหัสหลัก & 3 Pools + ปุ่มอัพ Rank */}
                   <div className="rounded-xl bg-[#10162f] border border-indigo-500/40 p-3.5 space-y-2.5">
