@@ -8188,21 +8188,29 @@ async function startApp() {
         fetchWalletBalances(familyAddr),
       ]);
 
-      // Build list of all Main IDs in Rank 1
+      // Build list of all Main IDs & Auto IDs in Rank 1
+      const autoMainSourceMap = reconcileRank1AutoMainIds();
       const r1Nodes = matrixDB.nodesByRank[1] || [];
       const mainNodesR1 = r1Nodes
-        .filter((n) => !n.isClone && !n.isExtraId)
+        .filter((n) => !n.isClone && !n.isExtraId && !n.isSyntheticExtra)
         .sort((a, b) => a.id - b.id);
 
       const mainIdList = mainNodesR1.map((m) => {
         const stats = computeMainIdDatabaseStats(m.id);
+        const isAutoId =
+          autoMainSourceMap.has(m.id) ||
+          m.originType === 'AUTO_NEW_MAIN' ||
+          m.originType === 'AUTO_MAIN';
         return {
           mainId: m.id,
+          isAutoId,
+          spawnedByMainId: isAutoId ? autoMainSourceMap.get(m.id) || m.directSponsorNodeId || 1 : 0,
           owner: m.owner,
           directSponsorNodeId: m.directSponsorNodeId || 1,
           directSponsor: m.directSponsor,
           parentId: m.parentId,
-          originType: m.originType || 'MANUAL_REGISTER',
+          isLeft: Boolean(m.isLeft),
+          originType: isAutoId ? 'AUTO_NEW_MAIN' : m.originType || 'MANUAL_REGISTER',
           currentRank: stats.currentRank,
           window5Start: stats.window5Start,
           window5End: stats.window5End,
@@ -8212,13 +8220,57 @@ async function startApp() {
         };
       });
 
+      // Collect Extra IDs and Cloning IDs across all Ranks 1..18
+      const extraIdsList: any[] = [];
+      const cloneIdsList: any[] = [];
       const rankCountsMap: Record<number, number> = {};
       let totalNodesAllRanks = 0;
+
       for (let r = 1; r <= 18; r++) {
-        const cnt = (matrixDB.nodesByRank[r] || []).filter((n) => !n.isSyntheticExtra).length;
-        rankCountsMap[r] = cnt;
-        totalNodesAllRanks += cnt;
+        const rList = (matrixDB.nodesByRank[r] || []).filter((n) => !n.isSyntheticExtra);
+        rankCountsMap[r] = rList.length;
+        totalNodesAllRanks += rList.length;
+
+        for (const n of rList) {
+          if (n.isClone) {
+            cloneIdsList.push({
+              nodeId: n.id,
+              rank: r,
+              owner: n.owner,
+              parentId: n.parentId,
+              isLeft: Boolean(n.isLeft),
+              directSponsorNodeId: n.directSponsorNodeId || 1,
+              originMainId: n.originMainId || n.id,
+              cloneRound: n.cloneRound || 1,
+              cloneSequence: n.cloneSequence || 1,
+              label: `Main #${n.originMainId || n.id} (โคลน R${r}-#${n.id})`,
+              nodeVault: Number(n.nodeVault || 0),
+            });
+          } else if (n.isExtraId) {
+            extraIdsList.push({
+              nodeId: n.id,
+              rank: r,
+              owner: n.owner,
+              parentId: n.parentId,
+              isLeft: Boolean(n.isLeft),
+              directSponsorNodeId: n.directSponsorNodeId || 1,
+              originMainId: n.originMainId || n.id,
+              label: `Extra R${r}-#${n.id}`,
+              nodeVault: Number(n.nodeVault || 0),
+            });
+          }
+        }
       }
+
+      const mainOnlyCount = mainIdList.filter((x) => !x.isAutoId).length;
+      const autoOnlyCount = mainIdList.filter((x) => x.isAutoId).length;
+      const idStatusCounts = {
+        main: mainOnlyCount,
+        auto: autoOnlyCount,
+        extra: extraIdsList.length,
+        clone: cloneIdsList.length,
+        total: mainIdList.length + extraIdsList.length + cloneIdsList.length,
+      };
 
       const cycleInfo = computeNextAllSellCycleInfo();
       const rawPk = (
@@ -8253,8 +8305,11 @@ async function startApp() {
           totalMainIdsRank1: mainIdList.length,
           totalNodesAllRanks,
           rankCounts: rankCountsMap,
+          idStatusCounts,
         },
         mainIds: mainIdList,
+        extraIds: extraIdsList,
+        cloneIds: cloneIdsList,
         allSell: {
           autoEnabled: allSellAutoStore.autoEnabled,
           lastExecutedCycleKey: allSellAutoStore.lastExecutedCycleKey,

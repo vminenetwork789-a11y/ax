@@ -26,6 +26,9 @@ import {
   UserCheck,
   Send,
   X,
+  Bot,
+  Crown,
+  Dna,
 } from 'lucide-react';
 
 interface AdminControlCenterProps {
@@ -125,6 +128,8 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
     nextRankPrice: '10.00 USDT',
   });
   const [memberSearch, setMemberSearch] = useState<string>('');
+  const [memberStatusTab, setMemberStatusTab] = useState<'all' | 'main' | 'auto' | 'extra' | 'clone'>('all');
+  const [memberPage, setMemberPage] = useState<number>(1);
 
   const handleCopy = (text: string) => {
     if (!text) return;
@@ -410,15 +415,105 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
     await executeDirectAdminFreeUpgrade(raw, targetRankNum);
   };
 
-  const filteredMainIds = (overview?.mainIds || []).filter((m: any) => {
+  const allAdminIdRows = (() => {
+    const mainAndAutoRows = (overview?.mainIds || []).map((m: any) => {
+      const isAuto =
+        Boolean(m.isAutoId) ||
+        m.originType === 'AUTO_NEW_MAIN' ||
+        m.originType === 'AUTO_MAIN';
+      return {
+        rowKey: `${isAuto ? 'auto' : 'main'}-${m.mainId}`,
+        statusKey: (isAuto ? 'auto' : 'main') as 'main' | 'auto',
+        idNumber: Number(m.mainId),
+        displayId: isAuto ? `Auto #${m.mainId}` : `Main #${m.mainId}`,
+        rank: Number(m.currentRank || 1),
+        rankLabel: `Rank ${m.currentRank || 1}`,
+        windowLabel: `กรอบ R${m.window5Start}–R${m.window5End}`,
+        owner: m.owner || '',
+        parentId: Number(m.parentId || 0),
+        side: m.parentId === 0 ? 'ROOT' : m.isLeft ? 'L' : 'R',
+        directSponsorNodeId: Number(m.directSponsorNodeId || 1),
+        spawnedByMainId: Number(m.spawnedByMainId || 0),
+        upgradeRankPool: Number(m.upgradeRankPool || 0),
+        newAutoIdPool: Number(m.newAutoIdPool || 0),
+        newExtraIdPool: Number(m.newExtraIdPool || 0),
+        canAdminUpgrade: true,
+        raw: m,
+      };
+    });
+
+    const extraRows = (overview?.extraIds || []).map((ex: any) => ({
+      rowKey: `extra-r${ex.rank}-${ex.nodeId}`,
+      statusKey: 'extra' as const,
+      idNumber: Number(ex.nodeId),
+      displayId: ex.label || `Extra R${ex.rank}-#${ex.nodeId}`,
+      rank: Number(ex.rank || 1),
+      rankLabel: `Rank ${ex.rank || 1}`,
+      windowLabel: `โหนด #${ex.nodeId}`,
+      owner: ex.owner || '',
+      parentId: Number(ex.parentId || 0),
+      side: ex.parentId === 0 ? 'ROOT' : ex.isLeft ? 'L' : 'R',
+      directSponsorNodeId: Number(ex.directSponsorNodeId || 1),
+      spawnedByMainId: Number(ex.originMainId || 0),
+      upgradeRankPool: Number(ex.nodeVault || 0),
+      newAutoIdPool: 0,
+      newExtraIdPool: 0,
+      canAdminUpgrade: false,
+      raw: ex,
+    }));
+
+    const cloneRows = (overview?.cloneIds || []).map((cl: any) => ({
+      rowKey: `clone-r${cl.rank}-${cl.nodeId}`,
+      statusKey: 'clone' as const,
+      idNumber: Number(cl.nodeId),
+      displayId: cl.label || `Main #${cl.originMainId} (โคลน R${cl.rank}-#${cl.nodeId})`,
+      rank: Number(cl.rank || 1),
+      rankLabel: `Rank ${cl.rank || 1}`,
+      windowLabel: `รอบที่ ${cl.cloneRound || 1}${cl.cloneSequence ? ` (ใบที่ #${cl.cloneSequence})` : ''}`,
+      owner: cl.owner || '',
+      parentId: Number(cl.parentId || 0),
+      side: cl.parentId === 0 ? 'ROOT' : cl.isLeft ? 'L' : 'R',
+      directSponsorNodeId: Number(cl.directSponsorNodeId || 1),
+      spawnedByMainId: Number(cl.originMainId || 0),
+      upgradeRankPool: Number(cl.nodeVault || 0),
+      newAutoIdPool: 0,
+      newExtraIdPool: 0,
+      canAdminUpgrade: false,
+      raw: cl,
+    }));
+
+    return [...mainAndAutoRows, ...extraRows, ...cloneRows];
+  })();
+
+  const idStatusCounts = overview?.stats?.idStatusCounts || {
+    main: allAdminIdRows.filter((r) => r.statusKey === 'main').length,
+    auto: allAdminIdRows.filter((r) => r.statusKey === 'auto').length,
+    extra: allAdminIdRows.filter((r) => r.statusKey === 'extra').length,
+    clone: allAdminIdRows.filter((r) => r.statusKey === 'clone').length,
+    total: allAdminIdRows.length,
+  };
+
+  const filteredAdminIdRows = allAdminIdRows.filter((row) => {
+    if (memberStatusTab !== 'all' && row.statusKey !== memberStatusTab) return false;
     if (!memberSearch.trim()) return true;
     const q = memberSearch.trim().toLowerCase().replace(/^#/, '');
     return (
-      String(m.mainId) === q ||
-      String(m.owner || '').toLowerCase().includes(q) ||
-      String(m.directSponsorNodeId) === q
+      String(row.idNumber) === q ||
+      row.displayId.toLowerCase().includes(q) ||
+      String(row.owner || '').toLowerCase().includes(q) ||
+      String(row.directSponsorNodeId) === q ||
+      String(row.spawnedByMainId) === q ||
+      `r${row.rank}` === q
     );
   });
+
+  const ADMIN_ID_PAGE_SIZE = 25;
+  const memberTotalPages = Math.max(1, Math.ceil(filteredAdminIdRows.length / ADMIN_ID_PAGE_SIZE));
+  const safeMemberPage = Math.min(memberPage, memberTotalPages);
+  const pagedAdminIdRows = filteredAdminIdRows.slice(
+    (safeMemberPage - 1) * ADMIN_ID_PAGE_SIZE,
+    safeMemberPage * ADMIN_ID_PAGE_SIZE
+  );
 
   const showSection = (sec: typeof activeSection) => activeSection === 'all' || activeSection === sec;
 
@@ -630,7 +725,7 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
             { id: 'autopools', label: '2. สั่งแตก Auto / Extra ID (4)' },
             { id: 'allsell', label: '3. จัดการโอนจ่าย AllSell 4%' },
             { id: 'database', label: '4. สัญญา & ซิงค์ Database' },
-            { id: 'members', label: '5. รายชื่อรหัสหลัก & ตรวจ 18 แรงค์' },
+            { id: 'members', label: '5. ข้อมูล ID ทั้ง 4 สถานะ (Main/Auto/Extra/โคลน)' },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -1656,7 +1751,7 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
       )}
 
       {/* =====================================================================
-          SECTION 5: ALL MAIN IDS TABLE & 1-CLICK ADMIN UPGRADE
+          SECTION 5: ALL IDS DIRECTORY (MAIN ID, AUTO ID, EXTRA ID, CLONE ID)
          ===================================================================== */}
       {showSection('members') && (
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4">
@@ -1665,11 +1760,11 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
               <h2 className="text-base font-bold text-white flex items-center gap-2">
                 <UserCheck className="w-4 h-4 text-emerald-400" />
                 <span>
-                  หมวดที่ 5: ตารางรหัสหลักทั้งหมดในระบบ ({overview?.stats?.totalMainIdsRank1 ?? 0} รหัสหลัก)
+                  หมวดที่ 5: ข้อมูล ID ทั้งหมดในระบบ ({idStatusCounts.total} รหัส • ครบ 4 สถานะ)
                 </span>
               </h2>
               <p className="text-xs text-slate-400 mt-0.5">
-                ดูสถานะแรงค์ปัจจุบัน, กระปุกสะสมทั้ง 3 Pool และกดเลือกเพื่อสั่ง Admin Upgrade ได้ในคลิกเดียว
+                ดึงข้อมูลแยกตามชุดสถานะ Main ID, Auto ID, Extra ID และโคลนนิ่ง (Cloning ID) พร้อมค้นหาและสั่งอัปเกรดด่วน
               </p>
             </div>
 
@@ -1678,120 +1773,289 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
               <input
                 type="text"
                 value={memberSearch}
-                onChange={(e) => setMemberSearch(e.target.value)}
-                placeholder="ค้นหาเลข #ID หรือ Wallet 0x..."
+                onChange={(e) => {
+                  setMemberSearch(e.target.value);
+                  setMemberPage(1);
+                }}
+                placeholder="ค้นหา #ID, R1..R18 หรือ Wallet 0x..."
                 className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-8 pr-3 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-emerald-500"
               />
             </div>
+          </div>
+
+          {/* 4 Status Summary Cards (Clickable to Filter) */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+            {[
+              {
+                key: 'main' as const,
+                title: 'Main ID (รหัสหลัก)',
+                count: idStatusCounts.main,
+                Icon: Crown,
+                cardClass: 'bg-sky-950/35 border-sky-500/40 text-sky-200 hover:border-sky-400',
+                badgeClass: 'bg-sky-400 text-slate-950',
+              },
+              {
+                key: 'auto' as const,
+                title: 'Auto ID (รหัสอัตโนมัติ)',
+                count: idStatusCounts.auto,
+                Icon: Bot,
+                cardClass: 'bg-amber-950/35 border-amber-500/40 text-amber-200 hover:border-amber-400',
+                badgeClass: 'bg-amber-400 text-slate-950',
+              },
+              {
+                key: 'extra' as const,
+                title: 'Extra ID (รหัสเสริม)',
+                count: idStatusCounts.extra,
+                Icon: Zap,
+                cardClass: 'bg-rose-950/35 border-rose-500/40 text-rose-200 hover:border-rose-400',
+                badgeClass: 'bg-rose-500 text-white',
+              },
+              {
+                key: 'clone' as const,
+                title: 'โคลนนิ่ง (Cloning ID)',
+                count: idStatusCounts.clone,
+                Icon: Dna,
+                cardClass: 'bg-emerald-950/35 border-emerald-500/40 text-emerald-200 hover:border-emerald-400',
+                badgeClass: 'bg-emerald-400 text-slate-950',
+              },
+            ].map((stat) => {
+              const StatIcon = stat.Icon;
+              const isSelected = memberStatusTab === stat.key;
+              return (
+                <button
+                  key={`admin-id-summary-${stat.key}`}
+                  type="button"
+                  onClick={() => {
+                    setMemberStatusTab((prev) => (prev === stat.key ? 'all' : stat.key));
+                    setMemberPage(1);
+                  }}
+                  className={`rounded-xl border p-3 text-left transition cursor-pointer flex items-center justify-between gap-2 ${stat.cardClass} ${
+                    isSelected ? 'ring-2 ring-white/80 shadow-md' : ''
+                  }`}
+                >
+                  <div className="space-y-1 min-w-0">
+                    <span
+                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black ${stat.badgeClass}`}
+                    >
+                      <StatIcon className="w-3 h-3 shrink-0" />
+                      <span>{stat.key === 'clone' ? 'CLONE ID' : `${stat.key.toUpperCase()} ID`}</span>
+                    </span>
+                    <div className="text-xs font-bold truncate">{stat.title}</div>
+                  </div>
+                  <div className="text-xl sm:text-2xl font-mono font-black text-white shrink-0">
+                    {stat.count}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Status Filter Pills */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            {[
+              { key: 'all' as const, label: `ทั้งหมด (${idStatusCounts.total})`, activeClass: 'bg-white text-slate-950 border-white' },
+              { key: 'main' as const, label: `👑 Main ID (${idStatusCounts.main})`, activeClass: 'bg-sky-400 text-slate-950 border-sky-300' },
+              { key: 'auto' as const, label: `🤖 Auto ID (${idStatusCounts.auto})`, activeClass: 'bg-amber-400 text-slate-950 border-amber-300' },
+              { key: 'extra' as const, label: `⚡ Extra ID (${idStatusCounts.extra})`, activeClass: 'bg-rose-500 text-white border-rose-400' },
+              { key: 'clone' as const, label: `🧬 โคลนนิ่ง (${idStatusCounts.clone})`, activeClass: 'bg-emerald-400 text-slate-950 border-emerald-300' },
+            ].map((pill) => (
+              <button
+                key={`admin-tab-${pill.key}`}
+                type="button"
+                onClick={() => {
+                  setMemberStatusTab(pill.key);
+                  setMemberPage(1);
+                }}
+                className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition cursor-pointer ${
+                  memberStatusTab === pill.key
+                    ? pill.activeClass
+                    : 'bg-slate-950 border-slate-800 text-slate-300 hover:bg-slate-800'
+                }`}
+              >
+                {pill.label}
+              </button>
+            ))}
           </div>
 
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse text-xs">
               <thead>
                 <tr className="border-b border-slate-800 text-slate-400">
-                  <th className="py-2.5 px-3">รหัสหลัก</th>
-                  <th className="py-2.5 px-3">ประเภท</th>
+                  <th className="py-2.5 px-3">รหัส ID</th>
+                  <th className="py-2.5 px-3">ชุดสถานะ</th>
                   <th className="py-2.5 px-3">เจ้าของ (Wallet)</th>
-                  <th className="py-2.5 px-3">ผู้แนะนำตรง</th>
-                  <th className="py-2.5 px-3">แรงค์สูงสุด</th>
-                  <th className="py-2.5 px-3 text-right">Upgrade Pool</th>
+                  <th className="py-2.5 px-3">อัพไลน์ / ผู้แนะนำ</th>
+                  <th className="py-2.5 px-3">Rank / รายละเอียด</th>
+                  <th className="py-2.5 px-3 text-right">Upgrade / Vault</th>
                   <th className="py-2.5 px-3 text-right">Auto ID Pool</th>
                   <th className="py-2.5 px-3 text-right">Extra ID Pool</th>
                   <th className="py-2.5 px-3 text-right">จัดการด่วน</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60 font-mono tabular-nums">
-                {filteredMainIds.map((m: any) => {
-                  const nextR = Math.min(18, (m.currentRank || 1) + 1);
+                {pagedAdminIdRows.map((row) => {
+                  const nextR = Math.min(18, (row.rank || 1) + 1);
+                  const statusBadge =
+                    row.statusKey === 'clone'
+                      ? {
+                          label: 'CLONE ID',
+                          cls: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
+                          Icon: Dna,
+                        }
+                      : row.statusKey === 'extra'
+                      ? {
+                          label: 'EXTRA ID',
+                          cls: 'bg-rose-500/20 text-rose-300 border-rose-500/40',
+                          Icon: Zap,
+                        }
+                      : row.statusKey === 'auto'
+                      ? {
+                          label: 'AUTO ID',
+                          cls: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
+                          Icon: Bot,
+                        }
+                      : {
+                          label: 'MAIN ID',
+                          cls: 'bg-sky-500/20 text-sky-300 border-sky-500/40',
+                          Icon: Crown,
+                        };
+                  const RowStatusIcon = statusBadge.Icon;
+
                   return (
-                    <tr key={m.mainId} className="hover:bg-slate-800/40">
-                      <td className="py-2.5 px-3 font-bold text-white">#{m.mainId}</td>
-                      <td className="py-2.5 px-3 font-sans">
-                        {m.originType === 'AUTO_MAIN' ? (
-                          <span className="text-amber-400 font-semibold">Auto ID</span>
-                        ) : (
-                          <span className="text-emerald-400 font-semibold">Main ID</span>
-                        )}
+                    <tr key={row.rowKey} className="hover:bg-slate-800/40">
+                      <td className="py-2.5 px-3 font-bold text-white whitespace-nowrap">
+                        {row.displayId}
                       </td>
-                      <td className="py-2.5 px-3 text-slate-300">
-                        <div className="flex items-center gap-1.5">
-                          <span>
-                            {m.owner?.substring(0, 6)}...{m.owner?.substring(38)}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => handleCopy(m.owner)}
-                            className="text-slate-500 hover:text-white cursor-pointer"
-                          >
-                            <Copy className="w-3 h-3" />
-                          </button>
-                        </div>
-                      </td>
-                      <td className="py-2.5 px-3 text-indigo-300">#{m.directSponsorNodeId}</td>
-                      <td className="py-2.5 px-3">
-                        <span className="text-amber-300 font-bold">Rank {m.currentRank}</span>
-                        <span className="text-slate-500 text-[10px] ml-1">
-                          (กรอบ R{m.window5Start}–R{m.window5End})
+                      <td className="py-2.5 px-3 font-sans whitespace-nowrap">
+                        <span
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10.5px] font-bold ${statusBadge.cls}`}
+                        >
+                          <RowStatusIcon className="w-3 h-3 shrink-0" />
+                          <span>{statusBadge.label}</span>
                         </span>
                       </td>
-                      <td className="py-2.5 px-3 text-right text-emerald-400 font-semibold">
-                        {Number(m.upgradeRankPool || 0).toFixed(2)} U
-                      </td>
-                      <td className="py-2.5 px-3 text-right text-amber-300">
-                        {Number(m.newAutoIdPool || 0).toFixed(2)} U
-                      </td>
-                      <td className="py-2.5 px-3 text-right text-rose-300">
-                        {Number(m.newExtraIdPool || 0).toFixed(2)} U
-                      </td>
-                      <td className="py-2.5 px-3 text-right font-sans">
-                        <div className="inline-flex items-center gap-1.5">
-                          {(m.currentRank || 1) >= 18 ? (
+                      <td className="py-2.5 px-3 text-slate-300 whitespace-nowrap">
+                        <div className="flex items-center gap-1.5">
+                          <span>
+                            {row.owner
+                              ? `${row.owner.substring(0, 6)}...${row.owner.substring(row.owner.length - 4)}`
+                              : '-'}
+                          </span>
+                          {row.owner && (
                             <button
                               type="button"
-                              disabled
-                              className="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700 text-slate-500 font-semibold text-[11px] opacity-60 cursor-not-allowed whitespace-nowrap"
+                              onClick={() => handleCopy(row.owner)}
+                              className="text-slate-500 hover:text-white cursor-pointer"
                             >
-                              🔒 อยู่ Rank 18 แล้ว (ปิดการอัพเดท)
+                              <Copy className="w-3 h-3" />
                             </button>
-                          ) : (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setUpgradeTarget(String(m.mainId));
-                                  setUpgradeRank(String(nextR));
-                                  setActiveSection('owner');
-                                  window.scrollTo({ top: 0, behavior: 'smooth' });
-                                }}
-                                className="px-2.5 py-1 rounded-lg bg-rose-600/20 hover:bg-rose-600/40 border border-rose-500/30 text-rose-300 font-semibold text-[11px] cursor-pointer whitespace-nowrap"
-                              >
-                                ตั้งค่าอัปแรงค์ #{m.mainId}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => executeDirectAdminFreeUpgrade(String(m.mainId), nextR)}
-                                disabled={isLoading}
-                                className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-[11px] cursor-pointer whitespace-nowrap disabled:opacity-50"
-                              >
-                                + ขึ้น R{nextR} ฟรีทันที
-                              </button>
-                            </>
                           )}
                         </div>
+                      </td>
+                      <td className="py-2.5 px-3 text-indigo-300 whitespace-nowrap">
+                        <div>
+                          ผู้แนะนำ: <strong>#{row.directSponsorNodeId}</strong>
+                        </div>
+                        <div className="text-[10px] text-slate-400">
+                          อัพไลน์: {row.parentId === 0 ? 'Root (#0)' : `#${row.parentId} (${row.side})`}
+                        </div>
+                      </td>
+                      <td className="py-2.5 px-3 whitespace-nowrap">
+                        <span className="text-amber-300 font-bold">{row.rankLabel}</span>
+                        <span className="text-slate-400 text-[10px] block">{row.windowLabel}</span>
+                      </td>
+                      <td className="py-2.5 px-3 text-right text-emerald-400 font-semibold whitespace-nowrap">
+                        {Number(row.upgradeRankPool || 0).toFixed(2)} U
+                      </td>
+                      <td className="py-2.5 px-3 text-right text-amber-300 whitespace-nowrap">
+                        {row.canAdminUpgrade ? `${Number(row.newAutoIdPool || 0).toFixed(2)} U` : '-'}
+                      </td>
+                      <td className="py-2.5 px-3 text-right text-rose-300 whitespace-nowrap">
+                        {row.canAdminUpgrade ? `${Number(row.newExtraIdPool || 0).toFixed(2)} U` : '-'}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-sans whitespace-nowrap">
+                        {row.canAdminUpgrade ? (
+                          <div className="inline-flex items-center gap-1.5">
+                            {(row.rank || 1) >= 18 ? (
+                              <button
+                                type="button"
+                                disabled
+                                className="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700 text-slate-500 font-semibold text-[11px] opacity-60 cursor-not-allowed whitespace-nowrap"
+                              >
+                                🔒 Rank 18 (Max)
+                              </button>
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setUpgradeTarget(String(row.idNumber));
+                                    setUpgradeRank(String(nextR));
+                                    setActiveSection('owner');
+                                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                                  }}
+                                  className="px-2.5 py-1 rounded-lg bg-rose-600/20 hover:bg-rose-600/40 border border-rose-500/30 text-rose-300 font-semibold text-[11px] cursor-pointer whitespace-nowrap"
+                                >
+                                  ตั้งค่าอัปแรงค์ #{row.idNumber}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => executeDirectAdminFreeUpgrade(String(row.idNumber), nextR)}
+                                  disabled={isLoading}
+                                  className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-[11px] cursor-pointer whitespace-nowrap disabled:opacity-50"
+                                >
+                                  + ขึ้น R{nextR} ฟรีทันที
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        ) : row.statusKey === 'extra' ? (
+                          <span className="px-2 py-1 rounded-lg bg-rose-950/60 border border-rose-500/30 text-rose-300 text-[10.5px] font-semibold">
+                            ⚡ รหัสเสริม R{row.rank} (Main #{row.spawnedByMainId})
+                          </span>
+                        ) : (
+                          <span className="px-2 py-1 rounded-lg bg-emerald-950/60 border border-emerald-500/30 text-emerald-300 text-[10.5px] font-semibold">
+                            🧬 โคลนของ Main #{row.spawnedByMainId}
+                          </span>
+                        )}
                       </td>
                     </tr>
                   );
                 })}
-                {filteredMainIds.length === 0 && (
+                {pagedAdminIdRows.length === 0 && (
                   <tr>
                     <td colSpan={9} className="py-6 text-center text-slate-500 font-sans">
-                      ไม่พบรหัสหลักที่ค้นหา
+                      ไม่พบข้อมูล ID ในชุดสถานะที่เลือก
                     </td>
                   </tr>
                 )}
               </tbody>
             </table>
           </div>
+
+          {filteredAdminIdRows.length > ADMIN_ID_PAGE_SIZE && (
+            <div className="flex items-center justify-between gap-2 pt-3 border-t border-slate-800 text-xs font-mono">
+              <button
+                type="button"
+                disabled={safeMemberPage <= 1}
+                onClick={() => setMemberPage((p) => Math.max(1, p - 1))}
+                className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
+              >
+                ◀ ก่อนหน้า
+              </button>
+              <span className="text-slate-400">
+                หน้า <strong className="text-amber-300">{safeMemberPage}</strong> / {memberTotalPages} (ทั้งหมด {filteredAdminIdRows.length} รายการ)
+              </span>
+              <button
+                type="button"
+                disabled={safeMemberPage >= memberTotalPages}
+                onClick={() => setMemberPage((p) => Math.min(memberTotalPages, p + 1))}
+                className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
+              >
+                ถัดไป ▶
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
