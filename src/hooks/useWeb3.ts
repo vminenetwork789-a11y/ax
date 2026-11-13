@@ -1971,7 +1971,12 @@ export function useWeb3() {
   const inspectRankData = useCallback(
     async (rank: number) => {
       const rankNum = Math.min(Math.max(Number(rank) || 1, 1), 18);
-      const nextPriceNum = rankNum < 18 ? RANK_PRICES_USDT[rankNum] : 0;
+      const currentPriceNum = RANK_PRICES_USDT[rankNum - 1] ?? 5;
+      const nextPriceNum = rankNum < 18 ? (RANK_PRICES_USDT[rankNum] ?? 0) : 0;
+      const formatPrice = (val: number) =>
+        `${val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDT`;
+      const formattedCurrentPrice = formatPrice(currentPriceNum);
+      const defaultNextPrice = nextPriceNum > 0 ? formatPrice(nextPriceNum) : 'Max Rank';
       const currentContract = contractAddressRef.current || CONTRACT_ADDRESS;
 
       // 1. Read from our Database first (/api/matrix/inspect-rank)
@@ -1987,7 +1992,8 @@ export function useWeb3() {
               firstNodeId: String(dbJson.firstNodeId || '0'),
               latestNodeId: String(dbJson.latestNodeId || '0'),
               upgradeVaultBalance: String(dbJson.upgradeVaultBalance || '0.00'),
-              nextRankPrice: String(dbJson.nextRankPrice || (nextPriceNum > 0 ? `${nextPriceNum.toFixed(2)} USDT` : 'Max Rank')),
+              rankPrice: String(dbJson.rankPrice || formattedCurrentPrice),
+              nextRankPrice: String(dbJson.nextRankPrice || defaultNextPrice),
             };
           }
         }
@@ -2002,7 +2008,8 @@ export function useWeb3() {
           firstNodeId: matchingVault.firstNodeId || (rankNum === 1 ? profile?.mainNodeIdRank1 || '1' : '0'),
           latestNodeId: matchingVault.latestNodeId || (rankNum === 1 ? profile?.latestCloneIdRank1 || '0' : '0'),
           upgradeVaultBalance: matchingVault.balance || '0.00',
-          nextRankPrice: nextPriceNum > 0 ? `${nextPriceNum.toFixed(2)} USDT` : 'Max Rank',
+          rankPrice: formattedCurrentPrice,
+          nextRankPrice: defaultNextPrice,
         };
       }
 
@@ -2017,7 +2024,7 @@ export function useWeb3() {
         if (targetAddr && targetAddr !== ethers.ZeroAddress) {
           const rankInfo = await matrixContract.getUserRankInfo(targetAddr, rankNum);
           let formattedVault = '0.00';
-          let formattedNextPrice = nextPriceNum > 0 ? `${nextPriceNum.toFixed(2)} USDT` : 'Max Rank';
+          const formattedNextPrice = defaultNextPrice;
 
           try {
             let effectiveVaultBn: bigint = BigInt(rankInfo[2] ?? 0);
@@ -2034,7 +2041,6 @@ export function useWeb3() {
             }
             const dec = effectiveVaultBn >= 100000000000000n || rankInfo[3] >= 100000000000000n ? 18 : 6;
             formattedVault = Number(ethers.formatUnits(effectiveVaultBn, dec)).toFixed(2);
-            formattedNextPrice = nextPriceNum > 0 ? `${nextPriceNum.toFixed(2)} USDT` : 'Max Rank';
           } catch {
             formattedVault = '0.00';
           }
@@ -2043,6 +2049,7 @@ export function useWeb3() {
             firstNodeId: rankInfo[0].toString(),
             latestNodeId: rankInfo[1].toString(),
             upgradeVaultBalance: formattedVault,
+            rankPrice: formattedCurrentPrice,
             nextRankPrice: formattedNextPrice,
           };
         }
@@ -2054,7 +2061,8 @@ export function useWeb3() {
         firstNodeId: rankNum === 1 ? profile?.mainNodeIdRank1 || '1' : '0',
         latestNodeId: rankNum === 1 ? profile?.latestCloneIdRank1 || '0' : '0',
         upgradeVaultBalance: '0.00',
-        nextRankPrice: nextPriceNum > 0 ? `${nextPriceNum.toFixed(2)} USDT` : 'Max Rank',
+        rankPrice: formattedCurrentPrice,
+        nextRankPrice: defaultNextPrice,
       };
     },
     [account, profile]

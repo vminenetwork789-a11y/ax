@@ -9229,7 +9229,10 @@ async function startApp() {
   app.get('/api/matrix/inspect-rank', async (req: Request, res: Response) => {
     const rankNum = Math.min(Math.max(Number(req.query.rank) || 1, 1), 18);
     const addrParam = String(req.query.address || '').toLowerCase();
-    const nextPriceNum = rankNum < 18 ? RANK_PRICES_USDT[rankNum] : 0;
+    const currentPriceNum = RANK_PRICES_USDT[rankNum - 1] ?? 5;
+    const nextPriceNum = rankNum < 18 ? (RANK_PRICES_USDT[rankNum] ?? 0) : 0;
+    const formatUsdtPrice = (val: number) =>
+      `${val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDT`;
 
     if (!matrixDB.nodesByRank[rankNum] || matrixDB.nodesByRank[rankNum].length === 0) {
       await syncRankIntoDatabase(rankNum, CONTRACT_ADDRESS, false);
@@ -9257,7 +9260,8 @@ async function startApp() {
       firstNodeId: String(firstNodeId),
       latestNodeId: String(latestNodeId),
       upgradeVaultBalance: vaultBal.toFixed(2),
-      nextRankPrice: nextPriceNum > 0 ? `${nextPriceNum.toFixed(2)} USDT` : 'Max Rank',
+      rankPrice: formatUsdtPrice(currentPriceNum),
+      nextRankPrice: nextPriceNum > 0 ? formatUsdtPrice(nextPriceNum) : 'Max Rank',
     });
   });
 
@@ -9406,7 +9410,7 @@ async function startApp() {
     sponsorNodeId: number,
     applicantList: Array<{ owner: string }>
   ) {
-    const pricePerRank = RANK_PRICES_USDT[rankNum - 1] || 10;
+    const pricePerRank = RANK_PRICES_USDT[rankNum - 1] || 5;
 
     const targetParentIds: string[] = [];
     const isLefts: boolean[] = [];
