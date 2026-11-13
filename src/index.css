@@ -40,6 +40,13 @@
     -webkit-overflow-scrolling: touch;
   }
 
+  .matrix-pan-viewport {
+    overflow: auto;
+    touch-action: pan-x pan-y;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
   .matrix-scroll-container::-webkit-scrollbar {
     height: 8px;
     width: 8px;

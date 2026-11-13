@@ -50,6 +50,11 @@ import {
   Calculator,
   Link2,
   Share2,
+  Move,
+  Minimize2,
+  ArrowDownLeft,
+  ArrowDownRight,
+  Info,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { emitTransactionToast } from './TransactionToast';
@@ -644,8 +649,12 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
   const [zoomScale, setZoomScale] = useState<number>(0.55);
   const [viewMode, setViewMode] = useState<'onchain' | 'demoCloneTree'>('onchain');
   const [justUpdatedBadge, setJustUpdatedBadge] = useState<boolean>(false);
-  // 0 = Auto (แสดงครบทุกชั้นที่มีข้อมูลต่อลงมาโดยอัตโนมัติ)
+  // 0 = Auto (สูงสุดไม่เกิน 15 ชั้น ตามเพดานระบบ)
+  const MAX_TREE_DEPTH = 15;
   const [maxRenderDepth, setMaxRenderDepth] = useState<number>(0);
+  const [collapsedNodeIds, setCollapsedNodeIds] = useState<Set<number>>(new Set());
+  const [selectedTreeNodeId, setSelectedTreeNodeId] = useState<number | null>(null);
+  const [isDraggingTree, setIsDraggingTree] = useState<boolean>(false);
 
   // Real-Time Auto Sync State (Default: 15 seconds for smooth, stable automatic tree extension)
   const [isRealtimeActive, setIsRealtimeActive] = useState<boolean>(true);
@@ -1134,6 +1143,23 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
 
   const scrollViewportRef = useRef<HTMLDivElement | null>(null);
   const treeContentRef = useRef<HTMLDivElement | null>(null);
+  const dragStateRef = useRef<{
+    active: boolean;
+    startX: number;
+    startY: number;
+    scrollLeft: number;
+    scrollTop: number;
+    hasMoved: boolean;
+  }>({
+    active: false,
+    startX: 0,
+    startY: 0,
+    scrollLeft: 0,
+    scrollTop: 0,
+    hasMoved: false,
+  });
+  const pinchStartDistRef = useRef<number | null>(null);
+  const pinchStartZoomRef = useRef<number>(0.55);
   const [canScrollLeft, setCanScrollLeft] = useState<boolean>(false);
   const [canScrollRight, setCanScrollRight] = useState<boolean>(false);
   const [hasHorizontalOverflow, setHasHorizontalOverflow] = useState<boolean>(false);
@@ -1143,6 +1169,62 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
   const [isCloneStatusPopupOpen, setIsCloneStatusPopupOpen] = useState<boolean>(false);
   const [isLevelSummaryPopupOpen, setIsLevelSummaryPopupOpen] = useState<boolean>(false);
   const cachedRpcProviderRef = useRef<ethers.JsonRpcProvider | null>(null);
+
+  // Mouse drag-to-pan across the Interactive Binary Tree viewport
+  useEffect(() => {
+    const handleWindowMouseMove = (e: MouseEvent) => {
+      if (!dragStateRef.current.active) return;
+      const viewportEl = scrollViewportRef.current;
+      if (!viewportEl) return;
+      const dx = e.clientX - dragStateRef.current.startX;
+      const dy = e.clientY - dragStateRef.current.startY;
+      if (!dragStateRef.current.hasMoved && Math.hypot(dx, dy) > 4) {
+        dragStateRef.current.hasMoved = true;
+        setIsDraggingTree(true);
+      }
+      if (dragStateRef.current.hasMoved) {
+        viewportEl.scrollLeft = dragStateRef.current.scrollLeft - dx;
+        viewportEl.scrollTop = dragStateRef.current.scrollTop - dy;
+      }
+    };
+
+    const handleWindowMouseUp = () => {
+      if (!dragStateRef.current.active) return;
+      dragStateRef.current.active = false;
+      setIsDraggingTree(false);
+      setTimeout(() => {
+        dragStateRef.current.hasMoved = false;
+      }, 30);
+    };
+
+    window.addEventListener('mousemove', handleWindowMouseMove);
+    window.addEventListener('mouseup', handleWindowMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleWindowMouseMove);
+      window.removeEventListener('mouseup', handleWindowMouseUp);
+    };
+  }, []);
+
+  // Ctrl/Cmd + Mouse Wheel zoom inside the tree viewport
+  useEffect(() => {
+    const viewportEl = scrollViewportRef.current;
+    if (!viewportEl) return;
+    const handleWheelZoom = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      const delta = e.deltaY < 0 ? 0.08 : -0.08;
+      setZoomScale((z) => Math.max(0.25, Math.min(1.5, Number((z + delta).toFixed(2)))));
+    };
+    viewportEl.addEventListener('wheel', handleWheelZoom, { passive: false });
+    return () => {
+      viewportEl.removeEventListener('wheel', handleWheelZoom);
+    };
+  }, [hasInitialTreeLoaded]);
+
+  useEffect(() => {
+    setCollapsedNodeIds(new Set());
+    setSelectedTreeNodeId(null);
+  }, [selectedRank, viewMode]);
 
   const getWorkingProvider = useCallback(async (): Promise<ethers.Provider> => {
     if (typeof window !== 'undefined' && window.ethereum && isBscTestnet) {
@@ -4966,6 +5048,8 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
     zoomScale,
     activeNodesMap.size,
     maxRenderDepth,
+    collapsedNodeIds,
+    selectedTreeNodeId,
   ]);
 
   useEffect(() => {
@@ -4997,10 +5081,94 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
     if (naturalWidth <= availableWidth) {
       setZoomScale(1);
     } else {
-      const ratio = Math.max(0.55, Math.min(1, Number((availableWidth / naturalWidth).toFixed(2))));
+      const ratio = Math.max(0.25, Math.min(1.25, Number((availableWidth / naturalWidth).toFixed(2))));
       setZoomScale(ratio);
     }
   }, []);
+
+  // Precompute descendant counts per node for Collapse/Expand labels
+  const descendantCountsMap = useMemo(() => {
+    const counts = new Map<number, { total: number; leftCount: number; rightCount: number }>();
+    const visiting = new Set<number>();
+
+    const countSubtree = (id: number): number => {
+      if (!id || id <= 0 || !activeNodesMap.has(id)) return 0;
+      const cached = counts.get(id);
+      if (cached) return cached.total + 1;
+      if (visiting.has(id)) return 0;
+      visiting.add(id);
+      const node = activeNodesMap.get(id)!;
+      const leftTotal = node.leftChild > 0 ? countSubtree(node.leftChild) : 0;
+      const rightTotal = node.rightChild > 0 ? countSubtree(node.rightChild) : 0;
+      visiting.delete(id);
+      counts.set(id, {
+        total: leftTotal + rightTotal,
+        leftCount: leftTotal,
+        rightCount: rightTotal,
+      });
+      return leftTotal + rightTotal + 1;
+    };
+
+    for (const id of activeNodesMap.keys()) {
+      countSubtree(id);
+    }
+    return counts;
+  }, [activeNodesMap]);
+
+  const toggleCollapseNode = useCallback((nodeId: number) => {
+    setCollapsedNodeIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(nodeId)) {
+        next.delete(nodeId);
+      } else {
+        next.add(nodeId);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleExpandAllNodes = useCallback(() => {
+    setCollapsedNodeIds(new Set());
+  }, []);
+
+  const handleCollapseSubtrees = useCallback(() => {
+    const toCollapse = new Set<number>();
+    const queue: Array<{ id: number; depth: number }> = [{ id: focusRootId, depth: 1 }];
+    const visited = new Set<number>();
+    while (queue.length > 0) {
+      const { id, depth } = queue.shift()!;
+      if (visited.has(id) || depth > MAX_TREE_DEPTH) continue;
+      visited.add(id);
+      const node = activeNodesMap.get(id);
+      if (!node) continue;
+      if (depth >= 2 && (node.leftChild > 0 || node.rightChild > 0)) {
+        toCollapse.add(id);
+      }
+      if (node.leftChild > 0 && activeNodesMap.has(node.leftChild)) {
+        queue.push({ id: node.leftChild, depth: depth + 1 });
+      }
+      if (node.rightChild > 0 && activeNodesMap.has(node.rightChild)) {
+        queue.push({ id: node.rightChild, depth: depth + 1 });
+      }
+    }
+    setCollapsedNodeIds(toCollapse);
+  }, [activeNodesMap, focusRootId]);
+
+  const handleViewportMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    const targetEl = e.target as HTMLElement | null;
+    if (targetEl?.closest('button, a, input, select, textarea')) return;
+    const viewportEl = scrollViewportRef.current;
+    if (!viewportEl) return;
+    dragStateRef.current = {
+      active: true,
+      startX: e.clientX,
+      startY: e.clientY,
+      scrollLeft: viewportEl.scrollLeft,
+      scrollTop: viewportEl.scrollTop,
+      hasMoved: false,
+    };
+  };
 
   const navigateToNode = (targetId: number) => {
     let resolvedNodeId = targetId;
@@ -5170,6 +5338,11 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
       ? '🟡'
       : '⚪';
 
+    const isNodeSelected = selectedTreeNodeId === node.id;
+    const isNodeCollapsed = collapsedNodeIds.has(node.id);
+    const hasAnyChildNode = node.leftChild > 0 || node.rightChild > 0;
+    const descCountInfo = descendantCountsMap.get(node.id);
+
     return (
       <div
         data-node-anchor={node.id}
@@ -5178,7 +5351,22 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         {/* Main Node Card (Pure White #FFFFFF in Light Mode, #131829 in Dark Mode) */}
         <div
           data-node-card={node.id}
-          className={`relative w-[156px] sm:w-[172px] md:w-[180px] h-auto rounded-xl bg-white dark:bg-[#131829] border-2 ${borderStyle} p-1.5 sm:p-2 text-left transition-all duration-200 select-none`}
+          onClick={(e) => {
+            if (dragStateRef.current.hasMoved) return;
+            const targetEl = e.target as HTMLElement | null;
+            if (targetEl?.closest('button, a, input, select, textarea')) return;
+            setSelectedTreeNodeId((prev) => (prev === node.id ? null : node.id));
+          }}
+          title={
+            language === 'th'
+              ? 'คลิกเพื่อเลือกดูข้อมูลสมาชิกหรือต่อสายงานซ้าย (L) / ขวา (R)'
+              : 'Click to inspect member or place Left (L) / Right (R)'
+          }
+          className={`relative w-[156px] sm:w-[172px] md:w-[180px] h-auto rounded-xl bg-white dark:bg-[#131829] border-2 ${borderStyle} ${
+            isNodeSelected
+              ? 'ring-4 ring-blue-500/75 dark:ring-cyan-400/85 scale-[1.02]'
+              : 'hover:ring-2 hover:ring-blue-400/50 dark:hover:ring-cyan-400/40'
+          } p-1.5 sm:p-2 text-left transition-all duration-200 select-none cursor-pointer`}
         >
           {/* Top-Left Floating Badges: ✨ มาใหม่ & ล่าสุด (สีตามประเภท ID) */}
           <div className="absolute -top-2.5 left-1.5 flex items-center gap-1 z-20">
@@ -5687,13 +5875,48 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
               )}
             </button>
           </div>
+
+          {/* Collapse / Expand Subtree Toggle inside Node Card */}
+          {hasAnyChildNode && (
+            <button
+              type="button"
+              onClick={() => toggleCollapseNode(node.id)}
+              className={`mt-1 w-full py-0.5 px-1.5 rounded-md font-bold text-[8.5px] flex items-center justify-center gap-1 border transition cursor-pointer ${
+                isNodeCollapsed
+                  ? 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-500/20 dark:hover:bg-amber-500/30 dark:text-amber-300 dark:border-amber-500/50'
+                  : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border-slate-200/90 dark:bg-slate-900 dark:hover:bg-slate-800 dark:text-slate-300 dark:border-slate-700'
+              }`}
+              title={isNodeCollapsed ? 'ขยายแสดงโหนดลูกทีม' : 'ย่อโหนดลูกทีม'}
+            >
+              {isNodeCollapsed ? (
+                <>
+                  <ChevronDown className="w-2.5 h-2.5 shrink-0" />
+                  <span>
+                    {language === 'th'
+                      ? `ขยายลูกทีม (+${descCountInfo?.total || 0})`
+                      : `Expand (+${descCountInfo?.total || 0})`}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <ChevronUp className="w-2.5 h-2.5 shrink-0" />
+                  <span>
+                    {language === 'th'
+                      ? `ย่อลูกทีม (${descCountInfo?.total || 0})`
+                      : `Collapse (${descCountInfo?.total || 0})`}
+                  </span>
+                </>
+              )}
+            </button>
+          )}
         </div>
       </div>
     );
   };
 
-  // Recursive Binary Subtree Renderer (Automatically extends depth to render all connected nodes)
+  // Recursive Binary Subtree Renderer (Strictly capped at MAX_TREE_DEPTH = 15 levels)
   const renderBinarySubtree = (nodeId: number, currentDepth: number): React.ReactNode => {
+    if (currentDepth > MAX_TREE_DEPTH) return null;
     const resolvedId =
       currentDepth === 1 && !activeNodesMap.has(nodeId)
         ? activeNodesMap.has(1)
@@ -5703,17 +5926,53 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
     const node = activeNodesMap.get(resolvedId);
     if (!node) return null;
 
-    // When maxRenderDepth === 0 (Auto Max), automatically render all levels needed to show every connected node
+    // Strictly cap effective depth to <= 15 levels (จำกัดเพดานไม่เกิน 15 ชั้น)
     const effectiveMaxDepth =
-      maxRenderDepth === 0 ? Math.max(30, maxTreeLevelInRank + 5) : maxRenderDepth;
+      maxRenderDepth === 0
+        ? MAX_TREE_DEPTH
+        : Math.min(MAX_TREE_DEPTH, Math.max(1, maxRenderDepth));
     const hasLeft = node.leftChild > 0 && activeNodesMap.has(node.leftChild);
     const hasRight = node.rightChild > 0 && activeNodesMap.has(node.rightChild);
+    const isCollapsed = collapsedNodeIds.has(node.id);
+    const isAtDepthLimit = currentDepth >= effectiveMaxDepth;
     const showChildrenRow =
-      currentDepth < effectiveMaxDepth && (hasLeft || hasRight || currentDepth === 1);
+      !isCollapsed && !isAtDepthLimit && (hasLeft || hasRight || currentDepth === 1);
+    const hiddenDescCount = descendantCountsMap.get(node.id)?.total || 0;
 
     return (
       <div className="inline-flex flex-col items-center h-auto w-auto">
         {renderNodeCard(node)}
+
+        {isCollapsed && (hasLeft || hasRight) && (
+          <button
+            type="button"
+            onClick={() => toggleCollapseNode(node.id)}
+            className="mt-2 px-2.5 py-1 rounded-full bg-amber-100 hover:bg-amber-200 dark:bg-amber-500/25 dark:hover:bg-amber-500/40 border border-amber-300 dark:border-amber-400/60 text-amber-900 dark:text-amber-200 font-bold text-[9.5px] flex items-center gap-1 shadow-xs transition cursor-pointer"
+          >
+            <ChevronDown className="w-3 h-3" />
+            <span>
+              {language === 'th'
+                ? `ซ่อนลูกทีม ${hiddenDescCount} รหัส • คลิกเพื่อขยาย`
+                : `${hiddenDescCount} hidden • Expand`}
+            </span>
+          </button>
+        )}
+
+        {!isCollapsed && isAtDepthLimit && (hasLeft || hasRight) && (
+          <button
+            type="button"
+            onClick={() => navigateToNode(node.id)}
+            className="mt-2 px-2.5 py-1 rounded-full bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/70 dark:hover:bg-indigo-900 border border-indigo-300 dark:border-indigo-500/50 text-indigo-700 dark:text-indigo-200 font-bold text-[9.5px] flex items-center gap-1 shadow-xs transition cursor-pointer"
+            title={`จำกัดการแสดงผลสูงสุด ${effectiveMaxDepth} ชั้น — คลิกเพื่อย้ายจุดศูนย์กลางมาที่ #${node.id} เพื่อดูลูกทีมต่อ`}
+          >
+            <Layers className="w-3 h-3" />
+            <span>
+              {language === 'th'
+                ? `สุดเพดาน ${effectiveMaxDepth} ชั้น (+${hiddenDescCount}) • คลิกดูต่อ`
+                : `Depth limit ${effectiveMaxDepth} (+${hiddenDescCount}) • Focus`}
+            </span>
+          </button>
+        )}
 
         {showChildrenRow && (
           <div className="inline-flex items-start justify-center gap-2.5 sm:gap-4 md:gap-5 pt-5 sm:pt-6 h-auto w-auto">
@@ -5867,9 +6126,11 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
 
         {/* Row 4: Depth Selector & Compact Status Legend Bar (รวมความลึกและสัญลักษณ์ในแถวเดียว ไม่เปลืองพื้นที่) */}
         <div className="flex items-center justify-between gap-2 flex-wrap text-xs">
-          {/* Depth Selector - Compact horizontal scrollable */}
-          <div className="flex items-center gap-1.5 min-w-0 max-w-full">
-            <span className="text-[#64748B] dark:text-slate-400 font-semibold text-[11px] shrink-0">ความลึก:</span>
+          {/* Depth Selector & Collapse/Expand All Controls - strictly capped at 15 levels */}
+          <div className="flex items-center gap-1.5 min-w-0 max-w-full flex-wrap">
+            <span className="text-[#64748B] dark:text-slate-400 font-semibold text-[11px] shrink-0">
+              ความลึก (เพดาน ≤ 15 ชั้น):
+            </span>
             <div className="flex items-center gap-1 bg-[#F8FAFC] dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 p-0.5 sm:p-1 rounded-xl overflow-x-auto no-scrollbar max-w-full">
               <button
                 type="button"
@@ -5880,9 +6141,9 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                     : 'text-[#64748B] hover:text-[#0F172A] dark:text-slate-400 dark:hover:text-white'
                 }`}
               >
-                เต็ม Max ({maxTreeLevelInRank} ชั้น)
+                สูงสุด 15 ชั้น ({Math.min(MAX_TREE_DEPTH, maxTreeLevelInRank)}/{MAX_TREE_DEPTH})
               </button>
-              {[4, 6, 8, 12, 15, 25].map((depthVal) => (
+              {[3, 5, 8, 12, 15].map((depthVal) => (
                 <button
                   key={depthVal}
                   type="button"
@@ -5896,6 +6157,28 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                   {depthVal} ชั้น
                 </button>
               ))}
+            </div>
+
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={handleExpandAllNodes}
+                disabled={collapsedNodeIds.size === 0}
+                className="px-2 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40 text-emerald-700 border border-emerald-200/80 dark:bg-emerald-950/50 dark:hover:bg-emerald-900/60 dark:text-emerald-300 dark:border-emerald-500/30 text-[10.5px] font-bold flex items-center gap-1 transition cursor-pointer disabled:cursor-not-allowed"
+                title="ขยายโหนดลูกทีมทั้งหมด"
+              >
+                <Maximize2 className="w-3 h-3" />
+                <span>{language === 'th' ? 'ขยายทั้งหมด' : 'Expand All'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleCollapseSubtrees}
+                className="px-2 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200/80 dark:bg-amber-950/50 dark:hover:bg-amber-900/60 dark:text-amber-300 dark:border-amber-500/30 text-[10.5px] font-bold flex items-center gap-1 transition cursor-pointer"
+                title="ย่อโหนดลูกทีมระดับย่อยทั้งหมด"
+              >
+                <Minimize2 className="w-3 h-3" />
+                <span>{language === 'th' ? 'ย่อลูกทีม' : 'Collapse Subtrees'}</span>
+              </button>
             </div>
           </div>
 
@@ -6818,9 +7101,9 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           <div className="flex items-center gap-1 bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 rounded-xl p-1 shadow-2xs">
             <button
               type="button"
-              onClick={() => setZoomScale((z) => Math.max(0.35, Number((z - 0.05).toFixed(2))))}
+              onClick={() => setZoomScale((z) => Math.max(0.25, Number((z - 0.08).toFixed(2))))}
               className="p-1 text-[#64748B] hover:text-[#0F172A] dark:text-slate-400 dark:hover:text-white transition cursor-pointer"
-              title="ย่อผัง"
+              title="ย่อผัง (Zoom Out)"
             >
               <ZoomOut className="w-3.5 h-3.5" />
             </button>
@@ -6834,9 +7117,9 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => setZoomScale((z) => Math.min(1.25, Number((z + 0.05).toFixed(2))))}
+              onClick={() => setZoomScale((z) => Math.min(1.5, Number((z + 0.08).toFixed(2))))}
               className="p-1 text-[#64748B] hover:text-[#0F172A] dark:text-slate-400 dark:hover:text-white transition cursor-pointer"
-              title="ขยายผัง"
+              title="ขยายผัง (Zoom In)"
             >
               <ZoomIn className="w-3.5 h-3.5" />
             </button>
@@ -6904,8 +7187,8 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
               <div className="flex items-center gap-1.5 flex-wrap text-[11px] sm:text-xs font-extrabold text-[#0F172A] dark:text-slate-200">
                 <span className="text-[#1D4ED8] dark:text-amber-300">
                   {language === 'th'
-                    ? '↔ แตะปัดซ้าย–ขวาเพื่อเลื่อนดูผัง'
-                    : '↔ Swipe left / right to pan tree'}
+                    ? '↔ ลาก (Drag) หรือปัดเพื่อเลื่อนดูผัง • คลิกการ์ดสมาชิกเพื่อดูข้อมูล / ต่อสายซ้าย (L)-ขวา (R)'
+                    : '↔ Drag / swipe to pan tree • Click any member card to inspect or place L / R'}
                 </span>
                 <span className="hidden xs:inline-block px-1.5 py-0.5 rounded bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-700 font-mono text-[10px] text-[#2563EB] dark:text-cyan-300">
                   {scrollProgressPercent}%
@@ -6961,7 +7244,148 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           </div>
         </div>
 
-        {/* Relative Wrapper for Horizontal-Scroll-Only Tree + Edge Touch Indicators */}
+        {/* Selected Member Quick-Inspect & Left (L) / Right (R) Downline Action Bar */}
+        {selectedTreeNodeId !== null && activeNodesMap.has(selectedTreeNodeId) && (() => {
+          const selNode = activeNodesMap.get(selectedTreeNodeId)!;
+          const selDesc = descendantCountsMap.get(selNode.id);
+          const selHasChildren = selNode.leftChild > 0 || selNode.rightChild > 0;
+          const selCollapsed = collapsedNodeIds.has(selNode.id);
+          const selLabel = selNode.isExtraId
+            ? selNode.extraMainLabel || `Extra R${selNode.rank}-#${selNode.id}`
+            : selNode.isClone
+            ? `Main #${selNode.r1MainId || selNode.originMainId} (โคลน R${selNode.rank}-#${selNode.id})`
+            : selNode.isAutoMainId
+            ? `Auto ID #${selNode.r1MainId || selNode.originMainId}`
+            : `Main #${selNode.r1MainId || selNode.originMainId} (R${selNode.rank}-#${selNode.id})`;
+
+          return (
+            <div className="rounded-xl bg-gradient-to-r from-[#EFF6FF] via-white to-emerald-50/70 dark:from-slate-900 dark:via-[#0d1428] dark:to-emerald-950/30 border-2 border-[#2563EB]/60 dark:border-cyan-500/60 p-2.5 sm:p-3 shadow-md flex flex-col lg:flex-row lg:items-center justify-between gap-2.5 text-xs">
+              <div className="flex items-start sm:items-center gap-2.5 flex-wrap min-w-0">
+                <div className="p-2 rounded-xl bg-[#2563EB] dark:bg-cyan-500/20 text-white dark:text-cyan-300 shrink-0">
+                  <Info className="w-4 h-4" />
+                </div>
+                <div className="min-w-0 space-y-0.5">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="font-mono font-extrabold text-sm text-[#0F172A] dark:text-white">
+                      {selLabel}
+                    </span>
+                    <span className="px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300 font-mono font-bold text-[10px]">
+                      R{selNode.rank} • ชั้น {Math.min(MAX_TREE_DEPTH, selNode.level)}/{MAX_TREE_DEPTH}
+                    </span>
+                    <span className="px-1.5 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-mono text-[10px]">
+                      ลูกทีมใต้สาย: {selDesc?.total || 0} รหัส
+                    </span>
+                  </div>
+                  <div className="text-[11px] font-mono text-slate-600 dark:text-slate-400 flex items-center gap-2 flex-wrap">
+                    <span>กระเป๋า: {shortenWallet(selNode.owner)}</span>
+                    <span>•</span>
+                    <span>อัพไลน์: {selNode.parentId === 0 ? 'Root (#0)' : `#${selNode.parentId}`}</span>
+                    <span>•</span>
+                    <span>ผู้แนะนำ: #{selNode.directUplineNodeId}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+                {/* Left (L) Slot Action */}
+                {selNode.leftChild === 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => openRegisterModal(selNode.originMainId || selNode.id, selNode.id, true)}
+                    className="px-2.5 py-1.5 rounded-xl bg-[#15803D] hover:bg-emerald-800 dark:bg-emerald-500 dark:hover:bg-emerald-400 text-white dark:text-slate-950 font-extrabold text-[11px] flex items-center gap-1 shadow-xs transition cursor-pointer"
+                  >
+                    <ArrowDownLeft className="w-3.5 h-3.5" />
+                    <span>{language === 'th' ? '+ ต่อสายฝั่งซ้าย (L)' : '+ Place Left (L)'}</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigateToNode(selNode.leftChild);
+                      setSelectedTreeNodeId(selNode.leftChild);
+                    }}
+                    className="px-2.5 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/60 dark:hover:bg-emerald-900 border border-emerald-300 dark:border-emerald-500/40 text-emerald-800 dark:text-emerald-300 font-bold font-mono text-[11px] flex items-center gap-1 transition cursor-pointer"
+                  >
+                    <ArrowDownLeft className="w-3.5 h-3.5" />
+                    <span>ซ้าย (L): #{selNode.leftChild}</span>
+                  </button>
+                )}
+
+                {/* Right (R) Slot Action */}
+                {selNode.rightChild === 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => openRegisterModal(selNode.originMainId || selNode.id, selNode.id, false)}
+                    className="px-2.5 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 dark:bg-purple-500 dark:hover:bg-purple-400 text-white font-extrabold text-[11px] flex items-center gap-1 shadow-xs transition cursor-pointer"
+                  >
+                    <ArrowDownRight className="w-3.5 h-3.5" />
+                    <span>{language === 'th' ? '+ ต่อสายฝั่งขวา (R)' : '+ Place Right (R)'}</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigateToNode(selNode.rightChild);
+                      setSelectedTreeNodeId(selNode.rightChild);
+                    }}
+                    className="px-2.5 py-1.5 rounded-xl bg-purple-50 hover:bg-purple-100 dark:bg-purple-950/60 dark:hover:bg-purple-900 border border-purple-300 dark:border-purple-500/40 text-purple-800 dark:text-purple-300 font-bold font-mono text-[11px] flex items-center gap-1 transition cursor-pointer"
+                  >
+                    <ArrowDownRight className="w-3.5 h-3.5" />
+                    <span>ขวา (R): #{selNode.rightChild}</span>
+                  </button>
+                )}
+
+                {selHasChildren && (
+                  <button
+                    type="button"
+                    onClick={() => toggleCollapseNode(selNode.id)}
+                    className="px-2.5 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/60 dark:hover:bg-amber-900 border border-amber-300 dark:border-amber-500/40 text-amber-800 dark:text-amber-300 font-bold text-[11px] flex items-center gap-1 transition cursor-pointer"
+                  >
+                    {selCollapsed ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
+                    <span>{selCollapsed ? 'ขยายลูกทีม' : 'ย่อลูกทีม'}</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const curMaxR = selNode.targetMainIdCurrentRank || selNode.rank || 1;
+                    setModalUpgradeTargetRank(Math.min(18, curMaxR + 1));
+                    setModalUpgradeMessage(null);
+                    setModalUpgradeError(null);
+                    setBenefitModalTab('all');
+                    setExpandedBenefitNodeId(selNode.id);
+                    fetchPerIdHistoryForModal();
+                  }}
+                  className="px-2.5 py-1.5 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white font-bold text-[11px] flex items-center gap-1 shadow-xs transition cursor-pointer"
+                >
+                  <Coins className="w-3.5 h-3.5" />
+                  <span>{language === 'th' ? 'ดูข้อมูลเต็ม' : 'Full Info'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => navigateToNode(selNode.id)}
+                  className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-[11px] transition cursor-pointer"
+                  title="ตั้งรหัสนี้เป็นจุดศูนย์กลางผัง"
+                >
+                  🎯 โฟกัส
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setSelectedTreeNodeId(null)}
+                  className="p-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 transition cursor-pointer"
+                  title="ปิดแถบเลือกสมาชิก"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Relative Wrapper for Interactive 2D Pan & Zoom Binary Tree + Edge Touch Indicators */}
         <div className="relative w-full max-w-full min-w-0 flex-1 flex flex-col min-h-[75vh] sm:min-h-[85vh] rounded-xl sm:rounded-2xl overflow-hidden border border-slate-200/80 dark:border-slate-800/90 bg-[#F8FAFC] dark:bg-[#080c17] shadow-inner">
           {/* Left Overflow Edge Gradient & Floating Touch Button */}
           {canScrollLeft && (
@@ -6999,16 +7423,49 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             </>
           )}
 
-          {/* Horizontal-Scroll-Only Container */}
+          {/* Interactive Drag-to-Pan & Pinch/Zoom Container */}
           <div
             ref={scrollViewportRef}
             onScroll={updateHorizontalScrollIndicators}
-            onTouchStart={() => setIsTouchScrolling(true)}
+            onMouseDown={handleViewportMouseDown}
+            onClickCapture={(e) => {
+              if (dragStateRef.current.hasMoved) {
+                e.stopPropagation();
+                e.preventDefault();
+              }
+            }}
+            onTouchStart={(e) => {
+              if (e.touches.length === 2) {
+                const dx = e.touches[0].clientX - e.touches[1].clientX;
+                const dy = e.touches[0].clientY - e.touches[1].clientY;
+                pinchStartDistRef.current = Math.hypot(dx, dy);
+                pinchStartZoomRef.current = zoomScale;
+              } else {
+                pinchStartDistRef.current = null;
+                setIsTouchScrolling(true);
+              }
+            }}
+            onTouchMove={(e) => {
+              if (e.touches.length === 2 && pinchStartDistRef.current) {
+                const dx = e.touches[0].clientX - e.touches[1].clientX;
+                const dy = e.touches[0].clientY - e.touches[1].clientY;
+                const dist = Math.hypot(dx, dy);
+                const ratio = dist / pinchStartDistRef.current;
+                const nextZoom = Math.max(
+                  0.25,
+                  Math.min(1.5, Number((pinchStartZoomRef.current * ratio).toFixed(2)))
+                );
+                setZoomScale(nextZoom);
+              }
+            }}
             onTouchEnd={() => {
+              pinchStartDistRef.current = null;
               updateHorizontalScrollIndicators();
               setTimeout(() => setIsTouchScrolling(false), 500);
             }}
-            className="w-full max-w-full min-w-0 flex-1 min-h-[75vh] sm:min-h-[85vh] h-max p-2 sm:p-5 md:p-6 pb-24 sm:pb-28 overflow-x-auto overflow-y-hidden touch-pan-x overscroll-x-contain matrix-scroll-container matrix-horizontal-scroll-only"
+            className={`w-full max-w-full min-w-0 flex-1 h-[75vh] sm:h-[82vh] p-2 sm:p-5 md:p-6 pb-24 sm:pb-28 matrix-scroll-container matrix-pan-viewport ${
+              isDraggingTree ? 'cursor-grabbing select-none' : 'cursor-grab'
+            }`}
           >
             <div
               style={{
@@ -7731,6 +8188,71 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                 >
                   <X className="w-5 h-5" />
                 </button>
+              </div>
+
+              {/* Direct Left (L) / Right (R) Downline Status & Placement Bar inside Modal */}
+              <div className="rounded-xl bg-slate-900/80 border border-slate-800 p-2.5 flex flex-wrap items-center justify-between gap-2 text-xs">
+                <div className="text-slate-300 font-semibold flex items-center gap-1.5">
+                  <span>🌳 ตำแหน่งลูกทีมใต้โหนด #{modalNode.id}:</span>
+                  <span className="font-mono text-amber-300">
+                    ชั้น {Math.min(MAX_TREE_DEPTH, modalNode.level)}/{MAX_TREE_DEPTH}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {modalNode.leftChild === 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setExpandedBenefitNodeId(null);
+                        openRegisterModal(modalNode.originMainId || modalNode.id, modalNode.id, true);
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-[11px] flex items-center gap-1 cursor-pointer transition"
+                    >
+                      <ArrowDownLeft className="w-3.5 h-3.5" />
+                      <span>+ ต่อสายงานฝั่งซ้าย (L)</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setExpandedBenefitNodeId(null);
+                        navigateToNode(modalNode.leftChild);
+                        setSelectedTreeNodeId(modalNode.leftChild);
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-500/40 text-emerald-300 font-mono font-bold text-[11px] flex items-center gap-1 cursor-pointer transition"
+                    >
+                      <ArrowDownLeft className="w-3.5 h-3.5" />
+                      <span>ฝั่งซ้าย (L): #{modalNode.leftChild}</span>
+                    </button>
+                  )}
+
+                  {modalNode.rightChild === 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setExpandedBenefitNodeId(null);
+                        openRegisterModal(modalNode.originMainId || modalNode.id, modalNode.id, false);
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-extrabold text-[11px] flex items-center gap-1 cursor-pointer transition"
+                    >
+                      <ArrowDownRight className="w-3.5 h-3.5" />
+                      <span>+ ต่อสายงานฝั่งขวา (R)</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setExpandedBenefitNodeId(null);
+                        navigateToNode(modalNode.rightChild);
+                        setSelectedTreeNodeId(modalNode.rightChild);
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-purple-950/80 hover:bg-purple-900 border border-purple-500/40 text-purple-300 font-mono font-bold text-[11px] flex items-center gap-1 cursor-pointer transition"
+                    >
+                      <ArrowDownRight className="w-3.5 h-3.5" />
+                      <span>ฝั่งขวา (R): #{modalNode.rightChild}</span>
+                    </button>
+                  )}
+                </div>
               </div>
 
               {/* Status Banner when upgrading inside Modal */}
