@@ -9169,8 +9169,26 @@ async function startApp() {
   app.get('/api/matrix/inspect-rank', async (req: Request, res: Response) => {
     const rankNum = Math.min(Math.max(Number(req.query.rank) || 1, 1), 18);
     const addrParam = String(req.query.address || '').toLowerCase();
-    const currentPriceNum = RANK_PRICES_USDT[rankNum - 1] ?? 5;
-    const nextPriceNum = rankNum < 18 ? (RANK_PRICES_USDT[rankNum] ?? 0) : 0;
+    let currentPriceNum = RANK_PRICES_USDT[rankNum - 1] ?? 5;
+    let nextPriceNum = rankNum < 18 ? (RANK_PRICES_USDT[rankNum] ?? 0) : 0;
+
+    try {
+      const provider = getProvider();
+      const contract = new ethers.Contract(CONTRACT_ADDRESS, MATRIX_READ_ABI, provider);
+      const pCurrent = await contract.rankPrice(rankNum);
+      if (pCurrent > 0n) {
+        currentPriceNum = Number(ethers.formatUnits(pCurrent, activeUsdtDecimals));
+      }
+      if (rankNum < 18) {
+        const pNext = await contract.rankPrice(rankNum + 1);
+        if (pNext > 0n) {
+          nextPriceNum = Number(ethers.formatUnits(pNext, activeUsdtDecimals));
+        }
+      }
+    } catch {
+      // Fallback to RANK_PRICES_USDT
+    }
+
     const formatUsdtPrice = (val: number) =>
       `${val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDT`;
 

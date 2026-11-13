@@ -2077,13 +2077,30 @@ export function useWeb3() {
   const inspectRankData = useCallback(
     async (rank: number) => {
       const rankNum = Math.min(Math.max(Number(rank) || 1, 1), 18);
-      const currentPriceNum = RANK_PRICES_USDT[rankNum - 1] ?? 5;
-      const nextPriceNum = rankNum < 18 ? (RANK_PRICES_USDT[rankNum] ?? 0) : 0;
+      let currentPriceNum = RANK_PRICES_USDT[rankNum - 1] ?? 5;
+      let nextPriceNum = rankNum < 18 ? (RANK_PRICES_USDT[rankNum] ?? 0) : 0;
+      const currentContract = contractAddressRef.current || CONTRACT_ADDRESS;
+
+      try {
+        const matrixContract = new ethers.Contract(currentContract, MATRIX_ABI, readOnlyBscProvider);
+        const pCurrent = await matrixContract.rankPrice(rankNum);
+        if (pCurrent > 0n) {
+          currentPriceNum = Number(ethers.formatUnits(pCurrent, 18));
+        }
+        if (rankNum < 18) {
+          const pNext = await matrixContract.rankPrice(rankNum + 1);
+          if (pNext > 0n) {
+            nextPriceNum = Number(ethers.formatUnits(pNext, 18));
+          }
+        }
+      } catch {
+        // Fallback to RANK_PRICES_USDT
+      }
+
       const formatPrice = (val: number) =>
         `${val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDT`;
       const formattedCurrentPrice = formatPrice(currentPriceNum);
       const defaultNextPrice = nextPriceNum > 0 ? formatPrice(nextPriceNum) : 'Max Rank';
-      const currentContract = contractAddressRef.current || CONTRACT_ADDRESS;
 
       // 1. Read from our Database first (/api/matrix/inspect-rank)
       try {
