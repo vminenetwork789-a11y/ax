@@ -942,8 +942,16 @@ export function useWeb3() {
         throw new Error(`Sponsor Node ID #${sponsorNodeId} ไม่ถูกต้อง: ${reason}`);
       }
 
-      // 2. Get Rank 1 price (5 USDT)
-      const r1UnitPrice = RANK_PRICES_USDT[0] || 5;
+      // 2. Get Rank 1 price dynamically from contract
+      let r1UnitPrice = RANK_PRICES_USDT[0] || 5;
+      try {
+        const contractPriceWei = await matrixContract.rankPrice(1);
+        if (contractPriceWei > 0n) {
+          r1UnitPrice = Number(ethers.formatUnits(contractPriceWei, usdtDecimals));
+        }
+      } catch {
+        // fallback
+      }
       const price: bigint = ethers.parseUnits(String(r1UnitPrice), usdtDecimals);
       const totalCost = price * BigInt(countToReg);
 
@@ -1194,7 +1202,15 @@ export function useWeb3() {
         usdtDecimals = 18;
       }
 
-      const r1UnitPrice = RANK_PRICES_USDT[0] || 5;
+      let r1UnitPrice = RANK_PRICES_USDT[0] || 5;
+      try {
+        const contractPriceWei = await matrixContract.rankPrice(1);
+        if (contractPriceWei > 0n) {
+          r1UnitPrice = Number(ethers.formatUnits(contractPriceWei, usdtDecimals));
+        }
+      } catch {
+        // fallback
+      }
       const unitPrice: bigint = ethers.parseUnits(String(r1UnitPrice), usdtDecimals);
 
       const totalCost = unitPrice * BigInt(count);
