@@ -47,6 +47,7 @@ interface AdminControlCenterProps {
     firstNodeId: string;
     latestNodeId: string;
     upgradeVaultBalance: string;
+    rankPrice?: string;
     nextRankPrice: string;
   }>;
   onClose?: () => void;
@@ -121,11 +122,13 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
     firstNodeId: string;
     latestNodeId: string;
     upgradeVaultBalance: string;
+    rankPrice?: string;
     nextRankPrice: string;
   }>({
     firstNodeId: '-',
     latestNodeId: '-',
     upgradeVaultBalance: '0.00',
+    rankPrice: '5.00 USDT',
     nextRankPrice: '10.00 USDT',
   });
   const [memberSearch, setMemberSearch] = useState<string>('');
@@ -341,7 +344,21 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
             details: `Function: ${actionName}`,
           }),
         }).catch(() => {});
-        await fetch('/api/db/sync', { method: 'POST' }).catch(() => {});
+        if (actionName === 'adminUpgradeRankForMainId' || actionName === 'adminUpgradeRank') {
+          await fetch('/api/admin/upgrade-rank', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              targetUser: params.targetUser,
+              mainId: params.mainId ? Number(params.mainId) : undefined,
+              targetRank: Number(params.targetRank),
+              onChainConfirmed: true,
+              txHash: hash,
+            }),
+          }).catch(() => {});
+        } else {
+          await fetch('/api/db/sync', { method: 'POST' }).catch(() => {});
+        }
         await fetchAdminOverview();
         onRefreshOnChainData();
         setActionStatus({
@@ -1772,7 +1789,7 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
 
             {/* Quick Rank 1-18 Inspector */}
             <div className="pt-3 border-t border-slate-800/80 space-y-2.5">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2">
                 <span className="text-xs font-semibold text-slate-300">
                   ตรวจสอบข้อมูลรายแรงค์ (Rank 1–18 Inspector)
                 </span>
@@ -1783,30 +1800,48 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
                 >
                   {RANK_PRICES_USDT.map((price, i) => (
                     <option key={i + 1} value={i + 1}>
-                      Rank {i + 1} ({price} U) — {overview?.stats?.rankCounts?.[i + 1] ?? 0} โหนด
+                      Rank {i + 1} ({price.toLocaleString('en-US')} U) — {overview?.stats?.rankCounts?.[i + 1] ?? 0} โหนด
                     </option>
                   ))}
                 </select>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 bg-slate-950 border border-slate-800 rounded-xl p-3 font-mono text-xs tabular-nums">
-                <div>
-                  <span className="text-[10px] text-slate-500 block">จำนวนโหนดในผัง</span>
-                  <span className="text-white font-bold">
-                    {overview?.stats?.rankCounts?.[inspectRankNum] ?? 0} โหนด
-                  </span>
+              <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 font-mono text-xs tabular-nums space-y-2.5">
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <span className="text-[10px] text-slate-500 block">จำนวนโหนดในผัง</span>
+                    <span className="text-white font-bold">
+                      {overview?.stats?.rankCounts?.[inspectRankNum] ?? 0} โหนด
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-500 block">First Node ID</span>
+                    <span className="text-emerald-400 font-bold">#{inspectStats.firstNodeId}</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-500 block">Latest Node ID</span>
+                    <span className="text-cyan-400 font-bold">#{inspectStats.latestNodeId}</span>
+                  </div>
                 </div>
-                <div>
-                  <span className="text-[10px] text-slate-500 block">First Node ID</span>
-                  <span className="text-emerald-400 font-bold">#{inspectStats.firstNodeId}</span>
-                </div>
-                <div>
-                  <span className="text-[10px] text-slate-500 block">Latest Node ID</span>
-                  <span className="text-cyan-400 font-bold">#{inspectStats.latestNodeId}</span>
-                </div>
-                <div>
-                  <span className="text-[10px] text-slate-500 block">Next Rank Price</span>
-                  <span className="text-amber-300 font-bold">{inspectStats.nextRankPrice}</span>
+                <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-800/80">
+                  <div>
+                    <span className="text-[10px] text-slate-500 block">
+                      ราคา Rank {inspectRankNum} (Current)
+                    </span>
+                    <span className="text-emerald-400 font-bold">
+                      {inspectStats.rankPrice ||
+                        `${(RANK_PRICES_USDT[inspectRankNum - 1] ?? 5).toLocaleString('en-US', {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })} USDT`}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-500 block">
+                      ราคาอัพถัดไป ({inspectRankNum < 18 ? `Next Rank ${inspectRankNum + 1}` : 'Max Rank'})
+                    </span>
+                    <span className="text-amber-300 font-bold">{inspectStats.nextRankPrice}</span>
+                  </div>
                 </div>
               </div>
             </div>

@@ -11,6 +11,7 @@ interface RankInspectorAndAdminPanelProps {
     firstNodeId: string;
     latestNodeId: string;
     upgradeVaultBalance: string;
+    rankPrice?: string;
     nextRankPrice: string;
   }>;
   onRefreshOnChainData: () => void;
@@ -42,11 +43,13 @@ export const RankInspectorAndAdminPanel: React.FC<RankInspectorAndAdminPanelProp
     firstNodeId: string;
     latestNodeId: string;
     upgradeVaultBalance: string;
+    rankPrice?: string;
     nextRankPrice: string;
   }>({
     firstNodeId: '-',
     latestNodeId: '-',
     upgradeVaultBalance: '0.00',
+    rankPrice: '5.00 USDT',
     nextRankPrice: '10.00 USDT',
   });
 
@@ -235,7 +238,19 @@ export const RankInspectorAndAdminPanel: React.FC<RankInspectorAndAdminPanelProp
               </span>
             </div>
             <div className="flex justify-between text-xs border-t border-slate-800 pt-2">
-              <span className="text-slate-400">Next Rank Price:</span>
+              <span className="text-slate-400">Rank {selectedInspectRank} Price:</span>
+              <span id="inspectCurrentPrice" className="font-mono font-bold text-emerald-400">
+                {rankStats.rankPrice ||
+                  `${(RANK_PRICES_USDT[selectedInspectRank - 1] ?? 5).toLocaleString('en-US', {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })} USDT`}
+              </span>
+            </div>
+            <div className="flex justify-between text-xs">
+              <span className="text-slate-400">
+                Next Rank Price ({selectedInspectRank < 18 ? `R${selectedInspectRank + 1}` : 'Max'}):
+              </span>
               <span id="inspectNextPrice" className="font-mono font-bold text-slate-200">
                 {rankStats.nextRankPrice}
               </span>

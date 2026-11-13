@@ -392,6 +392,7 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
               rightChild: number;
               isClone: boolean;
               isExtraId: boolean;
+              isAdminFreeUpgrade?: boolean;
               directSponsorNodeId: number;
             }
           >();
@@ -416,6 +417,7 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
                       rightChild: Number(n.rightChild || 0),
                       isClone: Boolean(n.isClone),
                       isExtraId: Boolean(n.isExtraId),
+                      isAdminFreeUpgrade: Boolean(n.isAdminFreeUpgrade),
                       directSponsorNodeId: Number(n.directSponsorNodeId || 1),
                     });
                   }
@@ -467,7 +469,7 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
 
           for (const nodeId of sortedNids) {
             const nodeData = nodesMap.get(nodeId);
-            if (!nodeData || nodeData.parentId === 0) continue;
+            if (!nodeData || nodeData.parentId === 0 || nodeData.isAdminFreeUpgrade) continue;
 
             const parentData = nodesMap.get(nodeData.parentId);
             if (!parentData || parentData.leftChild !== nodeId) continue;

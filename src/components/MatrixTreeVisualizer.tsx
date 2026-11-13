@@ -81,6 +81,7 @@ export interface EnrichedBinaryNode {
   isClone: boolean;
   isExtraId: boolean;
   isAutoMainId: boolean;
+  isAdminFreeUpgrade?: boolean;
   // Clone & Lineage Metadata
   originMainId: number; // รหัสหลัก (Primary Main ID of this owner/lineage, e.g. #1, #2, #7)
   spawnedFromNodeId: number; // Exact node whose Right child triggered this clone
@@ -832,7 +833,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           : `Sponsor #${regSponsorId} (${regNodeCount} ID)`,
     });
     try {
-      await onRegisterWithSponsor(regSponsorId, {
+      const regRes = await onRegisterWithSponsor(regSponsorId, {
         targetParentId: regTargetParentId,
         isLeft: regIsLeft,
         count: regNodeCount,
@@ -841,18 +842,36 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('matrix:tree:refresh'));
       }
-      const okMsg =
-        language === 'th' ? 'สมัครสมาชิกสำเร็จเรียบร้อยแล้ว!' : 'Registration confirmed!';
+      const assignedIds: number[] = Array.isArray(regRes?.assignedNodeIds)
+        ? regRes.assignedNodeIds.map(Number).filter((id: number) => id > 0)
+        : [];
+      const idsLabel = assignedIds.map((id) => `#${id}`).join(', ');
+      const okMsg = idsLabel
+        ? language === 'th'
+          ? `🎉 สมัครสมาชิกสำเร็จ! ได้รับเลขไอดี ${idsLabel}`
+          : `🎉 Registration confirmed! Assigned ID: ${idsLabel}`
+        : language === 'th'
+        ? 'สมัครสมาชิกสำเร็จเรียบร้อยแล้ว!'
+        : 'Registration confirmed!';
       setRegTxMessage(okMsg);
       emitTransactionToast({
         id: toastId,
         status: 'confirmed',
-        step: language === 'th' ? 'ยืนยันการสมัครสมาชิกสำเร็จ!' : 'Registration Confirmed!',
+        step: idsLabel
+          ? language === 'th'
+            ? `สมัครสำเร็จ! ได้รับเลขไอดี ${idsLabel}`
+            : `Confirmed! Assigned ID: ${idsLabel}`
+          : language === 'th'
+          ? 'ยืนยันการสมัครสมาชิกสำเร็จ!'
+          : 'Registration Confirmed!',
         message: okMsg,
+        txHash: regRes?.txHash || regRes?.hash || null,
+        assignedNodeIds: assignedIds,
+        durationMs: 12000,
       });
       setTimeout(() => {
         setIsRegisterModalOpen(false);
-      }, 1200);
+      }, 650);
     } catch (err: any) {
       const errMsg = err?.message || 'Registration failed';
       setRegTxError(errMsg);
@@ -1974,6 +1993,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                 rightChild: 0,
                 isClone: true,
                 isExtraId: false,
+                isAdminFreeUpgrade: Boolean(template?.isAdminFreeUpgrade || trigOriginNode?.isAdminFreeUpgrade),
                 originMainId: cloneOrigMainId,
                 directSponsorNodeId: savedSponsorId,
                 nodeVault: 0,
@@ -2051,81 +2071,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         }
       }
 
-      // Auto-detect on-chain Admin Free Rank Upgrades (adminUpgradeRankForMainId / adminUpgradeRank) from Rank 18 down to Rank 2
-      const r1RootSnap = multiRankSnapshots.get(1)?.get(1);
-      const r1RootVaultVal = Number(r1RootSnap?.nodeVault ?? 0);
-      for (let r = 18; r >= 2; r--) {
-        const sMap = multiRankSnapshots.get(r);
-        if (!sMap || sMap.size <= 1) continue;
-        for (const mNode of sMap.values()) {
-          if (mNode.isClone || mNode.isExtraId) continue;
-          const mR1Id = mNode.id === 1 ? 1 : mNode.originMainId || mNode.id;
-          const rawV = Number(mNode.nodeVault ?? 0);
-          if (rawV > 1e-6) continue;
-
-          let vaultNeverSpentInR = false;
-          if (mR1Id === 1) {
-            if (r <= 3) {
-              const r2RootSnap = multiRankSnapshots.get(2)?.get(1);
-              const r2RootVaultVal = Number(r2RootSnap?.nodeVault ?? 0);
-              if (r === 2 && r1RootVaultVal > 1e-6) vaultNeverSpentInR = true;
-              if (r === 3 && (r1RootVaultVal > 1e-6 || r2RootVaultVal > 1e-6)) vaultNeverSpentInR = true;
-            } else {
-              let anyExtra = false;
-              for (const snap of multiRankSnapshots.values()) {
-                for (const x of snap.values()) {
-                  if (x.isExtraId && !x.isClone) {
-                    anyExtra = true;
-                    break;
-                  }
-                }
-                if (anyExtra) break;
-              }
-              if (!anyExtra) vaultNeverSpentInR = true;
-            }
-          } else {
-            const nextSMap = multiRankSnapshots.get(r + 1);
-            const nodeInNextR = nextSMap
-              ? Array.from(nextSMap.values()).find(
-                  (x) => !x.isClone && !x.isExtraId && x.originMainId === mR1Id
-                )
-              : undefined;
-            if (!nodeInNextR || nodeInNextR.isAdminFreeUpgrade) {
-              vaultNeverSpentInR = true;
-            }
-          }
-
-          if (vaultNeverSpentInR) {
-            for (const sn of sMap.values()) {
-              const snOrig = sn.originMainId || sn.id;
-              const isSameMain =
-                sn.id === mNode.id ||
-                (sn.isClone && !sn.isExtraId && (snOrig === mNode.id || snOrig === mR1Id));
-              if (isSameMain && sn.leftChild > 0) {
-                const lcNode = sMap.get(sn.leftChild);
-                if (lcNode) {
-                  lcNode.isAdminFreeUpgrade = true;
-                  if (r === activeRank && rawNodes.has(lcNode.id)) {
-                    rawNodes.get(lcNode.id)!.isAdminFreeUpgrade = true;
-                  }
-                  if (lcNode.isClone) {
-                    const trigNode = sMap.get(lcNode.id - 1);
-                    if (trigNode && !trigNode.isClone && trigNode.parentId > 0) {
-                      const trigParent = sMap.get(trigNode.parentId);
-                      if (trigParent && trigParent.rightChild === trigNode.id) {
-                        trigNode.isAdminFreeUpgrade = true;
-                        if (r === activeRank && rawNodes.has(trigNode.id)) {
-                          rawNodes.get(trigNode.id)!.isAdminFreeUpgrade = true;
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
+      // Admin Free Rank Upgrades: Respect explicit on-chain admin free flags only
 
       // Authentic on-chain Extra IDs and Clones are already created by the Smart Contract.
       const hasOnChainExtraNodes = true;
@@ -3978,6 +3924,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           rightChild: n.rightChild,
           isClone: n.isClone,
           isExtraId: n.isExtraId,
+          isAdminFreeUpgrade: Boolean(n.isAdminFreeUpgrade),
           isAutoMainId:
             !n.isClone &&
             !n.isExtraId &&
@@ -4169,10 +4116,15 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           for (const pId of currentFrontier) {
             const pObj = rawNodes.get(pId);
             if (!pObj) continue;
+            const pOrigin = !pObj.isClone ? pObj : rawNodes.get(originMainIdMap.get(pObj.id) || pObj.id) || pObj;
+            const isExtraP = Boolean(pObj.isExtraId || pOrigin.isExtraId);
             if (pObj.leftChild > 0 && rawNodes.has(pObj.leftChild) && !visitedSub.has(pObj.leftChild)) {
               visitedSub.add(pObj.leftChild);
               nextFrontier.push(pObj.leftChild);
-              leftNodeIds.push(pObj.leftChild);
+              const lcObj = rawNodes.get(pObj.leftChild);
+              if (!lcObj?.isAdminFreeUpgrade && !isExtraP) {
+                leftNodeIds.push(pObj.leftChild);
+              }
             }
             if (pObj.rightChild > 0 && rawNodes.has(pObj.rightChild) && !visitedSub.has(pObj.rightChild)) {
               visitedSub.add(pObj.rightChild);
@@ -4198,11 +4150,9 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           currentFrontier = nextFrontier;
         }
 
-        const receivedLevelsCount = tiersBreakdown.length;
+        const receivedLevelsCount = tiersBreakdown.filter((t) => t.leftPayingNodesCount > 0).length;
         const remainingLevelsCount = Math.max(0, 15 - receivedLevelsCount);
-        const clonesLvlTotal = !node.isClone
-          ? Number(Math.max(0, node.unilevelRewardAllNodes - thisNodeLvlTotal).toFixed(2))
-          : 0;
+        const clonesLvlTotal = 0;
         node.levelSummary = {
           maxLevels: 15,
           receivedLevelsCount,
@@ -4210,9 +4160,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           ratePerNodeUsdt: ratePerNode,
           thisNodeLevelTotalUsdt: thisNodeLvlTotal,
           clonesLevelTotalUsdt: clonesLvlTotal,
-          combinedLevelTotalUsdt: !node.isClone
-            ? Number(node.unilevelRewardAllNodes.toFixed(2))
-            : thisNodeLvlTotal,
+          combinedLevelTotalUsdt: Number((thisNodeLvlTotal + clonesLvlTotal).toFixed(2)),
           tiersBreakdown,
         };
       }
@@ -8025,7 +7973,10 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
               )}
 
               {/* Section 1: Summary Cards (Node Earnings + Main ID Cumulative & 3 Pools) */}
-              {modalNode.isExtraLineage ? (
+              {modalNode.isExtraLineage ? (() => {
+                const extraLeftNode = modalNode.leftChild > 0 ? activeNodesMap.get(modalNode.leftChild) : undefined;
+                const isPayingExtraLeft = modalNode.leftChild > 0 && !extraLeftNode?.isAdminFreeUpgrade;
+                return (
                 <div className="rounded-xl bg-[#0d1829] border border-cyan-500/45 p-3.5 space-y-2 text-xs">
                   <div className="flex items-center justify-between border-b border-cyan-500/20 pb-2">
                     <span className="font-bold text-cyan-300 text-sm">
@@ -8041,7 +7992,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                         30% ค่าแนะนำ → ส่งให้ #{modalNode.directUplineNodeId || 1}
                       </span>
                       <span className="text-emerald-400 font-extrabold text-sm">
-                        {modalNode.leftChild > 0
+                        {isPayingExtraLeft
                           ? `+${((RANK_PRICES_USDT[modalNode.rank - 1] || 10) * 0.3).toFixed(2)} USDT`
                           : '0.00 USDT'}
                       </span>
@@ -8051,7 +8002,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                         30% ค่าชั้น → ส่งให้ #{modalNode.directUplineNodeId || 1}
                       </span>
                       <span className="text-cyan-300 font-extrabold text-sm">
-                        {modalNode.leftChild > 0
+                        {isPayingExtraLeft
                           ? `+${((RANK_PRICES_USDT[modalNode.rank - 1] || 10) * 0.3).toFixed(2)} USDT`
                           : '0.00 USDT'}
                       </span>
@@ -8061,14 +8012,15 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                         35% Vault → เข้า Extra Pool ของ #{modalNode.directUplineNodeId || 1}
                       </span>
                       <span className="text-rose-400 font-extrabold text-sm">
-                        {modalNode.leftChild > 0
+                        {isPayingExtraLeft
                           ? `+${((RANK_PRICES_USDT[modalNode.rank - 1] || 10) * 0.35).toFixed(2)} USDT`
                           : '0.00 USDT'}
                       </span>
                     </div>
                   </div>
                 </div>
-              ) : (
+                );
+              })() : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {/* Box 1 (Moved to Top): ผลประโยชน์สะสมของรหัสหลัก & 3 Pools + ปุ่มอัพ Rank */}
                   <div className="rounded-xl bg-[#10162f] border border-indigo-500/40 p-3.5 space-y-2.5">

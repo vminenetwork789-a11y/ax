@@ -63,6 +63,7 @@ interface RegisterSectionProps {
   currentStep: string;
   txError?: string | null;
   txSuccess?: string | null;
+  onRegisterSuccess?: (result?: any) => void;
   language: 'th' | 'en';
 }
 
@@ -80,6 +81,7 @@ export const RegisterSection: React.FC<RegisterSectionProps> = ({
   currentStep,
   txError,
   txSuccess,
+  onRegisterSuccess,
   language,
 }) => {
   const initialRefSponsor = getActiveReferralSponsorId() || 1;
@@ -327,18 +329,23 @@ export const RegisterSection: React.FC<RegisterSectionProps> = ({
       return;
     }
 
+    let res: any = null;
     if (nodeCount > 1 && onExecuteOffChainBatch) {
       const ownerAddr = account || '';
       const queue: ApplicantItem[] = Array.from({ length: nodeCount }, () => ({
         owner: ownerAddr,
       }));
-      await onExecuteOffChainBatch(finalSponsorId, queue, undefined, placementMode);
+      res = await onExecuteOffChainBatch(finalSponsorId, queue, undefined, placementMode);
     } else {
-      await onRegister(finalSponsorId, {
+      res = await onRegister(finalSponsorId, {
         targetParentId: placementPreview?.targetParentId,
         isLeft: placementPreview?.isLeft,
         mode: placementMode,
       });
+    }
+
+    if (res && res.success !== false) {
+      onRegisterSuccess?.(res);
     }
   };
 
