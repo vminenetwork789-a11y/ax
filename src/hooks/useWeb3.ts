@@ -84,50 +84,13 @@ export function useWeb3() {
     txHash: string | null;
     error: string | null;
     successMessage: string | null;
-    assignedNodeIds?: number[];
   }>({
     isLoading: false,
     step: '',
     txHash: null,
     error: null,
     successMessage: null,
-    assignedNodeIds: undefined,
   });
-
-  const extractCreatedRank1IdsFromReceipt = (receipt: any) => {
-    const mainIds = new Set<number>();
-    const cloneIds = new Set<number>();
-    try {
-      const iface = new ethers.Interface(MATRIX_ABI);
-      for (const log of receipt?.logs || []) {
-        try {
-          const parsed = iface.parseLog({ topics: [...log.topics], data: log.data });
-          if (!parsed) continue;
-          if (parsed.name === 'NodeCreated' && Number(parsed.args.rank) === 1) {
-            const nId = Number(parsed.args.nodeId);
-            if (nId > 0) {
-              if (parsed.args.isClone) {
-                cloneIds.add(nId);
-              } else if (!parsed.args.isExtraId) {
-                mainIds.add(nId);
-              }
-            }
-          } else if (parsed.name === 'UserRegistered') {
-            const mId = Number(parsed.args.mainNodeId);
-            if (mId > 0) mainIds.add(mId);
-          }
-        } catch {
-          // Ignore unrelated logs
-        }
-      }
-    } catch {
-      // Ignore parse errors
-    }
-    return {
-      mainIds: Array.from(mainIds).sort((a, b) => a - b),
-      cloneIds: Array.from(cloneIds).sort((a, b) => a - b),
-    };
-  };
 
   const isBscTestnet = chainId === BSC_TESTNET_CHAIN_ID;
 
@@ -919,7 +882,7 @@ export function useWeb3() {
         throw new Error(regData?.error || 'การสมัครสมาชิกไม่สำเร็จ');
       }
       const assignedIds: number[] = Array.isArray(regData.assignedNodeIds)
-        ? regData.assignedNodeIds.map(Number).filter((id: number) => id > 0)
+        ? regData.assignedNodeIds
         : [];
       const firstPlacement = Array.isArray(regData.placements) ? regData.placements[0] : null;
       const sideText = firstPlacement
@@ -930,28 +893,22 @@ export function useWeb3() {
         ? 'RIGHT ลูกขวา'
         : 'LEFT ลูกซ้าย';
       const parentText = firstPlacement?.parentId || autoOptions?.targetParentId || sponsorNodeId;
-      const idsLabel = assignedIds.map((id) => `#${id}`).join(', ');
 
       setTxState({
         isLoading: false,
-        step: idsLabel ? `สมัครสำเร็จ! ได้รับเลขไอดี ${idsLabel}` : 'สำเร็จ!',
+        step: 'สำเร็จ!',
         txHash: regData.txHash || null,
         error: null,
-        assignedNodeIds: assignedIds,
         successMessage:
           regData.message ||
-          `🎉 สมัครสมาชิกสำเร็จ! ได้รับเลขไอดี ${idsLabel} วางที่ Parent #${parentText} (${sideText}) ภายใต้ผู้แนะนำ #${sponsorNodeId}`,
+          `🎉 สมัครสมาชิกสำเร็จ! ได้รับรหัส ${assignedIds.map((id) => `#${id}`).join(', ')} วางที่ Parent #${parentText} (${sideText}) ภายใต้ผู้แนะนำ #${sponsorNodeId}`,
       });
 
       await refreshUserData(regData.owner || targetOwnerAddr);
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('matrix:tree:refresh'));
       }
-      return {
-        ...regData,
-        hash: regData.txHash || null,
-        assignedNodeIds: assignedIds,
-      };
+      return regData;
     };
 
     let activeTicket: any = null;
@@ -985,22 +942,8 @@ export function useWeb3() {
         throw new Error(`Sponsor Node ID #${sponsorNodeId} ไม่ถูกต้อง: ${reason}`);
       }
 
-      // 2. Get Rank 1 price (5 USDT) and verify deployed contract price matches
+      // 2. Get Rank 1 price (5 USDT)
       const r1UnitPrice = RANK_PRICES_USDT[0] || 5;
-      try {
-        const onChainR1Raw: bigint = await matrixContract.rankPrice(1);
-        const onChainR1Usdt = Number(ethers.formatUnits(onChainR1Raw, usdtDecimals));
-        if (Math.abs(onChainR1Usdt - r1UnitPrice) > 0.01) {
-          throw new Error(
-            `ONCHAIN_PRICE_MISMATCH: สัญญาบนเชนตั้งราคา Rank 1 ไว้ที่ ${onChainR1Usdt} USDT ไม่ตรงกับราคาปัจจุบัน (${r1UnitPrice} USDT) — ใช้ระบบสมัครราคา ${r1UnitPrice} USDT`
-          );
-        }
-      } catch (priceCheckErr: any) {
-        if (String(priceCheckErr?.message || '').includes('ONCHAIN_PRICE_MISMATCH')) {
-          throw priceCheckErr;
-        }
-      }
-
       const price: bigint = ethers.parseUnits(String(r1UnitPrice), usdtDecimals);
       const totalCost = price * BigInt(countToReg);
 
@@ -1150,85 +1093,44 @@ export function useWeb3() {
       }));
 
       const receipt = await regTx.wait();
-      const { mainIds: parsedMainIds, cloneIds: parsedCloneIds } =
-        extractCreatedRank1IdsFromReceipt(receipt);
 
       // Confirm ticket reservation in Queue
       if (activeTicket?.ticketId) {
         await confirmQueueTicket(activeTicket.ticketId, receipt.hash);
       }
-
-      await fetch('/api/db/sync', { method: 'POST' }).catch(() => {});
-
-      let assignedIds = parsedMainIds;
-      if (assignedIds.length === 0) {
-        try {
-          const profRes = await fetch(
-            `/api/matrix/profile/${userAddr}?contract=${currentContract}`,
-            { headers: { Accept: 'application/json' } }
-          );
-          if (profRes.ok) {
-            const profJson = await profRes.json();
-            const ownedMainIds: number[] = Array.isArray(profJson?.profile?.ownedMainIdsRank1)
-              ? profJson.profile.ownedMainIdsRank1.map(Number).filter((id: number) => id > 0)
-              : [];
-            if (ownedMainIds.length > 0) {
-              assignedIds = ownedMainIds.slice(-countToReg);
-            }
-          }
-        } catch {
-          // Ignore lookup fallback error
-        }
-      }
-
-      const idsLabel = assignedIds.map((id) => `#${id}`).join(', ');
-      const clonesLabel =
-        parsedCloneIds.length > 0
-          ? ` (+โคลน ${parsedCloneIds.map((id) => `#${id}`).join(', ')})`
-          : '';
-
       reportTxToServer({
         txHash: receipt?.hash || regTx.hash,
         actionType: countToReg > 1 ? 'BATCH_REGISTER' : 'REGISTER',
         title:
           countToReg > 1
-            ? `สมัครแบบกลุ่ม (${countToReg} โหนด)${idsLabel ? ` • ID ${idsLabel}` : ''}`
-            : `สมัครสมาชิกใหม่${idsLabel ? ` (${idsLabel})` : ' (Rank 1)'}`,
+            ? `สมัครแบบกลุ่ม (${countToReg} โหนด)`
+            : `สมัครสมาชิกใหม่ (Rank 1)`,
         userAddress: userAddr,
-        mainNodeId: assignedIds[0] || undefined,
         rank: 1,
         amountUsdt: countToReg * r1UnitPrice,
         blockNumber: receipt?.blockNumber,
-        details: `Sponsor #${sponsorNodeId}${idsLabel ? ` | ID ${idsLabel}` : ''}`,
+        details: `Sponsor #${sponsorNodeId}`,
       });
 
       setTxState({
         isLoading: false,
-        step: idsLabel ? `สมัครสำเร็จ! ได้รับเลขไอดี ${idsLabel}` : 'สมัครสมาชิกสำเร็จ!',
+        step: 'สำเร็จ!',
         txHash: receipt.hash,
         error: null,
-        assignedNodeIds: assignedIds,
         successMessage:
           autoParentId > 0
-            ? `🎉 สมัครสมาชิกสำเร็จ!${idsLabel ? ` ได้รับเลขไอดี ${idsLabel}` : ''}${clonesLabel} • ลงตำแหน่งที่ Parent #${autoParentId} (${sideLabel}) ภายใต้ผู้แนะนำ #${sponsorNodeId}`
-            : `🎉 สมัครสมาชิกสำเร็จ!${idsLabel ? ` ได้รับเลขไอดี ${idsLabel}` : ''}${clonesLabel} (Rank 1 - ${countToReg * r1UnitPrice} USDT | Sponsor #${sponsorNodeId})`,
+            ? `🎉 สมัครสมาชิกสำเร็จ! ลงตำแหน่งออโต้ที่ Parent #${autoParentId} (${sideLabel}) ภายใต้ผู้แนะนำ #${sponsorNodeId} (จองผ่าน FIFO Queue)`
+            : `🎉 สมัครสมาชิก Fractal Flow (Rank 1 - ${countToReg * r1UnitPrice} USDT) สำเร็จเรียบร้อย! (Sponsor Node ID: #${sponsorNodeId})`,
       });
 
+      await fetch('/api/db/sync', { method: 'POST' }).catch(() => {});
       await refreshUserData(userAddr);
 
       // อัปเดตผังต้นไม้ไบนารี่ทันทีเมื่อสมัครสำเร็จ
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('matrix:tree:refresh'));
       }
-      return {
-        success: true,
-        hash: receipt.hash,
-        txHash: receipt.hash,
-        blockNumber: receipt.blockNumber,
-        assignedNodeIds: assignedIds,
-        cloneNodeIds: parsedCloneIds,
-        receipt,
-      };
+      return receipt;
     } catch (err: any) {
       console.warn('Register transaction notice:', err);
       if (activeTicket?.ticketId) {
@@ -1293,20 +1195,6 @@ export function useWeb3() {
       }
 
       const r1UnitPrice = RANK_PRICES_USDT[0] || 5;
-      try {
-        const onChainR1Raw: bigint = await matrixContract.rankPrice(1);
-        const onChainR1Usdt = Number(ethers.formatUnits(onChainR1Raw, usdtDecimals));
-        if (Math.abs(onChainR1Usdt - r1UnitPrice) > 0.01) {
-          throw new Error(
-            `ONCHAIN_PRICE_MISMATCH: สัญญาบนเชนตั้งราคา Rank 1 ไว้ที่ ${onChainR1Usdt} USDT ไม่ตรงกับราคาปัจจุบัน (${r1UnitPrice} USDT)`
-          );
-        }
-      } catch (priceCheckErr: any) {
-        if (String(priceCheckErr?.message || '').includes('ONCHAIN_PRICE_MISMATCH')) {
-          throw priceCheckErr;
-        }
-      }
-
       const unitPrice: bigint = ethers.parseUnits(String(r1UnitPrice), usdtDecimals);
 
       const totalCost = unitPrice * BigInt(count);
@@ -1355,29 +1243,24 @@ export function useWeb3() {
       }));
 
       const receipt = await batchTx.wait();
-      const { mainIds: batchMainIds, cloneIds: batchCloneIds } =
-        extractCreatedRank1IdsFromReceipt(receipt);
-      const batchIdsLabel = batchMainIds.map((id) => `#${id}`).join(', ');
 
       reportTxToServer({
         txHash: receipt?.hash || batchTx.hash,
         actionType: 'BATCH_REGISTER',
-        title: `สมัครแบบกลุ่ม (Batch ${count} โหนด)${batchIdsLabel ? ` • ID ${batchIdsLabel}` : ''}`,
+        title: `สมัครแบบกลุ่ม (Batch ${count} โหนด)`,
         userAddress: userAddr,
-        mainNodeId: batchMainIds[0] || undefined,
         rank: 1,
-        amountUsdt: count * r1UnitPrice,
+        amountUsdt: count * 5,
         blockNumber: receipt?.blockNumber,
-        details: `Sponsor #${sponsorNodeId}${batchIdsLabel ? ` | ID ${batchIdsLabel}` : ''}`,
+        details: `Sponsor #${sponsorNodeId}`,
       });
 
       setTxState({
         isLoading: false,
-        step: batchIdsLabel ? `สมัครสำเร็จ! ได้รับเลขไอดี ${batchIdsLabel}` : 'สำเร็จ!',
+        step: 'สำเร็จ!',
         txHash: receipt.hash,
         error: null,
-        assignedNodeIds: batchMainIds,
-        successMessage: `🎉 สมัครแบบกลุ่ม (${count} โหนด = ${count * r1UnitPrice} USDT) สำเร็จ!${batchIdsLabel ? ` ได้รับเลขไอดี ${batchIdsLabel}` : ''}`,
+        successMessage: `🎉 สมัครแบบกลุ่ม (Batch Registration ${count} โหนด = ${count * 5} USDT) สำเร็จเรียบร้อย!`,
       });
 
       await fetch('/api/db/sync', { method: 'POST' }).catch(() => {});
@@ -1387,59 +1270,8 @@ export function useWeb3() {
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('matrix:tree:refresh'));
       }
-      return {
-        success: true,
-        hash: receipt.hash,
-        txHash: receipt.hash,
-        assignedNodeIds: batchMainIds,
-        cloneNodeIds: batchCloneIds,
-        receipt,
-      };
+      return receipt;
     } catch (err: any) {
-      const msgStr = String(err?.message || '');
-      if (msgStr.includes('ONCHAIN_PRICE_MISMATCH')) {
-        try {
-          const targetOwner = account || '';
-          if (targetOwner) {
-            const regRes = await fetch('/api/matrix/register', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                owner: targetOwner,
-                sponsorNodeId,
-                targetParentId: targetParentIds?.[0],
-                isLeft: isLefts?.[0],
-                count,
-              }),
-            });
-            const regData = await regRes.json();
-            if (regRes.ok && regData?.success) {
-              const r1UnitPrice = RANK_PRICES_USDT[0] || 5;
-              const fallbackIds: number[] = Array.isArray(regData.assignedNodeIds)
-                ? regData.assignedNodeIds.map(Number).filter((id: number) => id > 0)
-                : [];
-              const fallbackIdsLabel = fallbackIds.map((id) => `#${id}`).join(', ');
-              setTxState({
-                isLoading: false,
-                step: fallbackIdsLabel ? `สมัครสำเร็จ! ได้รับเลขไอดี ${fallbackIdsLabel}` : 'สำเร็จ!',
-                txHash: regData.txHash || null,
-                error: null,
-                assignedNodeIds: fallbackIds,
-                successMessage:
-                  regData.message ||
-                  `🎉 สมัครแบบกลุ่ม (${count} โหนด = ${count * r1UnitPrice} USDT) สำเร็จ!${fallbackIdsLabel ? ` ได้รับเลขไอดี ${fallbackIdsLabel}` : ''}`,
-              });
-              await refreshUserData(regData.owner || targetOwner);
-              if (typeof window !== 'undefined') {
-                window.dispatchEvent(new CustomEvent('matrix:tree:refresh'));
-              }
-              return { ...regData, assignedNodeIds: fallbackIds };
-            }
-          }
-        } catch (dbErr) {
-          console.error('Database fallback batch register error:', dbErr);
-        }
-      }
       console.error('Batch Register error:', err);
       const errorMsg = err?.reason || err?.shortMessage || err?.message || 'การทำรายการ registerBatch ล้มเหลว';
       setTxState({
@@ -1561,21 +1393,6 @@ export function useWeb3() {
               successMessage: null,
             });
             return;
-          }
-
-          // 2. Verify deployed contract rankPrice(targetRank) matches nominalPrice before sending on-chain tx
-          try {
-            const onChainRankPriceRaw: bigint = await matrixContract.rankPrice(targetRank);
-            const onChainRankPriceUsdt = Number(ethers.formatUnits(onChainRankPriceRaw, usdtDecimals));
-            if (Math.abs(onChainRankPriceUsdt - nominalPrice) > 0.01) {
-              throw new Error(
-                `ONCHAIN_PRICE_MISMATCH: สัญญาบนเชนตั้งราคา Rank ${targetRank} ไว้ที่ ${onChainRankPriceUsdt} USDT ไม่ตรงกับตารางราคาใหม่ (${nominalPrice} USDT) — ระบบดำเนินการผ่าน Upgrade Engine ในราคา ${nominalPrice} USDT`
-              );
-            }
-          } catch (priceErr: any) {
-            if (String(priceErr?.message || '').includes('ONCHAIN_PRICE_MISMATCH')) {
-              throw priceErr;
-            }
           }
 
           const targetPrice: bigint = ethers.parseUnits(nominalPrice.toString(), usdtDecimals);
@@ -2025,19 +1842,14 @@ export function useWeb3() {
         if (activeBatchTicket?.ticketId) {
           await confirmQueueTicket(activeBatchTicket.ticketId, result.txHash);
         }
-        await fetch('/api/db/sync', { method: 'POST' }).catch(() => {});
-        const assignedIds: number[] = Array.isArray(result.assignedNodeIds)
-          ? result.assignedNodeIds.map(Number).filter((id: number) => id > 0)
-          : [];
-        const idsLabel = assignedIds.map((id) => `#${id}`).join(', ');
         setTxState({
           isLoading: false,
-          step: idsLabel ? `สมัครสำเร็จ! ได้รับเลขไอดี ${idsLabel}` : 'สำเร็จ!',
+          step: 'สำเร็จ!',
           txHash: result.txHash || null,
           error: null,
-          assignedNodeIds: assignedIds,
-          successMessage: `🎉 สมัครแบบกลุ่ม (${applicantsQueue.length} โหนด) สำเร็จ!${idsLabel ? ` ได้รับเลขไอดี ${idsLabel}` : ''}`,
+          successMessage: `🎉 สมัครแบบกลุ่ม (${applicantsQueue.length} โหนด) ลงตำแหน่งออโต้สำเร็จ! Tx: ${result.txHash} (ผ่านระบบ FIFO Queue)`,
         });
+        await fetch('/api/db/sync', { method: 'POST' }).catch(() => {});
         await refreshUserData(userAddr);
 
         // อัปเดตผังต้นไม้ไบนารี่ทันทีเมื่อสมัครแบบกลุ่มสำเร็จ
@@ -2077,30 +1889,8 @@ export function useWeb3() {
   const inspectRankData = useCallback(
     async (rank: number) => {
       const rankNum = Math.min(Math.max(Number(rank) || 1, 1), 18);
-      let currentPriceNum = RANK_PRICES_USDT[rankNum - 1] ?? 5;
-      let nextPriceNum = rankNum < 18 ? (RANK_PRICES_USDT[rankNum] ?? 0) : 0;
+      const nextPriceNum = rankNum < 18 ? RANK_PRICES_USDT[rankNum] : 0;
       const currentContract = contractAddressRef.current || CONTRACT_ADDRESS;
-
-      try {
-        const matrixContract = new ethers.Contract(currentContract, MATRIX_ABI, readOnlyBscProvider);
-        const pCurrent = await matrixContract.rankPrice(rankNum);
-        if (pCurrent > 0n) {
-          currentPriceNum = Number(ethers.formatUnits(pCurrent, 18));
-        }
-        if (rankNum < 18) {
-          const pNext = await matrixContract.rankPrice(rankNum + 1);
-          if (pNext > 0n) {
-            nextPriceNum = Number(ethers.formatUnits(pNext, 18));
-          }
-        }
-      } catch {
-        // Fallback to RANK_PRICES_USDT
-      }
-
-      const formatPrice = (val: number) =>
-        `${val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDT`;
-      const formattedCurrentPrice = formatPrice(currentPriceNum);
-      const defaultNextPrice = nextPriceNum > 0 ? formatPrice(nextPriceNum) : 'Max Rank';
 
       // 1. Read from our Database first (/api/matrix/inspect-rank)
       try {
@@ -2115,8 +1905,7 @@ export function useWeb3() {
               firstNodeId: String(dbJson.firstNodeId || '0'),
               latestNodeId: String(dbJson.latestNodeId || '0'),
               upgradeVaultBalance: String(dbJson.upgradeVaultBalance || '0.00'),
-              rankPrice: String(dbJson.rankPrice || formattedCurrentPrice),
-              nextRankPrice: String(dbJson.nextRankPrice || defaultNextPrice),
+              nextRankPrice: String(dbJson.nextRankPrice || (nextPriceNum > 0 ? `${nextPriceNum.toFixed(2)} USDT` : 'Max Rank')),
             };
           }
         }
@@ -2131,8 +1920,7 @@ export function useWeb3() {
           firstNodeId: matchingVault.firstNodeId || (rankNum === 1 ? profile?.mainNodeIdRank1 || '1' : '0'),
           latestNodeId: matchingVault.latestNodeId || (rankNum === 1 ? profile?.latestCloneIdRank1 || '0' : '0'),
           upgradeVaultBalance: matchingVault.balance || '0.00',
-          rankPrice: formattedCurrentPrice,
-          nextRankPrice: defaultNextPrice,
+          nextRankPrice: nextPriceNum > 0 ? `${nextPriceNum.toFixed(2)} USDT` : 'Max Rank',
         };
       }
 
@@ -2147,7 +1935,7 @@ export function useWeb3() {
         if (targetAddr && targetAddr !== ethers.ZeroAddress) {
           const rankInfo = await matrixContract.getUserRankInfo(targetAddr, rankNum);
           let formattedVault = '0.00';
-          const formattedNextPrice = defaultNextPrice;
+          let formattedNextPrice = nextPriceNum > 0 ? `${nextPriceNum.toFixed(2)} USDT` : 'Max Rank';
 
           try {
             let effectiveVaultBn: bigint = BigInt(rankInfo[2] ?? 0);
@@ -2164,6 +1952,11 @@ export function useWeb3() {
             }
             const dec = effectiveVaultBn >= 100000000000000n || rankInfo[3] >= 100000000000000n ? 18 : 6;
             formattedVault = Number(ethers.formatUnits(effectiveVaultBn, dec)).toFixed(2);
+            if (rankInfo[3] > 0n) {
+              formattedNextPrice = `${Number(ethers.formatUnits(rankInfo[3], dec)).toFixed(2)} USDT`;
+            } else {
+              formattedNextPrice = 'Max Rank';
+            }
           } catch {
             formattedVault = '0.00';
           }
@@ -2172,7 +1965,6 @@ export function useWeb3() {
             firstNodeId: rankInfo[0].toString(),
             latestNodeId: rankInfo[1].toString(),
             upgradeVaultBalance: formattedVault,
-            rankPrice: formattedCurrentPrice,
             nextRankPrice: formattedNextPrice,
           };
         }
@@ -2184,8 +1976,7 @@ export function useWeb3() {
         firstNodeId: rankNum === 1 ? profile?.mainNodeIdRank1 || '1' : '0',
         latestNodeId: rankNum === 1 ? profile?.latestCloneIdRank1 || '0' : '0',
         upgradeVaultBalance: '0.00',
-        rankPrice: formattedCurrentPrice,
-        nextRankPrice: defaultNextPrice,
+        nextRankPrice: nextPriceNum > 0 ? `${nextPriceNum.toFixed(2)} USDT` : 'Max Rank',
       };
     },
     [account, profile]

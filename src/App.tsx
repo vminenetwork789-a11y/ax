@@ -562,11 +562,6 @@ export default function App() {
               currentStep={txState.step}
               txError={txState.error}
               txSuccess={txState.successMessage}
-              onRegisterSuccess={() => {
-                setTimeout(() => {
-                  setIsRegisterModalOpen(false);
-                }, 450);
-              }}
               language={language}
             />
           </div>

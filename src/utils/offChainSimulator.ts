@@ -1085,8 +1085,6 @@ export async function executeOffChainSimulationAndBatch(
   isLefts?: boolean[];
   isClones?: boolean[];
   stepLogs?: SimulationStepLog[];
-  assignedNodeIds?: number[];
-  cloneNodeIds?: number[];
 }> {
   try {
     const userAddress = await signer.getAddress();
@@ -1202,44 +1200,6 @@ export async function executeOffChainSimulationAndBatch(
     onProgress('ส่งธุรกรรมสำเร็จ กำลังรอการยืนยันจากบล็อกเชน BNB Testnet...');
     const receipt = await tx.wait();
 
-    const mainIdSet = new Set<number>();
-    const cloneIdSet = new Set<number>();
-    try {
-      for (const log of receipt?.logs || []) {
-        try {
-          const parsed = contract.interface.parseLog({
-            topics: [...log.topics],
-            data: log.data,
-          });
-          if (!parsed) continue;
-          if (parsed.name === 'NodeCreated' && Number(parsed.args.rank) === 1) {
-            const nId = Number(parsed.args.nodeId);
-            if (nId > 0) {
-              if (parsed.args.isClone) {
-                cloneIdSet.add(nId);
-              } else if (!parsed.args.isExtraId) {
-                mainIdSet.add(nId);
-              }
-            }
-          } else if (parsed.name === 'UserRegistered') {
-            const mId = Number(parsed.args.mainNodeId);
-            if (mId > 0) mainIdSet.add(mId);
-          }
-        } catch {
-          // Ignore non-contract logs
-        }
-      }
-    } catch {
-      // Ignore receipt parse errors
-    }
-
-    if (mainIdSet.size === 0 && Array.isArray(simResult.stepLogs)) {
-      simResult.stepLogs.forEach((s) => {
-        const sid = Number(s.assignedNodeId);
-        if (sid > 0) mainIdSet.add(sid);
-      });
-    }
-
     return {
       success: true,
       txHash: receipt.hash,
@@ -1247,8 +1207,6 @@ export async function executeOffChainSimulationAndBatch(
       isLefts: simResult.isLefts,
       isClones: simResult.isClones,
       stepLogs: simResult.stepLogs,
-      assignedNodeIds: Array.from(mainIdSet).sort((a, b) => a - b),
-      cloneNodeIds: Array.from(cloneIdSet).sort((a, b) => a - b),
     };
   } catch (error: any) {
     console.error('Auto-Placement & Batch Registration Error:', error);

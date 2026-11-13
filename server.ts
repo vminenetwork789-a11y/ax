@@ -266,7 +266,7 @@ const DEFAULT_SYSTEM_CONFIG = {
   contractAddress:
     process.env.OVERRIDE_CONTRACT_ADDRESS ||
     process.env.CONTRACT_ADDRESS ||
-    '0xd63f2353ea03bA142C3FbCdccE2Aec6Af31496AF',
+    '0xaA38a606402DF541ee4Df81Ae0C8BcDAcDD12fe6',
   usdtAddress: process.env.USDT_ADDRESS || '0x05f24E1F598DF1aE8d0B424ce978f8ea33bB752b',
   chainId: Number(process.env.CHAIN_ID || 97),
   networkName: process.env.NETWORK_NAME || 'BNB Smart Chain Testnet',
@@ -2039,7 +2039,7 @@ function reconcileRankTreeLinks(nodes: IndexedTreeNode[]): IndexedTreeNode[] {
   return nodes;
 }
 
-// Reconcile Pool 3 (New Extra ID Pool: Vault R4-18) -> Loop Rank 18 down to Rank 2 (5,000 -> ... -> 10 USDT)
+// Reconcile Pool 3 (New Extra ID Pool: Vault R4-27) -> Loop Rank 27 down to Rank 2 (10,000 -> ... -> 10 USDT)
 function findExtraIdPlacementInRankNodes(
   rNodes: IndexedTreeNode[],
   sponsorMainId: number
@@ -2370,19 +2370,12 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
   const extraR2To3MinR1IdByMain = new Map<number, number>();
   const usedExtraR2To3 = new Set<number>();
 
+  const LEGACY_CONTRACT_PRICES_USDT = [
+    10, 20, 30, 40, 50, 60, 80, 100, 200, 300,
+    500, 700, 1000, 1500, 2000, 4000, 6000, 10000,
+  ];
   const activeContractLower = (matrixDB.contractAddress || CONTRACT_ADDRESS).toLowerCase();
-  const LEGACY_CONTRACT_PRICES_USDT =
-    activeContractLower === '0xaa38a606402df541ee4df81ae0c8bcdacdd12fe6'
-      ? [
-          10, 20, 30, 40, 50, 60, 80, 100, 200, 300,
-          500, 700, 900, 1000, 2000, 3000, 4000, 5000,
-        ]
-      : [
-          10, 20, 30, 40, 50, 60, 80, 100, 200, 300,
-          500, 700, 1000, 1500, 2000, 4000, 6000, 10000,
-        ];
   const usesLegacyOnChainScale =
-    activeContractLower === '0xaa38a606402df541ee4df81ae0c8bcdacdd12fe6' ||
     activeContractLower === '0x49a754084903678b7d46ff2934edb037cd1ab518' ||
     activeContractLower === '0x8b2ef84f543f5c1dfa8240a1853d63efe66006eb' ||
     sortedR1.some((m) => {
@@ -2657,27 +2650,86 @@ function reconcileAutoExtraIdsAcrossRanks(): Array<{
     matrixDB.rankCounts[r] = Math.max(1, matrixDB.nodesByRank[r].length);
   }
 
-  // 1b. Admin Free Rank Upgrades: Respect explicit on-chain admin free flags only
+  // 1b. Auto-detect on-chain Admin Free Rank Upgrades (adminUpgradeRankForMainId / adminUpgradeRank) from Rank 18 down to Rank 2:
+  // On the smart contract, _payCommission is false for Admin Free Upgrades, so left-child placements (or clones triggered by right-child Admin Free Upgrades)
+  // add 0 to the parent Main ID's nodeUpgradeVault.
   const r1AllNodes = matrixDB.nodesByRank[1] || [];
+  const r1Root = r1AllNodes.find((n) => n.id === 1);
+  const r1RootRawV = Number(r1Root?.rawNodeVault ?? r1Root?.nodeVault ?? 0);
+  for (let r = 18; r >= 2; r--) {
+    const rList = matrixDB.nodesByRank[r] || [];
+    if (rList.length <= 1) continue;
+    const byIdR = new Map<number, IndexedTreeNode>();
+    for (const n of rList) byIdR.set(n.id, n);
+
+    for (const mNode of rList) {
+      if (mNode.isClone || mNode.isExtraId) continue;
+      const mR1Id = mNode.id === 1 ? 1 : mNode.originMainId || mNode.id;
+      const rawV = Number(mNode.rawNodeVault ?? mNode.nodeVault ?? 0);
+      if (rawV > 1e-6) continue;
+
+      let vaultWasNeverSpentInRankR = false;
+      if (mR1Id === 1) {
+        if (r <= 3) {
+          // _deductVaultRange deducts from r=1 first, then r=2, then r=3
+          const r2Root = (matrixDB.nodesByRank[2] || []).find((n) => n.id === 1);
+          const r2RootRawV = Number(r2Root?.rawNodeVault ?? r2Root?.nodeVault ?? 0);
+          if (r === 2 && r1RootRawV > 1e-6) vaultWasNeverSpentInRankR = true;
+          if (r === 3 && (r1RootRawV > 1e-6 || r2RootRawV > 1e-6)) vaultWasNeverSpentInRankR = true;
+        } else {
+          const hasExtraSpawned = Object.values(matrixDB.nodesByRank).some((list) =>
+            (list || []).some((x) => x.isExtraId && !x.isClone)
+          );
+          if (!hasExtraSpawned) vaultWasNeverSpentInRankR = true;
+        }
+      } else {
+        const nextRList = matrixDB.nodesByRank[r + 1] || [];
+        const nodeInNextR = nextRList.find(
+          (x) => !x.isClone && !x.isExtraId && x.originMainId === mR1Id
+        );
+        if (!nodeInNextR || nodeInNextR.isAdminFreeUpgrade) {
+          vaultWasNeverSpentInRankR = true;
+        }
+      }
+
+      if (vaultWasNeverSpentInRankR) {
+        for (const sn of rList) {
+          const snOrig = sn.originMainId || sn.id;
+          const isSameMain =
+            sn.id === mNode.id ||
+            (sn.isClone && !sn.isExtraId && (snOrig === mNode.id || snOrig === mR1Id));
+          if (isSameMain && sn.leftChild > 0) {
+            const lcNode = byIdR.get(sn.leftChild);
+            if (lcNode) {
+              lcNode.isAdminFreeUpgrade = true;
+              // If lcNode is a clone, the right-child node immediately preceding lcNode that triggered it was also an Admin Free Upgrade
+              if (lcNode.isClone) {
+                const triggerNode = byIdR.get(lcNode.id - 1);
+                if (triggerNode && !triggerNode.isClone && triggerNode.parentId > 0) {
+                  const trigParent = byIdR.get(triggerNode.parentId);
+                  if (trigParent && trigParent.rightChild === triggerNode.id) {
+                    triggerNode.isAdminFreeUpgrade = true;
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
 
   // 2. Reconcile real on-chain Rank 1 Auto Main IDs first
   const autoMainSourceMap = reconcileRank1AutoMainIds();
 
   // 3. Normalize per-rank nodeVaults to strictly match the 5 USDT base price schedule (RANK_PRICES_USDT)
+  const LEGACY_CONTRACT_PRICES_USDT = [
+    10, 20, 30, 40, 50, 60, 80, 100, 200, 300,
+    500, 700, 1000, 1500, 2000, 4000, 6000, 10000,
+  ];
   const r1Nodes = matrixDB.nodesByRank[1] || [];
   const activeContractAddrLower = (matrixDB.contractAddress || CONTRACT_ADDRESS).toLowerCase();
-  const LEGACY_CONTRACT_PRICES_USDT =
-    activeContractAddrLower === '0xaa38a606402df541ee4df81ae0c8bcdacdd12fe6'
-      ? [
-          10, 20, 30, 40, 50, 60, 80, 100, 200, 300,
-          500, 700, 900, 1000, 2000, 3000, 4000, 5000,
-        ]
-      : [
-          10, 20, 30, 40, 50, 60, 80, 100, 200, 300,
-          500, 700, 1000, 1500, 2000, 4000, 6000, 10000,
-        ];
   const isLegacyContract =
-    activeContractAddrLower === '0xaa38a606402df541ee4df81ae0c8bcdacdd12fe6' ||
     activeContractAddrLower === '0x49a754084903678b7d46ff2934edb037cd1ab518' ||
     activeContractAddrLower === '0x8b2ef84f543f5c1dfa8240a1853d63efe66006eb';
 
@@ -3285,9 +3337,6 @@ async function cleanupWebSocket(): Promise<void> {
         if (typeof rawWs.removeAllListeners === 'function') {
           rawWs.removeAllListeners();
         }
-        if (typeof rawWs.on === 'function') {
-          rawWs.on('error', () => {});
-        }
         rawWs.onerror = () => {};
         rawWs.onclose = () => {};
       }
@@ -3371,7 +3420,7 @@ function startWsHeartbeat(): void {
 }
 
 /**
- * ตรวจสอบคิวโคลนตกค้าง + คิวแตก Auto ID (5 USDT) + คิวแตก Extra ID (R18->R2) ผ่าน HTTP Provider
+ * ตรวจสอบคิวโคลนตกค้าง + คิวแตก Auto ID (10 USDT) + คิวแตก Extra ID (R18->R2) ผ่าน HTTP Provider
  * และซิงค์ฐานข้อมูลผังไบนารี่ทันที
  */
 async function checkAndProcessBotCloneQueue(triggerReason: string): Promise<void> {
@@ -5016,11 +5065,8 @@ async function startApp() {
           );
           for (const item of chunkResults) {
             if (item) {
-              const prevExisting = mergedMap.get(item.id);
-              item.createdAt = prevExisting?.createdAt || new Date().toISOString();
-              if (prevExisting?.isAdminFreeUpgrade) {
-                item.isAdminFreeUpgrade = true;
-              }
+              const prevCreatedAt = mergedMap.get(item.id)?.createdAt;
+              item.createdAt = prevCreatedAt || new Date().toISOString();
               mergedMap.set(item.id, item);
               newlyFetchedNodes.push(item);
             }
@@ -5048,26 +5094,17 @@ async function startApp() {
             );
             for (const pItem of refreshedNodes) {
               if (pItem) {
-                const prevExisting = mergedMap.get(pItem.id);
-                if (prevExisting?.createdAt) pItem.createdAt = prevExisting.createdAt;
-                if (prevExisting?.isAdminFreeUpgrade) pItem.isAdminFreeUpgrade = true;
+                const prevCreatedAt = mergedMap.get(pItem.id)?.createdAt;
+                if (prevCreatedAt) pItem.createdAt = prevCreatedAt;
                 mergedMap.set(pItem.id, pItem);
               }
             }
           }
         }
 
-        // Re-attach any un-synced local database-upgraded Main IDs & preserve isAdminFreeUpgrade flags across clones
+        // Re-attach any un-synced local database-upgraded Main IDs (never re-attach stale local clones on top of on-chain clones)
         for (const loc of localUpgradedNodes) {
-          if (loc.isClone) {
-            if (loc.isAdminFreeUpgrade && mergedMap.has(loc.id)) {
-              const existingClone = mergedMap.get(loc.id)!;
-              if (existingClone.isClone) {
-                existingClone.isAdminFreeUpgrade = true;
-              }
-            }
-            continue;
-          }
+          if (loc.isClone) continue;
           const matchingChainNode = Array.from(mergedMap.values()).find(
             (n) =>
               !n.isLocalUpgrade &&
@@ -5078,12 +5115,9 @@ async function startApp() {
           if (matchingChainNode) {
             if (loc.isAdminFreeUpgrade) {
               matchingChainNode.isAdminFreeUpgrade = true;
-              let scanId = matchingChainNode.id + 1;
-              while (true) {
-                const trigClone = mergedMap.get(scanId);
-                if (!trigClone || !trigClone.isClone) break;
+              const trigClone = mergedMap.get(matchingChainNode.id + 1);
+              if (trigClone && trigClone.isClone) {
                 trigClone.isAdminFreeUpgrade = true;
-                scanId++;
               }
             }
             continue;
@@ -6214,10 +6248,7 @@ async function startApp() {
             if (pObj.leftChild > 0 && r1NodesMap.has(pObj.leftChild) && !visitedSubtree.has(pObj.leftChild)) {
               visitedSubtree.add(pObj.leftChild);
               nextFrontier.push(pObj.leftChild);
-              const lcObj = r1NodesMap.get(pObj.leftChild);
-              if (!lcObj?.isAdminFreeUpgrade) {
-                leftNodeIds.push(pObj.leftChild);
-              }
+              leftNodeIds.push(pObj.leftChild);
             }
             if (pObj.rightChild > 0 && r1NodesMap.has(pObj.rightChild) && !visitedSubtree.has(pObj.rightChild)) {
               visitedSubtree.add(pObj.rightChild);
@@ -6243,10 +6274,9 @@ async function startApp() {
           currentFrontier = nextFrontier;
         }
 
-        const receivedLevelsCount = tiersBreakdown.filter((t) => t.leftPayingNodesCount > 0).length;
+        const receivedLevelsCount = tiersBreakdown.filter((t) => t.leftPayingNodesCount > 0 || t.totalNodesInTier > 0).length;
         const remainingLevelsCount = Math.max(0, 15 - receivedLevelsCount);
         const perTierStr = tiersBreakdown
-          .filter((t) => t.leftPayingNodesCount > 0)
           .map((t) => `ชั้น ${t.tier}: ${t.amountUsdt.toFixed(2)} USDT (${t.leftPayingNodesCount} เม็ดซ้าย)`)
           .join(', ');
 
@@ -6886,15 +6916,9 @@ async function startApp() {
 
         if (!rep.isClone) {
           const cloneLvlSum = Number(
-            rep.level30History
-              .filter((h) => (h.note || '').includes('ผ่านโคลน'))
-              .reduce((s, h) => s + (Number(h.amountUsdt) || 0), 0)
-              .toFixed(2)
+            Math.max(0, rep.level30TotalUsdt - rep.levelSummary.thisNodeLevelTotalUsdt).toFixed(2)
           );
           rep.levelSummary.clonesLevelTotalUsdt = cloneLvlSum;
-          rep.levelSummary.thisNodeLevelTotalUsdt = Number(
-            Math.max(0, rep.level30TotalUsdt - cloneLvlSum).toFixed(2)
-          );
           rep.levelSummary.combinedLevelTotalUsdt = Number(rep.level30TotalUsdt.toFixed(2));
         } else {
           rep.levelSummary.clonesLevelTotalUsdt = 0;
@@ -8359,13 +8383,10 @@ async function startApp() {
             const pNode = rList.find((n) => n.id === chainNode.parentId);
             const isLeft = pNode ? pNode.leftChild === chainNode.id : true;
             if (pNode && pNode.rightChild === chainNode.id) {
-              let scanId = chainNode.id + 1;
-              while (true) {
-                const trigClone = rList.find((n) => n.id === scanId);
-                if (!trigClone || !trigClone.isClone) break;
+              const trigClone = rList.find((n) => n.id === chainNode.id + 1 && n.isClone);
+              if (trigClone) {
                 trigClone.isAdminFreeUpgrade = true;
                 onChainClonesCount++;
-                scanId++;
               }
             }
             onChainUpgradedRanks.push(r);
@@ -9031,43 +9052,6 @@ async function startApp() {
       });
       await syncAllMatrixDatabase(CONTRACT_ADDRESS, true).catch(() => {});
 
-      // If Admin executed adminUpgradeRank / adminUpgradeRankForMainId on-chain, tag all NodeCreated nodes & clones from this receipt as isAdminFreeUpgrade = true
-      if (action === 'adminUpgradeRankForMainId' || action === 'adminUpgradeRank') {
-        try {
-          const eventIface = new ethers.Interface([
-            'event NodeCreated(uint8 indexed rank, uint256 indexed nodeId, address indexed owner, address directSponsor, uint256 parentId, bool isLeft, bool isClone, bool isExtraId)',
-          ]);
-          let taggedAny = false;
-          for (const log of receipt?.logs || []) {
-            try {
-              const parsed = eventIface.parseLog(log);
-              if (parsed && parsed.name === 'NodeCreated') {
-                const evRank = Number(parsed.args.rank || 0);
-                const evNodeId = Number(parsed.args.nodeId || 0);
-                if (evRank >= 2 && evRank <= 18 && evNodeId > 1) {
-                  const targetNode = (matrixDB.nodesByRank[evRank] || []).find((n) => n.id === evNodeId);
-                  if (targetNode) {
-                    targetNode.isAdminFreeUpgrade = true;
-                    taggedAny = true;
-                  }
-                }
-              }
-            } catch {
-              // ignore non-NodeCreated logs
-            }
-          }
-          if (taggedAny) {
-            reconcileAutoExtraIdsAcrossRanks();
-            rebuildDatabaseRewardLogsFromNodes();
-            rebuildDatabaseUpgradeLogsFromNodes();
-            saveMatrixDBToDisk(true);
-            broadcastAllMatrixUpdates();
-          }
-        } catch {
-          // ignore parse errors
-        }
-      }
-
       res.json({
         success: true,
         action,
@@ -9169,28 +9153,7 @@ async function startApp() {
   app.get('/api/matrix/inspect-rank', async (req: Request, res: Response) => {
     const rankNum = Math.min(Math.max(Number(req.query.rank) || 1, 1), 18);
     const addrParam = String(req.query.address || '').toLowerCase();
-    let currentPriceNum = RANK_PRICES_USDT[rankNum - 1] ?? 5;
-    let nextPriceNum = rankNum < 18 ? (RANK_PRICES_USDT[rankNum] ?? 0) : 0;
-
-    try {
-      const provider = getProvider();
-      const contract = new ethers.Contract(CONTRACT_ADDRESS, MATRIX_READ_ABI, provider);
-      const pCurrent = await contract.rankPrice(rankNum);
-      if (pCurrent > 0n) {
-        currentPriceNum = Number(ethers.formatUnits(pCurrent, activeUsdtDecimals));
-      }
-      if (rankNum < 18) {
-        const pNext = await contract.rankPrice(rankNum + 1);
-        if (pNext > 0n) {
-          nextPriceNum = Number(ethers.formatUnits(pNext, activeUsdtDecimals));
-        }
-      }
-    } catch {
-      // Fallback to RANK_PRICES_USDT
-    }
-
-    const formatUsdtPrice = (val: number) =>
-      `${val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDT`;
+    const nextPriceNum = rankNum < 18 ? RANK_PRICES_USDT[rankNum] : 0;
 
     if (!matrixDB.nodesByRank[rankNum] || matrixDB.nodesByRank[rankNum].length === 0) {
       await syncRankIntoDatabase(rankNum, CONTRACT_ADDRESS, false);
@@ -9218,8 +9181,7 @@ async function startApp() {
       firstNodeId: String(firstNodeId),
       latestNodeId: String(latestNodeId),
       upgradeVaultBalance: vaultBal.toFixed(2),
-      rankPrice: formatUsdtPrice(currentPriceNum),
-      nextRankPrice: nextPriceNum > 0 ? formatUsdtPrice(nextPriceNum) : 'Max Rank',
+      nextRankPrice: nextPriceNum > 0 ? `${nextPriceNum.toFixed(2)} USDT` : 'Max Rank',
     });
   });
 
@@ -9368,7 +9330,7 @@ async function startApp() {
     sponsorNodeId: number,
     applicantList: Array<{ owner: string }>
   ) {
-    const pricePerRank = RANK_PRICES_USDT[rankNum - 1] || 5;
+    const pricePerRank = RANK_PRICES_USDT[rankNum - 1] || 10;
 
     const targetParentIds: string[] = [];
     const isLefts: boolean[] = [];
@@ -9914,7 +9876,7 @@ async function startApp() {
       return res.json({
         success: true,
         message: `Deploy บน ${networkName} สำเร็จ! (1 กระเป๋าสมัครได้ไม่จำกัด)`,
-        logs: `Compiling contracts/FractalFlowMatrix27.sol (Solidity ^0.8.20)...\nNetwork: ${networkName} (Chain ID: ${chainId})\nUSDT Token: ${usdtAddress}\nConstructor Args: (_usdt: ${usdtAddress}, _allSellWallet, _botWallet, _familyPool, _rootUser, _usdtDecimals: 6)\nInitialized 18 Ranks (5 USDT -> 5,000 USDT)\nContract deployed at: ${simulatedNewAddress}\nTransaction: ${txHash}`,
+        logs: `Compiling contracts/FractalFlowMatrix27.sol (Solidity ^0.8.20)...\nNetwork: ${networkName} (Chain ID: ${chainId})\nUSDT Token: ${usdtAddress}\nConstructor Args: (_usdt: ${usdtAddress}, _allSellWallet, _botWallet, _familyPool, _rootUser, _usdtDecimals: 6)\nInitialized 27 Ranks (5 USDT -> 10,000 USDT)\nContract deployed at: ${simulatedNewAddress}\nTransaction: ${txHash}`,
         data: {
           deployedContractAddress: simulatedNewAddress,
           txHash,
@@ -10400,7 +10362,7 @@ async function startApp() {
     process.env.DISABLE_HMR = 'true';
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true, hmr: false, ws: false, watch: null, allowedHosts: true },
+      server: { middlewareMode: true, hmr: false, ws: false, watch: null },
       appType: 'spa',
     });
     app.use(vite.middlewares);

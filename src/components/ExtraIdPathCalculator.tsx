@@ -550,7 +550,7 @@ export function calculateMatrixUpgradePath(
   const steps: UpgradePathStepResult[] = [];
   const allExtraIdEvents: ExtraIdGenerationEvent[] = [];
   const allAutoIdEvents: ChainReactionEvent[] = [];
-  const r1EntryPrice = RANK_PRICES_USDT[0] || 5;
+  const r1EntryPrice = RANK_PRICES_USDT[0] || 10;
 
   // Recursive helper for processing left-child rewards, right-child clones, Auto IDs, and Extra IDs
   const processNodePlacementCascade = (
@@ -1076,8 +1076,8 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
             nodeCode: `Auto R1-#${cr.nodeId}`,
             parentId: cr.parentId,
             side: cr.side,
-            rankPriceUsdt: RANK_PRICES_USDT[0] || 5,
-            costOrDeduction: `หัก ${(RANK_PRICES_USDT[0] || 5).toFixed(2)} U จาก Auto Pool (R1-3)`,
+            rankPriceUsdt: RANK_PRICES_USDT[0] || 10,
+            costOrDeduction: 'หัก 10.00 U จาก Auto Pool (R1-3)',
             descriptionTh: cr.descriptionTh,
           });
         } else if (cr.type === 'CLONE') {
@@ -1407,22 +1407,20 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
             <div className="rounded-lg bg-slate-950 border border-amber-500/30 p-2.5 space-y-1">
               <div className="flex items-center justify-between text-amber-300 font-bold">
                 <span>🤖 สรุปยอด Auto ID Pool (Rank 1-3)</span>
-                <span className="text-[10px] text-slate-400 font-normal">
-                  เกณฑ์: ครบ {(RANK_PRICES_USDT[0] || 5).toFixed(2)} U แตก 1 Auto ID
-                </span>
+                <span className="text-[10px] text-slate-400 font-normal">เกณฑ์: ครบ 10.00 U แตก 1 Auto ID</span>
               </div>
               <div className="space-y-1 font-mono text-[11px] pt-1 border-t border-slate-800/80">
                 <div className="flex items-center justify-between">
                   <span className="text-slate-300">Main #{calculation.sponsorMainId} (Sponsor):</span>
                   <span className="text-amber-300 font-bold">
-                    สะสม {calculation.finalSponsorAutoPoolUsdt.toFixed(2)} / {(RANK_PRICES_USDT[0] || 5).toFixed(2)} U
+                    สะสม {calculation.finalSponsorAutoPoolUsdt.toFixed(2)} / 10.00 U
                     {calculation.sponsorAutoIdEvents.length > 0 ? (
                       <span className="text-emerald-400 ml-1">(แตกใหม่ +{calculation.sponsorAutoIdEvents.length} รหัส)</span>
                     ) : (
                       <span className="text-slate-400 font-normal text-[10px] ml-1">
-                        {calculation.finalSponsorAutoPoolUsdt >= (RANK_PRICES_USDT[0] || 5)
+                        {calculation.finalSponsorAutoPoolUsdt >= 10
                           ? ''
-                          : `(ขาดอีก ${((RANK_PRICES_USDT[0] || 5) - calculation.finalSponsorAutoPoolUsdt).toFixed(2)} U)`}
+                          : `(ขาดอีก ${(10.0 - calculation.finalSponsorAutoPoolUsdt).toFixed(2)} U)`}
                       </span>
                     )}
                   </span>
@@ -1430,14 +1428,14 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
                 <div className="flex items-center justify-between">
                   <span className="text-slate-300">Main #{calculation.targetMainId} (Target):</span>
                   <span className="text-amber-300 font-bold">
-                    สะสม {calculation.finalTargetAutoPoolUsdt.toFixed(2)} / {(RANK_PRICES_USDT[0] || 5).toFixed(2)} U
+                    สะสม {calculation.finalTargetAutoPoolUsdt.toFixed(2)} / 10.00 U
                     {calculation.targetAutoIdEvents.length > 0 ? (
                       <span className="text-emerald-400 ml-1">(แตกใหม่ +{calculation.targetAutoIdEvents.length} รหัส)</span>
                     ) : (
                       <span className="text-slate-400 font-normal text-[10px] ml-1">
-                        {calculation.finalTargetAutoPoolUsdt >= (RANK_PRICES_USDT[0] || 5)
+                        {calculation.finalTargetAutoPoolUsdt >= 10
                           ? ''
-                          : `(ขาดอีก ${((RANK_PRICES_USDT[0] || 5) - calculation.finalTargetAutoPoolUsdt).toFixed(2)} U)`}
+                          : `(ขาดอีก ${(10.0 - calculation.finalTargetAutoPoolUsdt).toFixed(2)} U)`}
                       </span>
                     )}
                   </span>
@@ -1661,7 +1659,7 @@ export const ExtraIdPathCalculator: React.FC<ExtraIdPathCalculatorProps> = ({
                                     <span className="font-bold text-amber-300">
                                       🤖 Main #{ae.ownerMainId} เกิด Auto ID ที่ Rank 1
                                     </span>
-                                    <span className="text-rose-300 font-bold">-{(RANK_PRICES_USDT[0] || 5).toFixed(2)} U</span>
+                                    <span className="text-rose-300 font-bold">-10.00 U</span>
                                   </div>
                                   <div className="text-[11px] text-slate-300">
                                     โหนดใหม่:{' '}

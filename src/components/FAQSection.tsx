@@ -36,7 +36,7 @@ interface FAQItem {
 
 export const FAQSection: React.FC<FAQSectionProps> = ({
   language,
-  contractAddress = '0xd63f2353ea03bA142C3FbCdccE2Aec6Af31496AF',
+  contractAddress = '0xaA38a606402DF541ee4Df81Ae0C8BcDAcDD12fe6',
   usdtAddress = '0x05f24E1F598DF1aE8d0B424ce978f8ea33bB752b',
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
@@ -200,7 +200,7 @@ export const FAQSection: React.FC<FAQSectionProps> = ({
             <div className="p-3 bg-slate-950/60 rounded-xl border border-slate-700/50 text-xs space-y-1.5">
               <div className="flex justify-between text-slate-300">
                 <span>ราคาเริ่มต้น Rank 1:</span>
-                <span className="text-emerald-400 font-mono font-semibold">5.00 USDT</span>
+                <span className="text-emerald-400 font-mono font-semibold">10.00 USDT</span>
               </div>
               <div className="flex justify-between text-slate-300">
                 <span>ราคาอัปเกรด Rank 2:</span>
@@ -225,7 +225,7 @@ export const FAQSection: React.FC<FAQSectionProps> = ({
             <div className="p-3 bg-slate-950/60 rounded-xl border border-slate-700/50 text-xs space-y-1.5">
               <div className="flex justify-between text-slate-300">
                 <span>Rank 1 Entry Fee:</span>
-                <span className="text-emerald-400 font-mono font-semibold">5.00 USDT</span>
+                <span className="text-emerald-400 font-mono font-semibold">10.00 USDT</span>
               </div>
               <div className="flex justify-between text-slate-300">
                 <span>Rank 2 Upgrade Cost:</span>
@@ -279,7 +279,7 @@ export const FAQSection: React.FC<FAQSectionProps> = ({
                   <strong>นิยาม:</strong> รหัสใน Rank 1 ถึง 3 ที่หลุดพ้นจากช่วง 5 rank ย้อนหลังของรหัสหลักนั้นแล้ว
                 </span>
                 <span className="text-slate-400">
-                  เมื่อสะสมครบ 5.00 USDT ปลดล็อกสิทธิ์สร้าง <strong>Auto New Main ID</strong> ใหม่ได้ทันที (เงินแยก ไม่ใช้เหรียญในกระเป๋า)
+                  เมื่อสะสมครบ 10.00 USDT ปลดล็อกสิทธิ์สร้าง <strong>Auto New Main ID</strong> ใหม่ได้ทันที (เงินแยก ไม่ใช้เหรียญในกระเป๋า)
                 </span>
               </div>
 
@@ -314,7 +314,7 @@ export const FAQSection: React.FC<FAQSectionProps> = ({
               </div>
               <div className="p-3 rounded-lg bg-slate-950/70 border border-yellow-500/30">
                 <span className="text-yellow-400 font-bold block mb-1">2. New Auto ID Pool</span>
-                <span>Vault (35%) in Rank 1 to 3 minus 5 ranks backwards. Unlocks +1 Auto New Main ID upon reaching 5.00 USDT (separate funds, not wallet balance).</span>
+                <span>Vault (35%) in Rank 1 to 3 minus 5 ranks backwards. Unlocks +1 Auto New Main ID upon reaching 10.00 USDT (separate funds, not wallet balance).</span>
               </div>
               <div className="p-3 rounded-lg bg-slate-950/70 border border-cyan-500/30">
                 <span className="text-cyan-400 font-bold block mb-1">3. New Extra ID Pool</span>
@@ -526,7 +526,7 @@ export const FAQSection: React.FC<FAQSectionProps> = ({
               </div>
               <div className="bg-slate-950/60 p-2.5 rounded-lg border border-emerald-500/20">
                 <span className="font-semibold text-emerald-400 block">2. USDT (BEP-20)</span>
-                <span className="text-slate-400">ใช้สำหรับการสมัครสมาชิกและการอัปเกรด Rank โดยเริ่มต้นที่ 5 USDT สำหรับ Rank 1</span>
+                <span className="text-slate-400">ใช้สำหรับการสมัครสมาชิกและการอัปเกรด Rank โดยเริ่มต้นที่ 10 USDT สำหรับ Rank 1</span>
               </div>
             </div>
           </div>
@@ -544,7 +544,7 @@ export const FAQSection: React.FC<FAQSectionProps> = ({
               </div>
               <div className="bg-slate-950/60 p-2.5 rounded-lg border border-emerald-500/20">
                 <span className="font-semibold text-emerald-400 block">2. USDT (BEP-20)</span>
-                <span className="text-slate-400">Used for entry fees and rank upgrades (e.g. 5 USDT for Rank 1).</span>
+                <span className="text-slate-400">Used for entry fees and rank upgrades (e.g. 10 USDT for Rank 1).</span>
               </div>
             </div>
           </div>

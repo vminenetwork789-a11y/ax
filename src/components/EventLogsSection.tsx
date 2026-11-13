@@ -392,7 +392,6 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
               rightChild: number;
               isClone: boolean;
               isExtraId: boolean;
-              isAdminFreeUpgrade?: boolean;
               directSponsorNodeId: number;
             }
           >();
@@ -417,7 +416,6 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
                       rightChild: Number(n.rightChild || 0),
                       isClone: Boolean(n.isClone),
                       isExtraId: Boolean(n.isExtraId),
-                      isAdminFreeUpgrade: Boolean(n.isAdminFreeUpgrade),
                       directSponsorNodeId: Number(n.directSponsorNodeId || 1),
                     });
                   }
@@ -460,16 +458,9 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
             .filter((id) => id >= 2)
             .sort((a, b) => b - a);
 
-          const r1UnitPrice = RANK_PRICES_USDT[0] || 5;
-          const r1DirectAmt = (r1UnitPrice * 0.3).toFixed(2);
-          const r1VaultAmt = (r1UnitPrice * 0.35).toFixed(2);
-          const r1LevelAmt = (r1UnitPrice * 0.02).toFixed(2);
-          const r1AllSellAmt = (r1UnitPrice * 0.04).toFixed(2);
-          const r1BotAmt = (r1UnitPrice * 0.01).toFixed(2);
-
           for (const nodeId of sortedNids) {
             const nodeData = nodesMap.get(nodeId);
-            if (!nodeData || nodeData.parentId === 0 || nodeData.isAdminFreeUpgrade) continue;
+            if (!nodeData || nodeData.parentId === 0) continue;
 
             const parentData = nodesMap.get(nodeData.parentId);
             if (!parentData || parentData.leftChild !== nodeId) continue;
@@ -479,7 +470,7 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
             const hasSponsor =
               nodeData.directSponsor && nodeData.directSponsor !== ethers.ZeroAddress;
 
-            // 1. Direct 30% (1.50 USDT on Rank 1 = 5 USDT)
+            // 1. Direct 30% (3.00 USDT on Rank 1)
             const directType =
               isId1Clone || !hasSponsor ? 'DIRECT_ID1_CLONE_FAMILY_POOL' : 'DIRECT';
             const directToId =
@@ -495,14 +486,14 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
                 recipient: directRecip,
                 rank: 1,
                 rewardType: directType,
-                amount: r1DirectAmt,
+                amount: '3.00',
                 txHash: '',
                 blockNumber: currentBlock,
                 timestamp: new Date().toISOString(),
               });
             }
 
-            // 2. Upgrade Vault 35% (1.75 USDT on Rank 1 = 5 USDT)
+            // 2. Upgrade Vault 35% (3.50 USDT on Rank 1)
             const vaultKey = `${nodeId}:UPGRADE_VAULT:${parentData.id}`;
             if (!existingFromNodeTypes.has(vaultKey)) {
               collectedEvents.push({
@@ -512,14 +503,14 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
                 recipient: String(parentData.owner),
                 rank: 1,
                 rewardType: 'UPGRADE_VAULT',
-                amount: r1VaultAmt,
+                amount: '3.50',
                 txHash: '',
                 blockNumber: currentBlock,
                 timestamp: new Date().toISOString(),
               });
             }
 
-            // 3. Level 2% (0.10 USDT per upline tier up to 15 levels)
+            // 3. Level 2% (0.20 USDT per upline tier up to 15 levels)
             let currUpId = nodeData.parentId;
             let paidLevels = 0;
             const guard = new Set<number>();
@@ -537,7 +528,7 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
                   recipient: String(upNode.owner),
                   rank: 1,
                   rewardType: 'LEVEL',
-                  amount: r1LevelAmt,
+                  amount: '0.20',
                   txHash: '',
                   blockNumber: currentBlock,
                   timestamp: new Date().toISOString(),
@@ -549,7 +540,7 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
             // Unpaid levels overflow to Family Pool
             const unpaidLevels = 15 - paidLevels;
             if (unpaidLevels > 0) {
-              const famAmount = (unpaidLevels * (r1UnitPrice * 0.02)).toFixed(2);
+              const famAmount = (unpaidLevels * 0.2).toFixed(2);
               const famKey1 = `${nodeId}:UNPAID_LEVEL_FAMILY_POOL:0`;
               const famKey2 = `${nodeId}:FAMILY_POOL_OVERFLOW:0`;
               if (!existingFromNodeTypes.has(famKey1) && !existingFromNodeTypes.has(famKey2)) {
@@ -579,7 +570,7 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
               }
             }
 
-            // 4. AllSell 4% (0.20 USDT on Rank 1 = 5 USDT)
+            // 4. AllSell 4% (0.40 USDT on Rank 1)
             if (!existingFromNodeTypes.has(`${nodeId}:ALLSELL:0`)) {
               collectedEvents.push({
                 id: `onchain-allsell-r1-n${nodeId}`,
@@ -588,14 +579,14 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
                 recipient: String(allSellAddr),
                 rank: 1,
                 rewardType: 'ALLSELL',
-                amount: r1AllSellAmt,
+                amount: '0.40',
                 txHash: '',
                 blockNumber: currentBlock,
                 timestamp: new Date().toISOString(),
               });
             }
 
-            // 5. Bot 1% (0.05 USDT on Rank 1 = 5 USDT)
+            // 5. Bot 1% (0.10 USDT on Rank 1)
             if (!existingFromNodeTypes.has(`${nodeId}:BOT:0`)) {
               collectedEvents.push({
                 id: `onchain-bot-r1-n${nodeId}`,
@@ -604,7 +595,7 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
                 recipient: String(botAddr),
                 rank: 1,
                 rewardType: 'BOT',
-                amount: r1BotAmt,
+                amount: '0.10',
                 txHash: '',
                 blockNumber: currentBlock,
                 timestamp: new Date().toISOString(),

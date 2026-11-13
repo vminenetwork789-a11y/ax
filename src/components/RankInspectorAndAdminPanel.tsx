@@ -11,7 +11,6 @@ interface RankInspectorAndAdminPanelProps {
     firstNodeId: string;
     latestNodeId: string;
     upgradeVaultBalance: string;
-    rankPrice?: string;
     nextRankPrice: string;
   }>;
   onRefreshOnChainData: () => void;
@@ -43,13 +42,11 @@ export const RankInspectorAndAdminPanel: React.FC<RankInspectorAndAdminPanelProp
     firstNodeId: string;
     latestNodeId: string;
     upgradeVaultBalance: string;
-    rankPrice?: string;
     nextRankPrice: string;
   }>({
     firstNodeId: '-',
     latestNodeId: '-',
     upgradeVaultBalance: '0.00',
-    rankPrice: '5.00 USDT',
     nextRankPrice: '10.00 USDT',
   });
 
@@ -238,19 +235,7 @@ export const RankInspectorAndAdminPanel: React.FC<RankInspectorAndAdminPanelProp
               </span>
             </div>
             <div className="flex justify-between text-xs border-t border-slate-800 pt-2">
-              <span className="text-slate-400">Rank {selectedInspectRank} Price:</span>
-              <span id="inspectCurrentPrice" className="font-mono font-bold text-emerald-400">
-                {rankStats.rankPrice ||
-                  `${(RANK_PRICES_USDT[selectedInspectRank - 1] ?? 5).toLocaleString('en-US', {
-                    minimumFractionDigits: 2,
-                    maximumFractionDigits: 2,
-                  })} USDT`}
-              </span>
-            </div>
-            <div className="flex justify-between text-xs">
-              <span className="text-slate-400">
-                Next Rank Price ({selectedInspectRank < 18 ? `R${selectedInspectRank + 1}` : 'Max'}):
-              </span>
+              <span className="text-slate-400">Next Rank Price:</span>
               <span id="inspectNextPrice" className="font-mono font-bold text-slate-200">
                 {rankStats.nextRankPrice}
               </span>
@@ -392,7 +377,7 @@ export const RankInspectorAndAdminPanel: React.FC<RankInspectorAndAdminPanelProp
               <li>{language === 'th' ? 'สามารถใส่เป็น "เลขรหัสหลัก" (เช่น 5, #5) หรือ "Wallet Address" ได้โดยตรง' : 'Accepts Main ID number (e.g. 5, #5) or Wallet Address'}</li>
               <li>{language === 'th' ? 'อัปแรงค์ให้ฟรี ไม่มีค่าใช้จ่าย USDT' : 'Free rank upgrade (No USDT required)'}</li>
               <li>{language === 'th' ? 'ระบบโคลนนิ่ง (Rebirth Clone) ทำงานปกติเมื่อลงฝั่งขวา' : 'Rebirth cloning triggers normally when placed on the right slot'}</li>
-              <li>{language === 'th' ? 'ไม่จ่ายค่าคอมมิชชั่น และค่าชั้นที่แสดงเป็น 0 (ไม่มีการหักหรือโอนเงินรางวัล)' : 'No commission payout and displayed level bonus is 0'}</li>
+              <li>{language === 'th' ? 'ไม่จ่ายค่าคอมมิชชั่น (ไม่มีการหักหรือโอนเงินรางวัล)' : 'No commission payout (direct, unilevel, allsell, and bot are bypassed)'}</li>
             </ul>
           </div>
         </form>
