@@ -392,7 +392,7 @@ export const RankInspectorAndAdminPanel: React.FC<RankInspectorAndAdminPanelProp
               <li>{language === 'th' ? 'สามารถใส่เป็น "เลขรหัสหลัก" (เช่น 5, #5) หรือ "Wallet Address" ได้โดยตรง' : 'Accepts Main ID number (e.g. 5, #5) or Wallet Address'}</li>
               <li>{language === 'th' ? 'อัปแรงค์ให้ฟรี ไม่มีค่าใช้จ่าย USDT' : 'Free rank upgrade (No USDT required)'}</li>
               <li>{language === 'th' ? 'ระบบโคลนนิ่ง (Rebirth Clone) ทำงานปกติเมื่อลงฝั่งขวา' : 'Rebirth cloning triggers normally when placed on the right slot'}</li>
-              <li>{language === 'th' ? 'ไม่จ่ายค่าคอมมิชชั่น (ไม่มีการหักหรือโอนเงินรางวัล)' : 'No commission payout (direct, unilevel, allsell, and bot are bypassed)'}</li>
+              <li>{language === 'th' ? 'ไม่จ่ายค่าคอมมิชชั่น และค่าชั้นที่แสดงเป็น 0 (ไม่มีการหักหรือโอนเงินรางวัล)' : 'No commission payout and displayed level bonus is 0'}</li>
             </ul>
           </div>
         </form>
