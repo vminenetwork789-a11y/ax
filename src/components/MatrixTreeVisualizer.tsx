@@ -1162,6 +1162,8 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
   const pinchStartZoomRef = useRef<number>(0.55);
   const [canScrollLeft, setCanScrollLeft] = useState<boolean>(false);
   const [canScrollRight, setCanScrollRight] = useState<boolean>(false);
+  const [canScrollUp, setCanScrollUp] = useState<boolean>(false);
+  const [canScrollDown, setCanScrollDown] = useState<boolean>(false);
   const [hasHorizontalOverflow, setHasHorizontalOverflow] = useState<boolean>(false);
   const [scrollProgressPercent, setScrollProgressPercent] = useState<number>(50);
   const [isTouchScrolling, setIsTouchScrolling] = useState<boolean>(false);
@@ -4998,6 +5000,12 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
     setScrollProgressPercent(
       isOverflowing ? Math.min(100, Math.max(0, Math.round((currentScrollLeft / maxScrollLeft) * 100))) : 50
     );
+
+    const maxScrollTop = Math.max(0, viewportEl.scrollHeight - viewportEl.clientHeight);
+    const currentScrollTop = Math.max(0, viewportEl.scrollTop);
+    const isVerticalOverflowing = maxScrollTop > 8;
+    setCanScrollUp(isVerticalOverflowing && currentScrollTop > 8);
+    setCanScrollDown(isVerticalOverflowing && currentScrollTop < maxScrollTop - 8);
   }, []);
 
   const scrollTreeHorizontallyBy = useCallback((deltaPx: number) => {
@@ -5006,12 +5014,19 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
     viewportEl.scrollBy({ left: deltaPx, behavior: 'smooth' });
   }, []);
 
+  const scrollTreeVerticallyBy = useCallback((deltaPx: number) => {
+    const viewportEl = scrollViewportRef.current;
+    if (!viewportEl) return;
+    viewportEl.scrollBy({ top: deltaPx, behavior: 'smooth' });
+  }, []);
+
   const scrollTreeToCenter = useCallback(() => {
     const viewportEl = scrollViewportRef.current;
     if (!viewportEl) return;
     const maxScrollLeft = Math.max(0, viewportEl.scrollWidth - viewportEl.clientWidth);
     viewportEl.scrollTo({
       left: maxScrollLeft > 0 ? Math.floor(maxScrollLeft / 2) : 0,
+      top: 0,
       behavior: 'smooth',
     });
   }, []);
@@ -5023,6 +5038,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
     const centerScroll = () => {
       const maxScrollLeft = Math.max(0, viewportEl.scrollWidth - viewportEl.clientWidth);
       viewportEl.scrollLeft = maxScrollLeft > 0 ? Math.floor(maxScrollLeft / 2) : 0;
+      viewportEl.scrollTop = 0;
       updateHorizontalScrollIndicators();
     };
     centerScroll();
@@ -5348,7 +5364,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         data-node-anchor={node.id}
         className="flex flex-col items-center h-auto w-auto relative z-10"
       >
-        {/* Main Node Card (Pure White #FFFFFF in Light Mode, #131829 in Dark Mode) */}
+        {/* Main Node Card - Uniform Fixed Height across all ID types (Pure White #FFFFFF in Light Mode, #131829 in Dark Mode) */}
         <div
           data-node-card={node.id}
           onClick={(e) => {
@@ -5362,7 +5378,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
               ? 'คลิกเพื่อเลือกดูข้อมูลสมาชิกหรือต่อสายงานซ้าย (L) / ขวา (R)'
               : 'Click to inspect member or place Left (L) / Right (R)'
           }
-          className={`relative w-[156px] sm:w-[172px] md:w-[180px] h-auto rounded-xl bg-white dark:bg-[#131829] border-2 ${borderStyle} ${
+          className={`relative w-[168px] sm:w-[180px] md:w-[188px] h-[324px] sm:h-[330px] flex flex-col justify-between gap-1 rounded-xl bg-white dark:bg-[#131829] border-2 ${borderStyle} ${
             isNodeSelected
               ? 'ring-4 ring-blue-500/75 dark:ring-cyan-400/85 scale-[1.02]'
               : 'hover:ring-2 hover:ring-blue-400/50 dark:hover:ring-cyan-400/40'
@@ -5414,14 +5430,14 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             </div>
           )}
 
-          {/* Header Section */}
+          {/* 1. Header Section (Fixed Uniform Height) */}
           {node.isClone ? (
-            <div className="flex items-center justify-between gap-1 pb-1 border-b border-slate-200/80 dark:border-slate-800/90 pt-0.5">
-              <div className="flex items-center gap-1 flex-wrap">
+            <div className="h-[38px] shrink-0 flex items-center justify-between gap-1 pb-1 border-b border-slate-200/80 dark:border-slate-800/90 pt-0.5 overflow-hidden">
+              <div className="flex flex-col gap-0.5 min-w-0 flex-1">
                 <button
                   type="button"
                   onClick={() => navigateToNode(node.id)}
-                  className="px-1.5 py-0.2 rounded bg-[#DCFCE7]/70 dark:bg-[#0d2324] border border-emerald-300 dark:border-emerald-500/50 font-mono font-extrabold text-[10px] hover:border-emerald-500 dark:hover:border-emerald-300 transition cursor-pointer"
+                  className="px-1.5 py-0.2 rounded bg-[#DCFCE7]/70 dark:bg-[#0d2324] border border-emerald-300 dark:border-emerald-500/50 font-mono font-extrabold text-[9.5px] leading-tight hover:border-emerald-500 dark:hover:border-emerald-300 transition cursor-pointer text-left truncate max-w-full"
                   title={
                     node.isExtraLineage
                       ? `รหัสหลักอิสระ ${node.extraMainLabel} (โคลนโหนด #${node.id} ใน Rank ${node.rank} • รอบที่ ${node.cloneRound || 1})`
@@ -5434,28 +5450,30 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                       : `Main #${node.r1MainId || node.originMainId}`}
                   </span>{' '}
                   <span className="text-[#15803D] dark:text-emerald-300 font-bold">
-                    (โคลน R{node.rank}-#{node.id})
+                    (โคลน #{node.id})
                   </span>
                 </button>
-                <span className="px-1 py-0.2 rounded bg-[#DCFCE7] dark:bg-emerald-500/20 border border-emerald-300 dark:border-emerald-400/50 text-[#15803D] dark:text-emerald-300 font-mono font-extrabold text-[8.5px]">
-                  รอบ {node.cloneRound || 1}
-                </span>
-                <span className="px-1 py-0.2 rounded bg-[#FEF3C7] dark:bg-amber-500/15 border border-amber-300 dark:border-amber-500/40 text-[#B45309] dark:text-amber-400 font-mono font-bold text-[9.5px]">
-                  R{node.rank}
-                </span>
+                <div className="flex items-center gap-1">
+                  <span className="px-1 py-0.2 rounded bg-[#DCFCE7] dark:bg-emerald-500/20 border border-emerald-300 dark:border-emerald-400/50 text-[#15803D] dark:text-emerald-300 font-mono font-extrabold text-[8px] leading-none">
+                    รอบ {node.cloneRound || 1}
+                  </span>
+                  <span className="px-1 py-0.2 rounded bg-[#FEF3C7] dark:bg-amber-500/15 border border-amber-300 dark:border-amber-500/40 text-[#B45309] dark:text-amber-400 font-mono font-bold text-[8.5px] leading-none">
+                    R{node.rank}
+                  </span>
+                </div>
               </div>
 
-              <span className="px-1.5 py-0.2 rounded bg-slate-100 dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 text-[9.5px] text-[#334155] dark:text-slate-200 font-semibold shrink-0">
+              <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 text-[9px] text-[#334155] dark:text-slate-200 font-semibold shrink-0">
                 ชั้น {node.level}
               </span>
             </div>
           ) : (
-            <div className="flex items-center justify-between gap-1 pb-1 border-b border-slate-200/80 dark:border-slate-800/90 pt-0.5">
-              <div className="flex items-center gap-1 flex-wrap">
+            <div className="h-[38px] shrink-0 flex items-center justify-between gap-1 pb-1 border-b border-slate-200/80 dark:border-slate-800/90 pt-0.5 overflow-hidden">
+              <div className="flex flex-col gap-0.5 min-w-0 flex-1">
                 <button
                   type="button"
                   onClick={() => navigateToNode(node.id)}
-                  className="px-1.5 py-0.2 rounded bg-[#EFF6FF] dark:bg-slate-900 border border-blue-200/80 dark:border-slate-700/90 font-mono font-extrabold text-[10px] hover:border-[#2563EB] dark:hover:border-amber-400 transition cursor-pointer"
+                  className="px-1.5 py-0.2 rounded bg-[#EFF6FF] dark:bg-slate-900 border border-blue-200/80 dark:border-slate-700/90 font-mono font-extrabold text-[9.5px] leading-tight hover:border-[#2563EB] dark:hover:border-amber-400 transition cursor-pointer text-left truncate max-w-full"
                   title={
                     node.isExtraId
                       ? `รหัสหลักอิสระ ${node.extraMainLabel || `Extra R${node.rank}-#${node.id}`} (แยกอิสระ ไม่ซ้ำกับ Rank 1)`
@@ -5476,7 +5494,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                   ) : node.isAutoMainId ? (
                     <>
                       <span className="text-[#B45309] dark:text-amber-300 font-black">
-                        Auto ID #{node.r1MainId || node.originMainId}
+                        Auto #{node.r1MainId || node.originMainId}
                       </span>{' '}
                       <span className="text-[#334155] dark:text-slate-300 font-semibold">
                         (R{node.rank}-#{node.id})
@@ -5493,24 +5511,26 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                     </>
                   )}
                 </button>
-                <span className="px-1 py-0.2 rounded bg-[#FEF3C7] dark:bg-amber-500/15 border border-amber-300 dark:border-amber-500/40 text-[#B45309] dark:text-amber-400 font-mono font-bold text-[9.5px]">
-                  R{node.isExtraId ? node.rank : node.targetMainIdCurrentRank || node.rank}
-                </span>
+                <div className="flex items-center gap-1">
+                  <span className="px-1 py-0.2 rounded bg-[#FEF3C7] dark:bg-amber-500/15 border border-amber-300 dark:border-amber-500/40 text-[#B45309] dark:text-amber-400 font-mono font-bold text-[8.5px] leading-none">
+                    R{node.isExtraId ? node.rank : node.targetMainIdCurrentRank || node.rank}
+                  </span>
+                </div>
               </div>
 
-              <span className="px-1.5 py-0.2 rounded bg-slate-100 dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 text-[9.5px] text-[#334155] dark:text-slate-200 font-semibold shrink-0">
+              <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 text-[9px] text-[#334155] dark:text-slate-200 font-semibold shrink-0">
                 ชั้น {node.level}
               </span>
             </div>
           )}
 
-          {/* Wallet Row */}
-          <div className="mt-1 flex items-center justify-between text-[9.5px] text-[#0F172A] dark:text-white font-mono px-0.5">
-            <div className="flex items-center gap-1 truncate">
+          {/* 2. Wallet Row (Fixed Height) */}
+          <div className="h-[18px] shrink-0 flex items-center justify-between text-[9.5px] text-[#0F172A] dark:text-white font-mono px-0.5 overflow-hidden">
+            <div className="flex items-center gap-1 min-w-0 truncate">
               <User className="w-2.5 h-2.5 text-[#64748B] dark:text-slate-400 shrink-0" />
               <span className="font-bold truncate">Wallet {shortenWallet(node.owner)}</span>
             </div>
-            <div className="flex items-center gap-0.5">
+            <div className="flex items-center gap-0.5 shrink-0">
               {isMyNode && (
                 <span className="text-[7.5px] px-1 py-0.2 rounded bg-[#DCFCE7] text-[#15803D] dark:bg-emerald-500/20 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-500/30 font-bold">
                   คุณ
@@ -5531,68 +5551,69 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             </div>
           </div>
 
-          {/* Info Box: Upline & Sponsor */}
-          <div className="mt-1 rounded-md bg-[#F8FAFC] dark:bg-[#0c1020] border border-slate-200/80 dark:border-slate-800/90 p-1 px-1.5 space-y-0.5 text-[9px]">
-            {node.isExtraId ? (
-              <div className="flex items-center justify-between pb-0.5 border-b border-slate-200/80 dark:border-slate-800">
-                <span className="text-cyan-700 dark:text-cyan-300 font-bold text-[8.5px]">รหัสหลักอิสระ:</span>
-                <span className="font-mono font-extrabold text-cyan-700 dark:text-cyan-300 text-[9px]">
-                  {node.extraMainLabel || `Extra R${node.rank}-#${node.id}`}
-                </span>
-              </div>
-            ) : (
-              node.rank > 1 &&
-              !node.isClone &&
-              node.r1MainId && (
-                <div className="flex items-center justify-between pb-0.5 border-b border-slate-200/80 dark:border-slate-800">
-                  <span className="text-[#B45309] dark:text-amber-300 font-bold text-[8.5px]">รหัสหลัก R1:</span>
-                  <span className="font-mono font-extrabold text-[#B45309] dark:text-amber-400 text-[9px]">
-                    Main ID #{node.r1MainId}
-                  </span>
-                </div>
-              )
-            )}
-
-            <div className="flex items-center justify-between">
-              <span className="text-[#334155] dark:text-slate-300 font-semibold">อัพไลน์:</span>
+          {/* 3. Info Box: Upline, Origin, Round & Sponsor (Fixed Uniform Height) */}
+          <div className="h-[66px] shrink-0 rounded-md bg-[#F8FAFC] dark:bg-[#0c1020] border border-slate-200/80 dark:border-slate-800/90 p-1 px-1.5 flex flex-col justify-between text-[8.5px] overflow-hidden">
+            <div className="flex items-center justify-between gap-1">
+              <span className="text-[#334155] dark:text-slate-300 font-semibold shrink-0">อัพไลน์:</span>
               <button
                 type="button"
                 onClick={() => node.parentId > 0 && navigateToNode(node.parentId)}
-                className="font-mono font-extrabold text-[#2563EB] dark:text-indigo-400 hover:underline cursor-pointer text-[9px]"
+                className="font-mono font-extrabold text-[#2563EB] dark:text-indigo-400 hover:underline cursor-pointer truncate"
               >
                 {node.parentId === 0 ? 'Root (#0)' : `#${node.parentId}`}
               </button>
             </div>
 
-            {node.isClone && (
-              <>
-                <div className="flex items-center justify-between">
-                  <span className="text-purple-700 dark:text-fuchsia-300 font-bold">รหัสหลัก:</span>
-                  <button
-                    type="button"
-                    onClick={() => navigateToNode(node.originMainId)}
-                    className="font-mono font-extrabold text-[#B45309] dark:text-amber-400 hover:underline cursor-pointer text-[9px]"
-                    title={`คลิกเพื่อไปที่รหัสหลัก ${node.isExtraLineage ? node.extraMainLabel : `#${node.originMainId}`}`}
-                  >
-                    {node.isExtraLineage
-                      ? node.extraMainLabel || `Extra R${node.rank}-#${node.originMainId}`
-                      : `#${node.originMainId}`}
-                  </button>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-[#15803D] dark:text-emerald-300 font-bold">รอบโคลนนิ่ง:</span>
-                  <span className="font-mono font-extrabold text-[#15803D] dark:text-emerald-300 text-[8.5px]">
-                    รอบที่ {node.cloneRound || 1}
-                    {node.cloneSequence ? ` (ใบที่ #${node.cloneSequence})` : ''} •{' '}
-                    {(node.cloneRound || 1) === 2 ? 'ผังรวม BFS' : 'ติดผู้แนะนำ'}
-                  </span>
-                </div>
-              </>
+            {node.isClone ? (
+              <div className="flex items-center justify-between gap-1">
+                <span className="text-purple-700 dark:text-fuchsia-300 font-bold shrink-0">รหัสหลัก:</span>
+                <button
+                  type="button"
+                  onClick={() => navigateToNode(node.originMainId)}
+                  className="font-mono font-extrabold text-[#B45309] dark:text-amber-400 hover:underline cursor-pointer truncate"
+                  title={`คลิกเพื่อไปที่รหัสหลัก ${node.isExtraLineage ? node.extraMainLabel : `#${node.originMainId}`}`}
+                >
+                  {node.isExtraLineage
+                    ? node.extraMainLabel || `Extra R${node.rank}-#${node.originMainId}`
+                    : `#${node.originMainId}`}
+                </button>
+              </div>
+            ) : node.isExtraId ? (
+              <div className="flex items-center justify-between gap-1">
+                <span className="text-cyan-700 dark:text-cyan-300 font-bold shrink-0">รหัสอิสระ:</span>
+                <span className="font-mono font-extrabold text-cyan-700 dark:text-cyan-300 truncate">
+                  {node.extraMainLabel || `Extra R${node.rank}-#${node.id}`}
+                </span>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between gap-1">
+                <span className="text-[#B45309] dark:text-amber-300 font-bold shrink-0">รหัสหลัก R1:</span>
+                <span className="font-mono font-extrabold text-[#B45309] dark:text-amber-400 truncate">
+                  Main ID #{node.r1MainId || node.originMainId}
+                </span>
+              </div>
             )}
 
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-1">
+              <span className="text-[#15803D] dark:text-emerald-300 font-bold shrink-0">
+                {node.isClone ? 'รอบโคลน:' : 'ประเภท:'}
+              </span>
+              <span className="font-mono font-extrabold text-[#15803D] dark:text-emerald-300 truncate text-right">
+                {node.isClone
+                  ? `รอบ ${node.cloneRound || 1}${node.cloneSequence ? ` (#${node.cloneSequence})` : ''} • ${
+                      (node.cloneRound || 1) === 2 ? 'BFS' : 'ติดผู้แนะนำ'
+                    }`
+                  : node.isExtraId
+                  ? 'Extra ID'
+                  : node.isAutoMainId
+                  ? 'Auto ID'
+                  : 'Main ID'}
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between gap-1">
               <span
-                className={`font-bold ${
+                className={`font-bold shrink-0 ${
                   node.isClone ? 'text-[#15803D] dark:text-emerald-400' : 'text-[#2563EB] dark:text-indigo-300'
                 }`}
               >
@@ -5603,209 +5624,238 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                 onClick={() =>
                   node.directUplineNodeId > 0 && navigateToNode(node.directUplineNodeId)
                 }
-                className="font-mono font-extrabold text-[#B45309] dark:text-amber-400 hover:underline cursor-pointer text-[9px]"
+                className="font-mono font-extrabold text-[#B45309] dark:text-amber-400 hover:underline cursor-pointer truncate"
               >
                 {node.directUplineNodeId === 0 ? '#0' : `#${node.directUplineNodeId}`}
               </button>
             </div>
           </div>
 
-          {/* 2-Column Left / Right Slot Box */}
-          <div className="mt-1 grid grid-cols-2 gap-1">
+          {/* 4. 2-Column Left / Right Slot Box (Fixed Uniform Height, No Horizontal Overflow) */}
+          <div className="h-[56px] shrink-0 grid grid-cols-2 gap-1">
             {/* Left Slot */}
             <div
-              className={`rounded-md p-1 flex flex-col justify-between h-auto ${
+              className={`min-w-0 overflow-hidden rounded-md p-1 flex flex-col justify-between h-full ${
                 node.leftChild > 0
                   ? 'bg-[#DCFCE7]/50 dark:bg-emerald-950/30 border border-emerald-300 dark:border-emerald-500/45'
                   : 'bg-[#F8FAFC] dark:bg-slate-950/60 border border-dashed border-slate-300 dark:border-slate-700'
               }`}
             >
-              <div className="flex items-center justify-between gap-0.5">
-                <span className="text-[9px] font-bold text-[#15803D] dark:text-emerald-400 leading-tight">
+              <div className="flex items-center justify-between gap-0.5 min-w-0">
+                <span className="text-[8.5px] font-bold text-[#15803D] dark:text-emerald-400 leading-tight shrink-0">
                   ↙ ซ้าย
                 </span>
-
-                {node.leftChild > 0 ? (
-                  <button
-                    type="button"
-                    onClick={() => navigateToNode(node.leftChild)}
-                    className="font-mono font-extrabold text-[9px] text-[#15803D] hover:text-emerald-900 dark:text-emerald-300 dark:hover:text-white transition cursor-pointer"
-                  >
-                    {formatChildLabel(leftChildNode, node.leftChild)}
-                  </button>
-                ) : activeLocks.some((l) => l.parentId === String(node.id) && l.isLeft) ? (
-                  <span
-                    className="px-1 py-0.2 rounded bg-[#FEF3C7] dark:bg-amber-500/20 border border-amber-300 dark:border-amber-500/50 text-[#B45309] dark:text-amber-300 font-extrabold text-[7.5px] animate-pulse"
-                    title="ตำแหน่งนี้กำลังถูกล็อคจองในระบบ FIFO Queue"
-                  >
-                    🔒 จอง
-                  </span>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => openRegisterModal(node.originMainId || node.id, node.id, true)}
-                    className="px-1.5 py-0.2 rounded bg-[#15803D] hover:bg-emerald-800 dark:bg-emerald-500 dark:hover:bg-emerald-400 text-white dark:text-slate-950 font-extrabold text-[8.5px] shadow-2xs transition cursor-pointer"
-                  >
-                    +ลง
-                  </button>
+                {node.leftChild === 0 && (
+                  activeLocks.some((l) => l.parentId === String(node.id) && l.isLeft) ? (
+                    <span
+                      className="px-1 py-0.2 rounded bg-[#FEF3C7] dark:bg-amber-500/20 border border-amber-300 dark:border-amber-500/50 text-[#B45309] dark:text-amber-300 font-extrabold text-[7.5px] animate-pulse shrink-0"
+                      title="ตำแหน่งนี้กำลังถูกล็อคจองในระบบ FIFO Queue"
+                    >
+                      🔒 จอง
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => openRegisterModal(node.originMainId || node.id, node.id, true)}
+                      className="px-1.5 py-0.2 rounded bg-[#15803D] hover:bg-emerald-800 dark:bg-emerald-500 dark:hover:bg-emerald-400 text-white dark:text-slate-950 font-extrabold text-[8px] shadow-2xs transition cursor-pointer shrink-0"
+                    >
+                      +ลง
+                    </button>
+                  )
                 )}
               </div>
-              <div className="mt-0.5 text-[8px] text-[#334155] dark:text-slate-300 font-mono leading-tight">
+              {node.leftChild > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => navigateToNode(node.leftChild)}
+                  className="font-mono font-extrabold text-[8.5px] leading-tight text-[#15803D] hover:text-emerald-900 dark:text-emerald-300 dark:hover:text-white transition cursor-pointer truncate text-left w-full"
+                  title={formatChildLabel(leftChildNode, node.leftChild)}
+                >
+                  {formatChildLabel(leftChildNode, node.leftChild)}
+                </button>
+              ) : (
+                <span className="text-[8px] font-mono text-slate-400 dark:text-slate-500 leading-tight truncate">
+                  ว่าง
+                </span>
+              )}
+              <div className="text-[7.5px] text-[#334155] dark:text-slate-300 font-mono leading-tight truncate">
                 {node.isExtraLineage
-                  ? `30% | 30%ช | 35%→#${node.directUplineNodeId || 1}`
+                  ? `30%|30%|35%→#${node.directUplineNodeId || 1}`
                   : '30% | 15ช | 35%'}
               </div>
             </div>
 
             {/* Right Slot */}
             <div
-              className={`rounded-md p-1 flex flex-col justify-between h-auto ${
+              className={`min-w-0 overflow-hidden rounded-md p-1 flex flex-col justify-between h-full ${
                 node.rightChild > 0
                   ? 'bg-purple-50 dark:bg-purple-950/35 border border-purple-300 dark:border-purple-500/50'
                   : 'bg-[#F8FAFC] dark:bg-slate-950/60 border border-dashed border-slate-300 dark:border-slate-700'
               }`}
             >
-              <div className="flex items-center justify-between gap-0.5">
-                <span className="text-[9px] font-bold text-purple-700 dark:text-purple-300 leading-tight">
+              <div className="flex items-center justify-between gap-0.5 min-w-0">
+                <span className="text-[8.5px] font-bold text-purple-700 dark:text-purple-300 leading-tight shrink-0">
                   ↘ ขวา
                 </span>
-
-                {node.rightChild > 0 ? (
-                  <button
-                    type="button"
-                    onClick={() => navigateToNode(node.rightChild)}
-                    className="font-mono font-extrabold text-[9px] text-purple-800 hover:text-purple-950 dark:text-purple-200 dark:hover:text-white transition cursor-pointer"
-                  >
-                    {formatChildLabel(rightChildNode, node.rightChild)}
-                  </button>
-                ) : activeLocks.some((l) => l.parentId === String(node.id) && !l.isLeft) ? (
-                  <span
-                    className="px-1 py-0.2 rounded bg-[#FEF3C7] dark:bg-amber-500/20 border border-amber-300 dark:border-amber-500/50 text-[#B45309] dark:text-amber-300 font-extrabold text-[7.5px] animate-pulse"
-                    title="ตำแหน่งนี้กำลังถูกล็อคจองในระบบ FIFO Queue"
-                  >
-                    🔒 จอง
-                  </span>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => openRegisterModal(node.originMainId || node.id, node.id, false)}
-                    className="px-1.5 py-0.2 rounded bg-purple-600 hover:bg-purple-700 dark:bg-purple-500 dark:hover:bg-purple-400 text-white font-extrabold text-[8.5px] shadow-2xs transition cursor-pointer"
-                  >
-                    +ลง
-                  </button>
+                {node.rightChild === 0 && (
+                  activeLocks.some((l) => l.parentId === String(node.id) && !l.isLeft) ? (
+                    <span
+                      className="px-1 py-0.2 rounded bg-[#FEF3C7] dark:bg-amber-500/20 border border-amber-300 dark:border-amber-500/50 text-[#B45309] dark:text-amber-300 font-extrabold text-[7.5px] animate-pulse shrink-0"
+                      title="ตำแหน่งนี้กำลังถูกล็อคจองในระบบ FIFO Queue"
+                    >
+                      🔒 จอง
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => openRegisterModal(node.originMainId || node.id, node.id, false)}
+                      className="px-1.5 py-0.2 rounded bg-purple-600 hover:bg-purple-700 dark:bg-purple-500 dark:hover:bg-purple-400 text-white font-extrabold text-[8px] shadow-2xs transition cursor-pointer shrink-0"
+                    >
+                      +ลง
+                    </button>
+                  )
                 )}
               </div>
-              <div className="mt-0.5 text-[8px] text-[#334155] dark:text-slate-300 font-mono leading-tight">
+              {node.rightChild > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => navigateToNode(node.rightChild)}
+                  className="font-mono font-extrabold text-[8.5px] leading-tight text-purple-800 hover:text-purple-950 dark:text-purple-200 dark:hover:text-white transition cursor-pointer truncate text-left w-full"
+                  title={formatChildLabel(rightChildNode, node.rightChild)}
+                >
+                  {formatChildLabel(rightChildNode, node.rightChild)}
+                </button>
+              ) : (
+                <span className="text-[8px] font-mono text-slate-400 dark:text-slate-500 leading-tight truncate">
+                  ว่าง
+                </span>
+              )}
+              <div className="text-[7.5px] text-[#334155] dark:text-slate-300 font-mono leading-tight truncate">
                 100% Rebirth
               </div>
             </div>
           </div>
 
-          {/* Vault & Auto ID / Clone Count Pill Bar */}
-          {!node.isClone && (
-            <div className="mt-1 px-1.5 py-0.5 rounded-md bg-[#F8FAFC] dark:bg-[#0c1020] border border-slate-200/80 dark:border-slate-800/90 flex items-center justify-between gap-0.5 flex-wrap text-[8.5px]">
-              <span className="text-[#334155] dark:text-slate-200 font-mono flex items-center gap-0.5">
-                <Shield className="w-2.5 h-2.5 text-[#B45309] dark:text-amber-400 shrink-0" />
-                <span>
-                  {node.isExtraId ? (
-                    <>
-                      Vault 35%:{' '}
-                      <strong className="text-[#BE123C] dark:text-rose-300">
-                        → Extra Pool #{node.directUplineNodeId || 1}
-                      </strong>
-                    </>
-                  ) : (
-                    <>
-                      Vault:{' '}
-                      <strong className="text-[#0F172A] dark:text-white">
-                        {(node.targetMainIdCurrentRank || 1) >= 18 || node.id === 1
-                          ? selectedRank <= 3
-                            ? `${node.newAutoIdPool.toFixed(2)}/5U`
-                            : `${node.newExtraIdPool.toFixed(2)}/${RANK_PRICES_USDT[1] || 10}U`
-                          : `${node.upgradeRankPool.toFixed(2)}/${node.nextRankPrice}U`}
-                      </strong>
-                    </>
-                  )}
+          {/* 5. Vault & Auto ID / Clone Count Pill Bar (Fixed Uniform Height across Main & Clone) */}
+          <div className="h-[28px] shrink-0 px-1.5 py-0.5 rounded-md bg-[#F8FAFC] dark:bg-[#0c1020] border border-slate-200/80 dark:border-slate-800/90 flex items-center justify-between gap-1 text-[8px] overflow-hidden">
+            {node.isClone ? (
+              <>
+                <span className="text-[#15803D] dark:text-emerald-300 font-mono font-bold flex items-center gap-1 truncate min-w-0">
+                  <Dna className="w-2.5 h-2.5 text-[#15803D] dark:text-emerald-400 shrink-0" />
+                  <span className="truncate">
+                    โคลนจาก #{node.originMainId} (รอบ {node.cloneRound || 1})
+                  </span>
                 </span>
-              </span>
-              <div className="flex items-center gap-1">
-                {!node.isExtraId && node.totalAutoIdCount > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const firstAutoId = node.spawnedAutoIds?.[0];
-                      if (firstAutoId) {
-                        navigateToNode(firstAutoId);
-                      } else {
+                <button
+                  type="button"
+                  onClick={() => navigateToNode(node.originMainId)}
+                  className="px-1 py-0.2 rounded bg-emerald-100 dark:bg-emerald-500/20 border border-emerald-300 dark:border-emerald-400/50 text-[#15803D] dark:text-emerald-300 font-bold shrink-0 cursor-pointer"
+                >
+                  หลัก #{node.originMainId}
+                </button>
+              </>
+            ) : (
+              <>
+                <span className="text-[#334155] dark:text-slate-200 font-mono flex items-center gap-0.5 truncate min-w-0">
+                  <Shield className="w-2.5 h-2.5 text-[#B45309] dark:text-amber-400 shrink-0" />
+                  <span className="truncate">
+                    {node.isExtraId ? (
+                      <>
+                        Vault 35%:{' '}
+                        <strong className="text-[#BE123C] dark:text-rose-300">
+                          → #{node.directUplineNodeId || 1}
+                        </strong>
+                      </>
+                    ) : (
+                      <>
+                        Vault:{' '}
+                        <strong className="text-[#0F172A] dark:text-white">
+                          {(node.targetMainIdCurrentRank || 1) >= 18 || node.id === 1
+                            ? selectedRank <= 3
+                              ? `${node.newAutoIdPool.toFixed(2)}/5U`
+                              : `${node.newExtraIdPool.toFixed(2)}/${RANK_PRICES_USDT[1] || 10}U`
+                            : `${node.upgradeRankPool.toFixed(2)}/${node.nextRankPrice}U`}
+                        </strong>
+                      </>
+                    )}
+                  </span>
+                </span>
+                <div className="flex items-center gap-0.5 shrink-0">
+                  {!node.isExtraId && node.totalAutoIdCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const firstAutoId = node.spawnedAutoIds?.[0];
+                        if (firstAutoId) {
+                          navigateToNode(firstAutoId);
+                        } else {
+                          setBenefitModalTab('auto_extra');
+                          setExpandedBenefitNodeId(node.id);
+                        }
+                      }}
+                      className="px-1 py-0.2 rounded bg-[#FEF3C7] dark:bg-amber-500/20 border border-amber-300 dark:border-amber-400/60 text-[#B45309] dark:text-amber-300 hover:bg-amber-200/70 dark:hover:bg-amber-500/35 font-extrabold flex items-center gap-0.5 cursor-pointer text-[7.5px]"
+                      title={
+                        node.spawnedAutoIds && node.spawnedAutoIds.length > 0
+                          ? `คลิกเพื่อไปที่ Auto ID #${node.spawnedAutoIds.join(', #')}`
+                          : `รหัสหลักนี้สร้าง Auto ID แล้ว ${node.totalAutoIdCount} รหัส`
+                      }
+                    >
+                      <span>🤖{node.totalAutoIdCount}</span>
+                    </button>
+                  )}
+                  {!node.isExtraId && node.totalExtraIdCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
                         setBenefitModalTab('auto_extra');
                         setExpandedBenefitNodeId(node.id);
+                      }}
+                      className="px-1 py-0.2 rounded bg-purple-100 dark:bg-fuchsia-500/20 border border-purple-300 dark:border-fuchsia-400/60 text-purple-800 dark:text-fuchsia-300 hover:bg-purple-200 dark:hover:bg-fuchsia-500/35 font-extrabold flex items-center gap-0.5 cursor-pointer text-[7.5px]"
+                      title={`รหัสหลักนี้สร้าง Extra ID แล้ว ${node.totalExtraIdCount} รหัส (คลิกเพื่อดูรายละเอียด)`}
+                    >
+                      <span>⚡{node.totalExtraIdCount}</span>
+                    </button>
+                  )}
+                  {(
+                    node.isExtraId
+                      ? node.spawnedCloneIds.length > 0
+                      : node.totalClonesCount > 0 || node.spawnedCloneIds.length > 0
+                  ) ? (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        node.spawnedCloneIds[0] &&
+                        navigateToNode(node.spawnedCloneIds[0].cloneNodeId)
                       }
-                    }}
-                    className="px-1 py-0.2 rounded bg-[#FEF3C7] dark:bg-amber-500/20 border border-amber-300 dark:border-amber-400/60 text-[#B45309] dark:text-amber-300 hover:bg-amber-200/70 dark:hover:bg-amber-500/35 font-extrabold flex items-center gap-0.5 cursor-pointer text-[8px]"
-                    title={
-                      node.spawnedAutoIds && node.spawnedAutoIds.length > 0
-                        ? `คลิกเพื่อไปที่ Auto ID #${node.spawnedAutoIds.join(', #')}`
-                        : `รหัสหลักนี้สร้าง Auto ID แล้ว ${node.totalAutoIdCount} รหัส`
-                    }
-                  >
-                    <span>🤖 Auto ID: {node.totalAutoIdCount} รหัส</span>
-                  </button>
-                )}
-                {!node.isExtraId && node.totalExtraIdCount > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setBenefitModalTab('auto_extra');
-                      setExpandedBenefitNodeId(node.id);
-                    }}
-                    className="px-1 py-0.2 rounded bg-purple-100 dark:bg-fuchsia-500/20 border border-purple-300 dark:border-fuchsia-400/60 text-purple-800 dark:text-fuchsia-300 hover:bg-purple-200 dark:hover:bg-fuchsia-500/35 font-extrabold flex items-center gap-0.5 cursor-pointer text-[8px]"
-                    title={`รหัสหลักนี้สร้าง Extra ID แล้ว ${node.totalExtraIdCount} รหัส (คลิกเพื่อดูรายละเอียด)`}
-                  >
-                    <span>⚡ Extra ID: {node.totalExtraIdCount} รหัส</span>
-                  </button>
-                )}
-                {(
-                  node.isExtraId
-                    ? node.spawnedCloneIds.length > 0
-                    : node.totalClonesCount > 0 || node.spawnedCloneIds.length > 0
-                ) ? (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      node.spawnedCloneIds[0] &&
-                      navigateToNode(node.spawnedCloneIds[0].cloneNodeId)
-                    }
-                    className="text-[#15803D] hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-300 font-bold underline flex items-center gap-0.5 cursor-pointer text-[8.5px]"
-                    title={
-                      node.spawnedCloneIds.length > 0
-                        ? `โคลนที่เกิดจากโหนดนี้: ${node.spawnedCloneIds
-                            .map((c) => `#${c.cloneNodeId}(รอบ${c.round})`)
-                            .join(', ')}`
-                        : undefined
-                    }
-                  >
-                    <span>
-                      ✨ โคลน{' '}
-                      {node.isExtraId
-                        ? node.spawnedCloneIds.length
-                        : Math.max(node.totalClonesCount, node.spawnedCloneIds.length)}
-                      {node.spawnedCloneIds.length > 0
-                        ? ` (รอบ ${node.spawnedCloneIds.map((c) => c.round).join(',')})`
-                        : ''}{' '}
-                      ↘
-                    </span>
-                  </button>
-                ) : (
-                  node.totalAutoIdCount === 0 &&
-                  node.totalExtraIdCount === 0 && (
-                    <span className="text-[#64748B] dark:text-slate-500 font-medium text-[8px]">ปกติ</span>
-                  )
-                )}
-              </div>
-            </div>
-          )}
+                      className="text-[#15803D] hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-300 font-bold underline flex items-center gap-0.5 cursor-pointer text-[8px] whitespace-nowrap"
+                      title={
+                        node.spawnedCloneIds.length > 0
+                          ? `โคลนที่เกิดจากโหนดนี้: ${node.spawnedCloneIds
+                              .map((c) => `#${c.cloneNodeId}(รอบ${c.round})`)
+                              .join(', ')}`
+                          : undefined
+                      }
+                    >
+                      <span>
+                        ✨โคลน{' '}
+                        {node.isExtraId
+                          ? node.spawnedCloneIds.length
+                          : Math.max(node.totalClonesCount, node.spawnedCloneIds.length)}
+                        ↘
+                      </span>
+                    </button>
+                  ) : (
+                    node.totalAutoIdCount === 0 &&
+                    node.totalExtraIdCount === 0 && (
+                      <span className="text-[#64748B] dark:text-slate-500 font-medium text-[7.5px]">ปกติ</span>
+                    )
+                  )}
+                </div>
+              </>
+            )}
+          </div>
 
-          {/* 15-Level Commission Breakdown Box */}
+          {/* 6. 15-Level Commission Breakdown Box (Fixed Height) */}
           {(() => {
             const ls = node.levelSummary;
             const tiers = ls?.tiersBreakdown || [];
@@ -5815,19 +5865,17 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             );
 
             return (
-              <div className="mt-1 px-1.5 py-1 rounded-md bg-[#EFF6FF] dark:bg-[#091526] border border-blue-200/80 dark:border-cyan-500/35 text-[8px] font-mono">
-                <div className="flex items-center justify-between gap-1">
-                  <span className="text-[#1D4ED8] dark:text-cyan-300 font-extrabold">
-                    🪜 ค่าชั้น: รับแล้ว{' '}
-                    <strong className="text-[#15803D] dark:text-emerald-300">{receivedPayingNodes.toLocaleString()}</strong> / 32,767 รหัส
-                  </span>
-                </div>
+              <div className="h-[22px] shrink-0 px-1.5 rounded-md bg-[#EFF6FF] dark:bg-[#091526] border border-blue-200/80 dark:border-cyan-500/35 text-[8px] font-mono flex items-center overflow-hidden">
+                <span className="text-[#1D4ED8] dark:text-cyan-300 font-extrabold truncate">
+                  🪜 ค่าชั้น: รับแล้ว{' '}
+                  <strong className="text-[#15803D] dark:text-emerald-300">{receivedPayingNodes.toLocaleString()}</strong> / 32,767
+                </span>
               </div>
             );
           })()}
 
-          {/* Open Benefit & History Popup Modal Button + Quick Referral Link Copy Button */}
-          <div className="mt-1 flex items-center gap-1">
+          {/* 7. Open Benefit & History Popup Modal Button + Quick Referral Link Copy Button (Fixed Height) */}
+          <div className="h-[26px] shrink-0 flex items-center gap-1">
             <button
               type="button"
               onClick={() => {
@@ -5839,17 +5887,17 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                 setExpandedBenefitNodeId((prev) => (prev === node.id ? null : node.id));
                 fetchPerIdHistoryForModal();
               }}
-              className={`flex-1 py-1 px-1.5 rounded-md font-bold text-[8.5px] flex items-center justify-between transition cursor-pointer ${
+              className={`h-full flex-1 px-1.5 rounded-md font-bold text-[8px] flex items-center justify-between transition cursor-pointer whitespace-nowrap min-w-0 ${
                 isBenefitOpen
                   ? 'bg-[#2563EB] dark:bg-gradient-to-r dark:from-indigo-600 dark:to-violet-600 text-white shadow-xs'
                   : 'bg-[#EFF6FF] hover:bg-blue-100/80 dark:bg-[#0c1020] dark:hover:bg-slate-900 text-[#1D4ED8] dark:text-indigo-200 border border-blue-200/80 dark:border-slate-800'
               }`}
             >
-              <span className="flex items-center gap-0.5">
+              <span className="flex items-center gap-0.5 truncate">
                 <Coins className="w-2.5 h-2.5 text-[#2563EB] dark:text-indigo-300 shrink-0" />
-                <span>ดูผลประโยชน์</span>
+                <span className="truncate">ดูผลประโยชน์</span>
               </span>
-              <ChevronDown className="w-2.5 h-2.5" />
+              <ChevronDown className="w-2.5 h-2.5 shrink-0" />
             </button>
 
             <button
@@ -5859,56 +5907,62 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                 setSelectedReferralNodeId(sponsorTargetId);
                 copyReferralLink(sponsorTargetId, `node-card-ref-${node.id}`);
               }}
-              className="py-1 px-1.5 rounded-md font-bold text-[8.5px] bg-[#DCFCE7] hover:bg-emerald-200/80 text-[#15803D] border border-emerald-300 dark:bg-emerald-950/70 dark:hover:bg-emerald-900 dark:text-emerald-300 dark:border-emerald-500/40 flex items-center gap-0.5 transition cursor-pointer shrink-0"
+              className="h-full px-1.5 rounded-md font-bold text-[8px] bg-[#DCFCE7] hover:bg-emerald-200/80 text-[#15803D] border border-emerald-300 dark:bg-emerald-950/70 dark:hover:bg-emerald-900 dark:text-emerald-300 dark:border-emerald-500/40 flex items-center gap-0.5 transition cursor-pointer shrink-0 whitespace-nowrap"
               title={`คัดลอกลิ้งผู้แนะนำ รหัส #${node.r1MainId || node.originMainId || node.id}`}
             >
               {copiedReferralKey === `node-card-ref-${node.id}` ? (
                 <>
                   <Check className="w-2.5 h-2.5 shrink-0" />
-                  <span>คัดลอกแล้ว</span>
+                  <span>คัดลอก</span>
                 </>
               ) : (
                 <>
                   <Link2 className="w-2.5 h-2.5 shrink-0" />
-                  <span>ลิ้งแนะนำ #{node.r1MainId || node.originMainId || node.id}</span>
+                  <span>แนะนำ #{node.r1MainId || node.originMainId || node.id}</span>
                 </>
               )}
             </button>
           </div>
 
-          {/* Collapse / Expand Subtree Toggle inside Node Card */}
-          {hasAnyChildNode && (
-            <button
-              type="button"
-              onClick={() => toggleCollapseNode(node.id)}
-              className={`mt-1 w-full py-0.5 px-1.5 rounded-md font-bold text-[8.5px] flex items-center justify-center gap-1 border transition cursor-pointer ${
-                isNodeCollapsed
-                  ? 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-500/20 dark:hover:bg-amber-500/30 dark:text-amber-300 dark:border-amber-500/50'
-                  : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border-slate-200/90 dark:bg-slate-900 dark:hover:bg-slate-800 dark:text-slate-300 dark:border-slate-700'
-              }`}
-              title={isNodeCollapsed ? 'ขยายแสดงโหนดลูกทีม' : 'ย่อโหนดลูกทีม'}
-            >
-              {isNodeCollapsed ? (
-                <>
-                  <ChevronDown className="w-2.5 h-2.5 shrink-0" />
-                  <span>
-                    {language === 'th'
-                      ? `ขยายลูกทีม (+${descCountInfo?.total || 0})`
-                      : `Expand (+${descCountInfo?.total || 0})`}
-                  </span>
-                </>
-              ) : (
-                <>
-                  <ChevronUp className="w-2.5 h-2.5 shrink-0" />
-                  <span>
-                    {language === 'th'
-                      ? `ย่อลูกทีม (${descCountInfo?.total || 0})`
-                      : `Collapse (${descCountInfo?.total || 0})`}
-                  </span>
-                </>
-              )}
-            </button>
-          )}
+          {/* 8. Collapse / Expand Subtree Toggle inside Node Card (Fixed Uniform Footer Height) */}
+          <div className="h-[22px] shrink-0">
+            {hasAnyChildNode ? (
+              <button
+                type="button"
+                onClick={() => toggleCollapseNode(node.id)}
+                className={`h-full w-full px-1.5 rounded-md font-bold text-[8.5px] flex items-center justify-center gap-1 border transition cursor-pointer ${
+                  isNodeCollapsed
+                    ? 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-500/20 dark:hover:bg-amber-500/30 dark:text-amber-300 dark:border-amber-500/50'
+                    : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border-slate-200/90 dark:bg-slate-900 dark:hover:bg-slate-800 dark:text-slate-300 dark:border-slate-700'
+                }`}
+                title={isNodeCollapsed ? 'ขยายแสดงโหนดลูกทีม' : 'ย่อโหนดลูกทีม'}
+              >
+                {isNodeCollapsed ? (
+                  <>
+                    <ChevronDown className="w-2.5 h-2.5 shrink-0" />
+                    <span>
+                      {language === 'th'
+                        ? `ขยายลูกทีม (+${descCountInfo?.total || 0})`
+                        : `Expand (+${descCountInfo?.total || 0})`}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <ChevronUp className="w-2.5 h-2.5 shrink-0" />
+                    <span>
+                      {language === 'th'
+                        ? `ย่อลูกทีม (${descCountInfo?.total || 0})`
+                        : `Collapse (${descCountInfo?.total || 0})`}
+                    </span>
+                  </>
+                )}
+              </button>
+            ) : (
+              <div className="h-full w-full px-1.5 rounded-md border border-slate-200/60 dark:border-slate-800/80 bg-slate-50/50 dark:bg-slate-900/40 text-slate-400 dark:text-slate-500 font-semibold text-[8px] flex items-center justify-center">
+                {language === 'th' ? 'ลูกทีม (0) • ปลายสาย' : 'Downline (0)'}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     );
@@ -6027,112 +6081,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
       {/* Top Header & Controls Block with Subtle Pastel Hero Gradient in Light Mode */}
       <div className="flex flex-col gap-2.5 p-2.5 sm:p-3.5 -m-2 sm:-m-4 mb-0 sm:mb-0 rounded-t-xl sm:rounded-t-2xl bg-gradient-to-b from-indigo-50/75 via-sky-50/35 to-white dark:from-transparent dark:via-transparent dark:to-transparent border-b border-slate-200/80 dark:border-slate-800/90">
 
-        {/* Row 4: Depth Selector & Compact Status Legend Bar (รวมความลึกและสัญลักษณ์ในแถวเดียว ไม่เปลืองพื้นที่) */}
-        <div className="flex items-center justify-between gap-2 flex-wrap text-xs">
-          {/* Depth Selector & Collapse/Expand All Controls - strictly capped at 15 levels */}
-          <div className="flex items-center gap-1.5 min-w-0 max-w-full flex-wrap">
-            <span className="text-[#64748B] dark:text-slate-400 font-semibold text-[11px] shrink-0">
-              ความลึก (เพดาน ≤ 15 ชั้น):
-            </span>
-            <div className="flex items-center gap-1 bg-[#F8FAFC] dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 p-0.5 sm:p-1 rounded-xl overflow-x-auto no-scrollbar max-w-full">
-              <button
-                type="button"
-                onClick={() => setMaxRenderDepth(0)}
-                className={`px-2.5 py-0.5 rounded-lg text-[11px] font-semibold transition cursor-pointer whitespace-nowrap ${
-                  maxRenderDepth === 0
-                    ? 'bg-[#2563EB] dark:bg-emerald-600 text-white font-bold shadow-2xs'
-                    : 'text-[#64748B] hover:text-[#0F172A] dark:text-slate-400 dark:hover:text-white'
-                }`}
-              >
-                สูงสุด 15 ชั้น ({Math.min(MAX_TREE_DEPTH, maxTreeLevelInRank)}/{MAX_TREE_DEPTH})
-              </button>
-              {[3, 4, 5, 8, 12, 15].map((depthVal) => (
-                <button
-                  key={depthVal}
-                  type="button"
-                  onClick={() => setMaxRenderDepth(depthVal)}
-                  className={`px-2 py-0.5 rounded-lg text-[11px] font-mono transition cursor-pointer whitespace-nowrap ${
-                    maxRenderDepth === depthVal
-                      ? 'bg-[#2563EB] dark:bg-emerald-600 text-white font-bold shadow-2xs'
-                      : 'text-[#64748B] hover:text-[#0F172A] dark:text-slate-400 dark:hover:text-white'
-                  }`}
-                >
-                  {depthVal} ชั้น
-                </button>
-              ))}
-            </div>
-
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={handleExpandAllNodes}
-                disabled={collapsedNodeIds.size === 0}
-                className="px-2 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40 text-emerald-700 border border-emerald-200/80 dark:bg-emerald-950/50 dark:hover:bg-emerald-900/60 dark:text-emerald-300 dark:border-emerald-500/30 text-[10.5px] font-bold flex items-center gap-1 transition cursor-pointer disabled:cursor-not-allowed"
-                title="ขยายโหนดลูกทีมทั้งหมด"
-              >
-                <Maximize2 className="w-3 h-3" />
-                <span>{language === 'th' ? 'ขยายทั้งหมด' : 'Expand All'}</span>
-              </button>
-              <button
-                type="button"
-                onClick={handleCollapseSubtrees}
-                className="px-2 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200/80 dark:bg-amber-950/50 dark:hover:bg-amber-900/60 dark:text-amber-300 dark:border-amber-500/30 text-[10.5px] font-bold flex items-center gap-1 transition cursor-pointer"
-                title="ย่อโหนดลูกทีมระดับย่อยทั้งหมด"
-              >
-                <Minimize2 className="w-3 h-3" />
-                <span>{language === 'th' ? 'ย่อลูกทีม' : 'Collapse Subtrees'}</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Compact Legend Dropdown Toggle */}
-          <div className="relative shrink-0">
-            <button
-              type="button"
-              onClick={() => setIsLegendOpen((prev) => !prev)}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-[#F8FAFC] hover:bg-slate-100 dark:bg-slate-900 dark:hover:bg-slate-800 border border-slate-200/80 dark:border-slate-800 text-[11px] font-bold text-[#334155] dark:text-slate-300 transition cursor-pointer shadow-2xs"
-              title="คลิกเพื่อดูคำอธิบายสีกรอบสถานะโหนด"
-            >
-              <span className="flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />
-                <span className="w-2 h-2 rounded-full bg-blue-500 inline-block" />
-                <span className="w-2 h-2 rounded-full bg-amber-400 inline-block" />
-                <span className="w-2 h-2 rounded-full bg-rose-500 inline-block" />
-              </span>
-              <span>สีกรอบ</span>
-              <ChevronDown className={`w-3 h-3 text-[#64748B] transition-transform duration-200 ${isLegendOpen ? 'rotate-180' : ''}`} />
-            </button>
-
-            {isLegendOpen && (
-              <div className="absolute right-0 top-full mt-1.5 z-40 w-72 p-2.5 bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-xl shadow-xl flex flex-col gap-1.5 text-[11px] animate-in fade-in zoom-in-95">
-                <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-1.5 mb-0.5">
-                  <span className="font-bold text-[#0F172A] dark:text-white">คำอธิบายสีกรอบสถานะ</span>
-                  <button
-                    type="button"
-                    onClick={() => setIsLegendOpen(false)}
-                    className="text-slate-400 hover:text-slate-600 dark:hover:text-white text-xs p-0.5 rounded cursor-pointer"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-                <div className="flex items-center gap-2 p-1.5 rounded-lg bg-[#DCFCE7] border border-emerald-300 text-[#15803D] dark:bg-emerald-950/70 dark:border-emerald-500/40 dark:text-emerald-300 font-bold">
-                  <span>🟢 โคลนนิ่ง = กรอบสีเขียว</span>
-                </div>
-                <div className="flex items-center gap-2 p-1.5 rounded-lg bg-[#EFF6FF] border border-blue-200 text-[#1D4ED8] dark:bg-slate-900 dark:border-white/60 dark:text-white font-bold">
-                  <span>⚪ Main ID = กรอบสีขาว/น้ำเงิน</span>
-                </div>
-                <div className="flex items-center gap-2 p-1.5 rounded-lg bg-[#FEF3C7] border border-amber-300 text-[#B45309] dark:bg-amber-950/70 dark:border-amber-500/40 dark:text-amber-300 font-bold">
-                  <span>🟡 Auto ID = กรอบสีทอง</span>
-                </div>
-                <div className="flex items-center gap-2 p-1.5 rounded-lg bg-[#FEE2E2] border border-rose-300 text-[#BE123C] dark:bg-red-950/70 dark:border-red-500/40 dark:text-red-300 font-bold">
-                  <span>🔴 Extra ID = กรอบสีแดง</span>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Row 4c: รวมข้อมูลระบบ & เครื่องมือย่อย (Unified System Hub - ลดความรกตา จัดเป็นแท็บกระชับพร้อมปุ่มย่อ/ขยาย) */}
+        {/* Row 1 (Topmost): ข้อมูลระบบ & เครื่องมือย่อย (Unified System Hub) */}
         <div className="bg-[#F8FAFC]/90 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800 rounded-xl p-2 sm:p-2.5 space-y-2 transition shadow-2xs">
           {/* Header Row: Clean Tab Navigation & Collapse Toggle */}
           <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -6402,6 +6351,111 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           )}
         </div>
 
+        {/* Row 4: Depth Selector & Compact Status Legend Bar (รวมความลึกและสัญลักษณ์ในแถวเดียว ไม่เปลืองพื้นที่) */}
+        <div className="flex items-center justify-between gap-2 flex-wrap text-xs">
+          {/* Depth Selector & Collapse/Expand All Controls - strictly capped at 15 levels */}
+          <div className="flex items-center gap-1.5 min-w-0 max-w-full flex-wrap">
+            <span className="text-[#64748B] dark:text-slate-400 font-semibold text-[11px] shrink-0">
+              ความลึก (เพดาน ≤ 15 ชั้น):
+            </span>
+            <div className="flex items-center gap-1 bg-[#F8FAFC] dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 p-0.5 sm:p-1 rounded-xl overflow-x-auto no-scrollbar max-w-full">
+              <button
+                type="button"
+                onClick={() => setMaxRenderDepth(0)}
+                className={`px-2.5 py-0.5 rounded-lg text-[11px] font-semibold transition cursor-pointer whitespace-nowrap ${
+                  maxRenderDepth === 0
+                    ? 'bg-[#2563EB] dark:bg-emerald-600 text-white font-bold shadow-2xs'
+                    : 'text-[#64748B] hover:text-[#0F172A] dark:text-slate-400 dark:hover:text-white'
+                }`}
+              >
+                สูงสุด 15 ชั้น ({Math.min(MAX_TREE_DEPTH, maxTreeLevelInRank)}/{MAX_TREE_DEPTH})
+              </button>
+              {[3, 4, 5, 8, 12, 15].map((depthVal) => (
+                <button
+                  key={depthVal}
+                  type="button"
+                  onClick={() => setMaxRenderDepth(depthVal)}
+                  className={`px-2 py-0.5 rounded-lg text-[11px] font-mono transition cursor-pointer whitespace-nowrap ${
+                    maxRenderDepth === depthVal
+                      ? 'bg-[#2563EB] dark:bg-emerald-600 text-white font-bold shadow-2xs'
+                      : 'text-[#64748B] hover:text-[#0F172A] dark:text-slate-400 dark:hover:text-white'
+                  }`}
+                >
+                  {depthVal} ชั้น
+                </button>
+              ))}
+            </div>
+
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={handleExpandAllNodes}
+                disabled={collapsedNodeIds.size === 0}
+                className="px-2 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40 text-emerald-700 border border-emerald-200/80 dark:bg-emerald-950/50 dark:hover:bg-emerald-900/60 dark:text-emerald-300 dark:border-emerald-500/30 text-[10.5px] font-bold flex items-center gap-1 transition cursor-pointer disabled:cursor-not-allowed"
+                title="ขยายโหนดลูกทีมทั้งหมด"
+              >
+                <Maximize2 className="w-3 h-3" />
+                <span>{language === 'th' ? 'ขยายทั้งหมด' : 'Expand All'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleCollapseSubtrees}
+                className="px-2 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200/80 dark:bg-amber-950/50 dark:hover:bg-amber-900/60 dark:text-amber-300 dark:border-amber-500/30 text-[10.5px] font-bold flex items-center gap-1 transition cursor-pointer"
+                title="ย่อโหนดลูกทีมระดับย่อยทั้งหมด"
+              >
+                <Minimize2 className="w-3 h-3" />
+                <span>{language === 'th' ? 'ย่อลูกทีม' : 'Collapse Subtrees'}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Compact Legend Dropdown Toggle */}
+          <div className="relative shrink-0">
+            <button
+              type="button"
+              onClick={() => setIsLegendOpen((prev) => !prev)}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-[#F8FAFC] hover:bg-slate-100 dark:bg-slate-900 dark:hover:bg-slate-800 border border-slate-200/80 dark:border-slate-800 text-[11px] font-bold text-[#334155] dark:text-slate-300 transition cursor-pointer shadow-2xs"
+              title="คลิกเพื่อดูคำอธิบายสีกรอบสถานะโหนด"
+            >
+              <span className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />
+                <span className="w-2 h-2 rounded-full bg-blue-500 inline-block" />
+                <span className="w-2 h-2 rounded-full bg-amber-400 inline-block" />
+                <span className="w-2 h-2 rounded-full bg-rose-500 inline-block" />
+              </span>
+              <span>สีกรอบ</span>
+              <ChevronDown className={`w-3 h-3 text-[#64748B] transition-transform duration-200 ${isLegendOpen ? 'rotate-180' : ''}`} />
+            </button>
+
+            {isLegendOpen && (
+              <div className="absolute right-0 top-full mt-1.5 z-40 w-72 p-2.5 bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-xl shadow-xl flex flex-col gap-1.5 text-[11px] animate-in fade-in zoom-in-95">
+                <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-1.5 mb-0.5">
+                  <span className="font-bold text-[#0F172A] dark:text-white">คำอธิบายสีกรอบสถานะ</span>
+                  <button
+                    type="button"
+                    onClick={() => setIsLegendOpen(false)}
+                    className="text-slate-400 hover:text-slate-600 dark:hover:text-white text-xs p-0.5 rounded cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <div className="flex items-center gap-2 p-1.5 rounded-lg bg-[#DCFCE7] border border-emerald-300 text-[#15803D] dark:bg-emerald-950/70 dark:border-emerald-500/40 dark:text-emerald-300 font-bold">
+                  <span>🟢 โคลนนิ่ง = กรอบสีเขียว</span>
+                </div>
+                <div className="flex items-center gap-2 p-1.5 rounded-lg bg-[#EFF6FF] border border-blue-200 text-[#1D4ED8] dark:bg-slate-900 dark:border-white/60 dark:text-white font-bold">
+                  <span>⚪ Main ID = กรอบสีขาว/น้ำเงิน</span>
+                </div>
+                <div className="flex items-center gap-2 p-1.5 rounded-lg bg-[#FEF3C7] border border-amber-300 text-[#B45309] dark:bg-amber-950/70 dark:border-amber-500/40 dark:text-amber-300 font-bold">
+                  <span>🟡 Auto ID = กรอบสีทอง</span>
+                </div>
+                <div className="flex items-center gap-2 p-1.5 rounded-lg bg-[#FEE2E2] border border-rose-300 text-[#BE123C] dark:bg-red-950/70 dark:border-red-500/40 dark:text-red-300 font-bold">
+                  <span>🔴 Extra ID = กรอบสีแดง</span>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
         {/* Row 5: Rank Matrices Button Bar (Matching User's Screenshot Design) */}
         <div className="pt-1.5 border-t border-slate-200/80 dark:border-slate-800/80">
           {/* Horizontal Scrollable Rank Buttons Bar */}
@@ -6654,8 +6708,8 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             </div>
           </div>
 
-          {/* Right: Touch-Friendly Quick Pan Buttons */}
-          <div className="flex items-center gap-1 shrink-0">
+          {/* Right: Touch-Friendly Quick 2D Pan Buttons (Left / Up / Center / Down / Right) */}
+          <div className="flex items-center gap-1 shrink-0 flex-wrap">
             <button
               type="button"
               onClick={() => scrollTreeHorizontallyBy(-260)}
@@ -6669,11 +6723,33 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
 
             <button
               type="button"
+              onClick={() => scrollTreeVerticallyBy(-260)}
+              disabled={!canScrollUp}
+              className="px-2 py-1 rounded-lg bg-white hover:bg-[#EFF6FF] dark:bg-slate-900 dark:hover:bg-slate-800 disabled:opacity-35 text-[#334155] dark:text-slate-200 border border-slate-200/80 dark:border-slate-700 font-bold text-[11px] flex items-center gap-0.5 transition cursor-pointer disabled:cursor-not-allowed shadow-2xs"
+              title={language === 'th' ? 'เลื่อนผังขึ้นด้านบน' : 'Scroll Up'}
+            >
+              <ChevronUp className="w-3.5 h-3.5 text-[#2563EB] dark:text-cyan-400" />
+              <span>{language === 'th' ? 'ขึ้น' : 'Up'}</span>
+            </button>
+
+            <button
+              type="button"
               onClick={scrollTreeToCenter}
               className="px-2.5 py-1 rounded-lg bg-[#EFF6FF] hover:bg-blue-100/80 dark:bg-indigo-600/30 dark:hover:bg-indigo-600/50 text-[#1D4ED8] dark:text-indigo-200 border border-blue-200/80 dark:border-indigo-400/50 font-extrabold text-[11px] font-mono transition cursor-pointer"
               title={language === 'th' ? 'จัดกึ่งกลางโหนดหลัก' : 'Center Root Node'}
             >
               🎯 #{focusRootId}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => scrollTreeVerticallyBy(260)}
+              disabled={!canScrollDown}
+              className="px-2 py-1 rounded-lg bg-white hover:bg-[#EFF6FF] dark:bg-slate-900 dark:hover:bg-slate-800 disabled:opacity-35 text-[#334155] dark:text-slate-200 border border-slate-200/80 dark:border-slate-700 font-bold text-[11px] flex items-center gap-0.5 transition cursor-pointer disabled:cursor-not-allowed shadow-2xs"
+              title={language === 'th' ? 'เลื่อนผังลงด้านล่าง' : 'Scroll Down'}
+            >
+              <span>{language === 'th' ? 'ลง' : 'Down'}</span>
+              <ChevronDown className="w-3.5 h-3.5 text-[#2563EB] dark:text-cyan-400" />
             </button>
 
             <button
@@ -6831,7 +6907,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         })()}
 
         {/* Relative Wrapper for Interactive 2D Pan & Zoom Binary Tree + Edge Touch Indicators */}
-        <div className="relative w-full max-w-full min-w-0 flex-1 flex flex-col min-h-[75vh] sm:min-h-[85vh] rounded-xl sm:rounded-2xl overflow-hidden border border-slate-200/80 dark:border-slate-800/90 bg-[#F8FAFC] dark:bg-[#080c17] shadow-inner">
+        <div className="relative w-full max-w-full min-w-0 h-[68vh] sm:h-[76vh] min-h-[420px] max-h-[820px] flex flex-col rounded-xl sm:rounded-2xl overflow-hidden border border-slate-200/80 dark:border-slate-800/90 bg-[#F8FAFC] dark:bg-[#080c17] shadow-inner">
           {/* Left Overflow Edge Gradient & Floating Touch Button */}
           {canScrollLeft && (
             <>
@@ -6908,7 +6984,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
               updateHorizontalScrollIndicators();
               setTimeout(() => setIsTouchScrolling(false), 500);
             }}
-            className={`w-full max-w-full min-w-0 flex-1 h-[75vh] sm:h-[82vh] p-2 sm:p-5 md:p-6 pb-24 sm:pb-28 matrix-scroll-container matrix-pan-viewport ${
+            className={`w-full max-w-full min-w-0 min-h-0 flex-1 h-full p-2 sm:p-5 md:p-6 pb-24 sm:pb-28 matrix-scroll-container matrix-pan-viewport ${
               isDraggingTree ? 'cursor-grabbing select-none' : 'cursor-grab'
             }`}
           >
