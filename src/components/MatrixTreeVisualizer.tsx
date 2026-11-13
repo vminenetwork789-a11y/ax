@@ -649,10 +649,12 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
   const [zoomScale, setZoomScale] = useState<number>(0.55);
   const [viewMode, setViewMode] = useState<'onchain' | 'demoCloneTree'>('onchain');
   const [justUpdatedBadge, setJustUpdatedBadge] = useState<boolean>(false);
-  // ค่าเริ่มต้นแสดงความลึก 4 ชั้น (เพดานระบบสูงสุดไม่เกิน 15 ชั้น)
+  // ค่าเริ่มต้นเพดานความลึกของผัง 15 ชั้น และค่าเริ่มต้นการแสดงชั้นแบบขยาย 4 ชั้น
   const MAX_TREE_DEPTH = 15;
-  const [maxRenderDepth, setMaxRenderDepth] = useState<number>(4);
+  const DEFAULT_EXPANDED_DEPTH = 4;
+  const [maxRenderDepth, setMaxRenderDepth] = useState<number>(15);
   const [collapsedNodeIds, setCollapsedNodeIds] = useState<Set<number>>(new Set());
+  const hasUserInteractedCollapseRef = useRef<boolean>(false);
   const [selectedTreeNodeId, setSelectedTreeNodeId] = useState<number | null>(null);
   const [isDraggingTree, setIsDraggingTree] = useState<boolean>(false);
 
@@ -901,6 +903,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
   const [modalUpgradeError, setModalUpgradeError] = useState<string | null>(null);
   const [isWalletIdsModalOpen, setIsWalletIdsModalOpen] = useState<boolean>(false);
   const [selectedInspectWallet, setSelectedInspectWallet] = useState<string>('');
+  const [walletIdsStatusFilter, setWalletIdsStatusFilter] = useState<'all' | 'main' | 'auto' | 'extra' | 'clone'>('all');
   const [vaultLedgerFilter, setVaultLedgerFilter] = useState<'all' | 'in' | 'out'>('all');
 
   // Compact 3-Level "ผังต้นไม้ (Matrix Tree View • 3 ชั้น)" state (alongside the full Binary Tree)
@@ -1224,7 +1227,10 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
   }, [hasInitialTreeLoaded]);
 
   useEffect(() => {
-    setCollapsedNodeIds(new Set());
+    hasUserInteractedCollapseRef.current = false;
+  }, [selectedRank, viewMode, focusRootId]);
+
+  useEffect(() => {
     setSelectedTreeNodeId(null);
   }, [selectedRank, viewMode]);
 
@@ -5131,7 +5137,43 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
     return counts;
   }, [activeNodesMap]);
 
+  const buildCollapsedAtDepth = useCallback(
+    (expandedDepth: number) => {
+      const toCollapse = new Set<number>();
+      const queue: Array<{ id: number; depth: number }> = [{ id: focusRootId, depth: 1 }];
+      const visited = new Set<number>();
+      while (queue.length > 0) {
+        const { id, depth } = queue.shift()!;
+        if (visited.has(id) || depth > MAX_TREE_DEPTH) continue;
+        visited.add(id);
+        const node = activeNodesMap.get(id);
+        if (!node) continue;
+        const hasLeftChild = node.leftChild > 0 && activeNodesMap.has(node.leftChild);
+        const hasRightChild = node.rightChild > 0 && activeNodesMap.has(node.rightChild);
+        if (depth === expandedDepth && (hasLeftChild || hasRightChild)) {
+          toCollapse.add(id);
+          continue;
+        }
+        if (hasLeftChild) {
+          queue.push({ id: node.leftChild, depth: depth + 1 });
+        }
+        if (hasRightChild) {
+          queue.push({ id: node.rightChild, depth: depth + 1 });
+        }
+      }
+      return toCollapse;
+    },
+    [activeNodesMap, focusRootId]
+  );
+
+  useEffect(() => {
+    if (hasUserInteractedCollapseRef.current) return;
+    if (activeNodesMap.size === 0 || !activeNodesMap.has(focusRootId)) return;
+    setCollapsedNodeIds(buildCollapsedAtDepth(DEFAULT_EXPANDED_DEPTH));
+  }, [activeNodesMap, focusRootId, selectedRank, viewMode, buildCollapsedAtDepth]);
+
   const toggleCollapseNode = useCallback((nodeId: number) => {
+    hasUserInteractedCollapseRef.current = true;
     setCollapsedNodeIds((prev) => {
       const next = new Set(prev);
       if (next.has(nodeId)) {
@@ -5144,10 +5186,12 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
   }, []);
 
   const handleExpandAllNodes = useCallback(() => {
+    hasUserInteractedCollapseRef.current = true;
     setCollapsedNodeIds(new Set());
   }, []);
 
   const handleCollapseSubtrees = useCallback(() => {
+    hasUserInteractedCollapseRef.current = true;
     const toCollapse = new Set<number>();
     const queue: Array<{ id: number; depth: number }> = [{ id: focusRootId, depth: 1 }];
     const visited = new Set<number>();
@@ -8798,10 +8842,18 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                 id: n.id,
                 label: n.isClone
                   ? `Clone #${n.id} (ของ Main #${n.originMainId || n.id})`
+                  : n.isExtraId
+                  ? `Extra ID #${n.id}`
                   : n.isAutoMainId
                   ? `Auto ID #${n.id}`
                   : `Main ID #${n.id}`,
-                typeBadge: n.isClone ? 'CLONE ID' : n.isAutoMainId ? 'AUTO ID' : 'MAIN ID',
+                typeBadge: n.isClone
+                  ? 'CLONE ID'
+                  : n.isExtraId
+                  ? 'EXTRA ID'
+                  : n.isAutoMainId
+                  ? 'AUTO ID'
+                  : 'MAIN ID',
                 isClone: Boolean(n.isClone),
                 isAutoId: Boolean(n.isAutoMainId),
                 isExtraId: Boolean(n.isExtraId),
@@ -8831,20 +8883,78 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         );
 
         const WALLET_PAGE_SIZE = 10;
-        const walletTotalPages = Math.max(1, Math.ceil(walletReports.length / WALLET_PAGE_SIZE));
-        const walletCurrentPage = Math.min(
-          Math.max(1, modalSectionPages[`wallet_${activeWalletLower}`] || 1),
-          walletTotalPages
-        );
-        const pagedWalletReports = walletReports.slice(
-          (walletCurrentPage - 1) * WALLET_PAGE_SIZE,
-          walletCurrentPage * WALLET_PAGE_SIZE
-        );
 
         const mainAndAutoReports = walletReports.filter((rep: any) => !rep.isClone);
-        const autoIdReports = walletReports.filter((rep: any) => Boolean(rep.isAutoId) && !rep.isClone);
-        const manualMainReports = walletReports.filter((rep: any) => !rep.isClone && !rep.isAutoId);
+        const manualMainReports = walletReports.filter(
+          (rep: any) => !rep.isClone && !rep.isAutoId && !rep.isExtraId
+        );
+        const autoIdReports = walletReports.filter(
+          (rep: any) => !rep.isClone && Boolean(rep.isAutoId) && !rep.isExtraId
+        );
+        const extraIdReports = walletReports.filter(
+          (rep: any) => !rep.isClone && Boolean(rep.isExtraId)
+        );
         const cloneReports = walletReports.filter((rep: any) => Boolean(rep.isClone));
+
+        const walletStatusGroups = [
+          {
+            key: 'main' as const,
+            tabLabel: '🔵 Main ID',
+            title: '🔵 ชุด Main ID (รหัสหลัก)',
+            subtitle: 'รหัสสมาชิกหลักที่สมัครและถือครองสิทธิ์ในผัง',
+            items: manualMainReports,
+            tabActiveClass:
+              'bg-[#2563EB] text-white border-[#2563EB] dark:bg-indigo-600 dark:text-white dark:border-indigo-400 shadow-sm',
+            headerClass:
+              'bg-[#EFF6FF] dark:bg-indigo-950/50 border-blue-200 dark:border-indigo-500/40 text-[#1D4ED8] dark:text-indigo-200',
+            countBadgeClass:
+              'bg-white dark:bg-indigo-500/30 text-[#1D4ED8] dark:text-indigo-100 border-blue-200 dark:border-indigo-400/40',
+          },
+          {
+            key: 'auto' as const,
+            tabLabel: '🟡 Auto ID',
+            title: '🟡 ชุด Auto ID (รหัสอัตโนมัติ)',
+            subtitle: 'รหัสหลักใหม่ที่ระบบสร้างให้อัตโนมัติจาก Auto ID Pool',
+            items: autoIdReports,
+            tabActiveClass:
+              'bg-amber-600 text-white border-amber-600 dark:bg-amber-500 dark:text-slate-950 dark:border-amber-300 shadow-sm',
+            headerClass:
+              'bg-[#FEF3C7] dark:bg-amber-950/40 border-amber-200 dark:border-amber-500/40 text-[#B45309] dark:text-amber-200',
+            countBadgeClass:
+              'bg-white dark:bg-amber-500/30 text-[#B45309] dark:text-amber-100 border-amber-200 dark:border-amber-400/40',
+          },
+          {
+            key: 'extra' as const,
+            tabLabel: '🔴 Extra ID',
+            title: '🔴 ชุด Extra ID (รหัสเสริม)',
+            subtitle: 'รหัสเสริมที่เกิดจาก Extra ID Pool เพื่อช่วยขยายและดันสายงาน',
+            items: extraIdReports,
+            tabActiveClass:
+              'bg-rose-600 text-white border-rose-600 dark:bg-rose-500 dark:text-white dark:border-rose-300 shadow-sm',
+            headerClass:
+              'bg-[#FFE4E6] dark:bg-rose-950/40 border-rose-200 dark:border-rose-500/40 text-[#BE123C] dark:text-rose-200',
+            countBadgeClass:
+              'bg-white dark:bg-rose-500/30 text-[#BE123C] dark:text-rose-100 border-rose-200 dark:border-rose-400/40',
+          },
+          {
+            key: 'clone' as const,
+            tabLabel: '🟢 โคลนนิ่ง',
+            title: '🟢 ชุด โคลนนิ่ง (Clone ID)',
+            subtitle: 'รหัสโคลนนิ่ง 100% Rebirth ที่แตกตัวลงช่วยลูกทีมและรับรายได้ซ้ำ',
+            items: cloneReports,
+            tabActiveClass:
+              'bg-emerald-600 text-white border-emerald-600 dark:bg-emerald-500 dark:text-slate-950 dark:border-emerald-300 shadow-sm',
+            headerClass:
+              'bg-[#DCFCE7] dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-500/40 text-[#15803D] dark:text-emerald-200',
+            countBadgeClass:
+              'bg-white dark:bg-emerald-500/30 text-[#15803D] dark:text-emerald-100 border-emerald-200 dark:border-emerald-400/40',
+          },
+        ];
+
+        const visibleStatusGroups =
+          walletIdsStatusFilter === 'all'
+            ? walletStatusGroups.filter((g) => g.items.length > 0)
+            : walletStatusGroups.filter((g) => g.key === walletIdsStatusFilter);
 
         const totalDirect30 = mainAndAutoReports.reduce(
           (sum: number, r: any) => sum + Number(r.direct30TotalUsdt || 0),
@@ -8879,7 +8989,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                       👛 ข้อมูล ID ทั้งหมดของกระเป๋านี้
                     </h3>
                     <span className="px-2.5 py-0.5 rounded-full bg-[#DCFCE7] text-[#15803D] border border-emerald-200 dark:bg-emerald-500/20 dark:text-emerald-300 dark:border-emerald-500/40 font-mono font-bold text-[11px]">
-                      ถือครอง {walletReports.length} ID ({manualMainReports.length} Main ID • {autoIdReports.length} Auto ID • {cloneReports.length} โคลน)
+                      ถือครอง {walletReports.length} ID ({manualMainReports.length} Main ID • {autoIdReports.length} Auto ID • {extraIdReports.length} Extra ID • {cloneReports.length} โคลนนิ่ง)
                     </span>
                     <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-[#EFF6FF] text-[#1D4ED8] border border-blue-200 dark:bg-cyan-500/15 dark:text-cyan-300 dark:border-cyan-500/35 font-mono font-bold text-[11px]">
                       <Clock className="w-3 h-3 text-[#2563EB] dark:text-cyan-400" />
@@ -8950,14 +9060,61 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                 </div>
               </div>
 
-              {/* List of IDs Owned by This Wallet */}
-              <div className="space-y-2.5">
+              {/* List of IDs Owned by This Wallet (Separated by Status Group) */}
+              <div className="space-y-3">
                 <div className="text-xs font-bold text-[#0F172A] dark:text-indigo-300 flex items-center justify-between flex-wrap gap-2">
-                  <span>📋 รายการ ID ทั้งหมดของกระเป๋านี้ ({walletReports.length} ID):</span>
+                  <span>📋 รายการ ID แยกตามชุดสถานะ ({walletReports.length} ID):</span>
                   <span className="text-[11px] text-[#64748B] dark:text-slate-400 font-normal">
-                    คลิกปุ่ม "ดูผลประโยชน์ / อัพ Rank" เพื่อดูประวัติรายรายการหรือกดอัพแรงค์ของ ID นั้น
+                    เลือกดูเฉพาะชุดสถานะ หรือดูแยกเป็นหมวดหมู่ได้ทันที
                   </span>
                 </div>
+
+                {/* Status Group Filter Bar */}
+                {walletReports.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5 pb-1">
+                    <button
+                      type="button"
+                      onClick={() => setWalletIdsStatusFilter('all')}
+                      className={`px-3 py-1.5 rounded-xl border font-bold text-[11px] transition cursor-pointer inline-flex items-center gap-1.5 ${
+                        walletIdsStatusFilter === 'all'
+                          ? 'bg-slate-900 text-white border-slate-900 dark:bg-white dark:text-slate-950 dark:border-white shadow-sm'
+                          : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200/80 dark:bg-slate-900/90 dark:hover:bg-slate-800 dark:text-slate-300 dark:border-slate-700'
+                      }`}
+                    >
+                      <span>ทั้งหมด</span>
+                      <span className="px-1.5 py-0.2 rounded-md bg-black/15 dark:bg-black/25 font-mono text-[10px]">
+                        {walletReports.length}
+                      </span>
+                    </button>
+
+                    {walletStatusGroups.map((group) => {
+                      const isActive = walletIdsStatusFilter === group.key;
+                      return (
+                        <button
+                          key={`wallet-status-tab-${group.key}`}
+                          type="button"
+                          onClick={() => setWalletIdsStatusFilter(group.key)}
+                          className={`px-3 py-1.5 rounded-xl border font-bold text-[11px] transition cursor-pointer inline-flex items-center gap-1.5 ${
+                            isActive
+                              ? group.tabActiveClass
+                              : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200/80 dark:bg-slate-900/90 dark:hover:bg-slate-800 dark:text-slate-300 dark:border-slate-700'
+                          }`}
+                        >
+                          <span>{group.tabLabel}</span>
+                          <span
+                            className={`px-1.5 py-0.2 rounded-md font-mono text-[10px] ${
+                              isActive
+                                ? 'bg-black/20 text-inherit'
+                                : 'bg-slate-200/90 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
+                            }`}
+                          >
+                            {group.items.length}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
 
                 {walletReports.length === 0 ? (
                   <div className="bg-[#F8FAFC] dark:bg-slate-950/80 border border-slate-200/80 dark:border-slate-800 rounded-xl p-6 text-center space-y-3">
@@ -8982,280 +9139,353 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                     </div>
                   </div>
                 ) : (
-                  <>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      {pagedWalletReports.map((rep: any) => {
-                      const nodeInActiveRank =
-                        activeNodesMap.get(Number(rep.id)) ||
-                        Array.from(activeNodesMap.values()).find(
-                          (n) => !n.isClone && (n.r1MainId === Number(rep.id) || n.originMainId === Number(rep.id))
-                        );
-
-                      const badgeClass = rep.isClone
-                        ? 'bg-[#DCFCE7] text-[#15803D] border-emerald-200 dark:bg-emerald-500/20 dark:text-emerald-300 dark:border-emerald-500/40'
-                        : rep.isAutoId
-                        ? 'bg-[#FEF3C7] text-[#B45309] border-amber-200 dark:bg-amber-500/20 dark:text-amber-300 dark:border-amber-500/40'
-                        : 'bg-[#EFF6FF] text-[#1D4ED8] border-blue-200 dark:bg-indigo-500/20 dark:text-indigo-300 dark:border-indigo-500/40';
+                  <div className="space-y-4">
+                    {visibleStatusGroups.map((group) => {
+                      const pageKey = `wallet_${activeWalletLower}_${group.key}`;
+                      const groupTotalPages = Math.max(1, Math.ceil(group.items.length / WALLET_PAGE_SIZE));
+                      const groupCurrentPage = Math.min(
+                        Math.max(1, modalSectionPages[pageKey] || 1),
+                        groupTotalPages
+                      );
+                      const pagedGroupItems = group.items.slice(
+                        (groupCurrentPage - 1) * WALLET_PAGE_SIZE,
+                        groupCurrentPage * WALLET_PAGE_SIZE
+                      );
 
                       return (
                         <div
-                          key={`wallet-id-card-${rep.id}`}
-                          className="bg-[#F8FAFC] dark:bg-slate-950/90 border border-slate-200/80 dark:border-slate-800 hover:border-blue-300 dark:hover:border-indigo-500/50 rounded-xl p-3.5 space-y-2.5 transition shadow-xs"
+                          key={`wallet-status-section-${group.key}`}
+                          className="rounded-2xl border border-slate-200/80 dark:border-slate-800/90 bg-slate-50/70 dark:bg-slate-950/40 p-3 space-y-3"
                         >
-                          <div className="flex items-center justify-between gap-2 flex-wrap border-b border-slate-200/80 dark:border-slate-800/90 pb-2">
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="font-mono font-extrabold text-sm text-[#0F172A] dark:text-amber-400">
-                                {rep.label || `ID #${rep.id}`}
-                              </span>
-                              <span className={`px-2 py-0.5 rounded-full border font-mono font-bold text-[10px] ${badgeClass}`}>
-                                {rep.isClone
-                                  ? `${rep.typeBadge} • รอบที่ ${rep.cloneRound || 1}${
-                                      rep.cloneSequence ? ` (ใบที่ #${rep.cloneSequence})` : ''
-                                    }`
-                                  : rep.typeBadge}
-                              </span>
+                          {/* Status Group Header */}
+                          <div
+                            className={`flex items-center justify-between gap-2 flex-wrap px-3 py-2 rounded-xl border ${group.headerClass}`}
+                          >
+                            <div className="space-y-0.5">
+                              <div className="font-extrabold text-xs sm:text-sm flex items-center gap-2">
+                                <span>{group.title}</span>
+                              </div>
+                              <div className="text-[10.5px] opacity-85">{group.subtitle}</div>
                             </div>
-                            <span className="px-2 py-0.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-mono font-bold text-[11px]">
-                              Max Rank: R{rep.currentMaxRank || 1}
+                            <span
+                              className={`px-2.5 py-0.5 rounded-full border font-mono font-extrabold text-[11px] ${group.countBadgeClass}`}
+                            >
+                              {group.items.length} รหัส
                             </span>
                           </div>
 
-                          <div className="text-[11px] font-mono text-slate-400 flex items-center justify-between">
-                            <span>
-                              อัพไลน์ R1: <strong className="text-white">#{rep.parentId}</strong> ({rep.side})
-                            </span>
-                            <span>
-                              ผู้แนะนำตรง: <strong className="text-amber-300">#{rep.directSponsorNodeId}</strong>
-                            </span>
-                          </div>
-
-                          {/* Earnings & Pools of this ID */}
-                          <div className="grid grid-cols-3 gap-1.5 font-mono text-[10px]">
-                            <div className="bg-slate-900/90 border border-emerald-500/30 rounded-lg p-1.5 text-center">
-                              <span className="text-slate-400 block">30% แนะนำ</span>
-                              <span className="text-emerald-400 font-extrabold text-xs">
-                                +{Number(rep.direct30TotalUsdt || 0).toFixed(2)} U
-                              </span>
+                          {group.items.length === 0 ? (
+                            <div className="rounded-xl border border-dashed border-slate-300 dark:border-slate-700 py-5 px-4 text-center text-xs text-slate-500 dark:text-slate-400">
+                              ยังไม่มีรหัสในสถานะ {group.tabLabel} สำหรับกระเป๋านี้
                             </div>
-                            <div className="bg-slate-900/90 border border-cyan-500/30 rounded-lg p-1.5 text-center">
-                              <span className="text-slate-400 block">30% ค่าชั้น</span>
-                              <span className="text-cyan-300 font-extrabold text-xs">
-                                +{Number(rep.level30TotalUsdt || 0).toFixed(2)} U
-                              </span>
-                            </div>
-                            <div className="bg-slate-900/90 border border-indigo-500/30 rounded-lg p-1.5 text-center">
-                              <span className="text-slate-400 block">35% อัพเกรด</span>
-                              <span className="text-indigo-300 font-extrabold text-xs">
-                                +{Number(rep.vault35GrossTotalUsdt || 0).toFixed(2)} U
-                              </span>
-                            </div>
-                          </div>
+                          ) : (
+                            <>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                {pagedGroupItems.map((rep: any) => {
+                                  const nodeInActiveRank =
+                                    activeNodesMap.get(Number(rep.id)) ||
+                                    Array.from(activeNodesMap.values()).find(
+                                      (n) =>
+                                        !n.isClone &&
+                                        (n.r1MainId === Number(rep.id) || n.originMainId === Number(rep.id))
+                                    );
 
-                          {/* 15-Level Breakdown per ID inside Wallet IDs Modal */}
-                          {(() => {
-                            const ls = rep.levelSummary || nodeInActiveRank?.levelSummary;
-                            const tiers = ls?.tiersBreakdown || [];
-                            const thisTotal = ls?.thisNodeLevelTotalUsdt ?? 0;
-                            const clonesTotal = ls?.clonesLevelTotalUsdt ?? 0;
-                            const ratePerNode = ls?.ratePerNodeUsdt ?? 0.1;
-                            const receivedPayingNodes = tiers.reduce(
-                              (acc: number, t: any) => acc + Number(t.leftPayingNodesCount || 0),
-                              0
-                            );
-                            const remainingPayingNodes = Math.max(0, 32767 - receivedPayingNodes);
-                            const remainingUsdt = Number((remainingPayingNodes * ratePerNode).toFixed(2));
+                                  const badgeClass = rep.isClone
+                                    ? 'bg-[#DCFCE7] text-[#15803D] border-emerald-200 dark:bg-emerald-500/20 dark:text-emerald-300 dark:border-emerald-500/40'
+                                    : rep.isExtraId
+                                    ? 'bg-[#FFE4E6] text-[#BE123C] border-rose-200 dark:bg-rose-500/20 dark:text-rose-300 dark:border-rose-500/40'
+                                    : rep.isAutoId
+                                    ? 'bg-[#FEF3C7] text-[#B45309] border-amber-200 dark:bg-amber-500/20 dark:text-amber-300 dark:border-amber-500/40'
+                                    : 'bg-[#EFF6FF] text-[#1D4ED8] border-blue-200 dark:bg-indigo-500/20 dark:text-indigo-300 dark:border-indigo-500/40';
 
-                            return (
-                              <div className="bg-slate-900/80 border border-cyan-500/30 rounded-lg p-2 space-y-1 font-mono text-[10px]">
-                                <div className="flex items-center justify-between flex-wrap gap-1">
-                                  <span className="text-cyan-300 font-bold">
-                                    🪜 ค่าชั้น 15 ชั้น: รับแล้ว{' '}
-                                    <strong className="text-emerald-300">
-                                      {receivedPayingNodes.toLocaleString()} / 32,767 รหัส
-                                    </strong>
+                                  const displayTitle =
+                                    rep.isExtraId && !rep.isClone
+                                      ? `Extra ID #${rep.id}`
+                                      : rep.label || `ID #${rep.id}`;
+
+                                  return (
+                                    <div
+                                      key={`wallet-id-card-${rep.id}`}
+                                      className="bg-white dark:bg-slate-950/90 border border-slate-200/80 dark:border-slate-800 hover:border-blue-300 dark:hover:border-indigo-500/50 rounded-xl p-3.5 space-y-2.5 transition shadow-xs"
+                                    >
+                                      <div className="flex items-center justify-between gap-2 flex-wrap border-b border-slate-200/80 dark:border-slate-800/90 pb-2">
+                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                          <span className="font-mono font-extrabold text-sm text-[#0F172A] dark:text-amber-400">
+                                            {displayTitle}
+                                          </span>
+                                          <span
+                                            className={`px-2 py-0.5 rounded-full border font-mono font-bold text-[10px] ${badgeClass}`}
+                                          >
+                                            {rep.isClone
+                                              ? `${rep.typeBadge || 'CLONE ID'} • รอบที่ ${rep.cloneRound || 1}${
+                                                  rep.cloneSequence ? ` (ใบที่ #${rep.cloneSequence})` : ''
+                                                }`
+                                              : rep.isExtraId
+                                              ? 'EXTRA ID'
+                                              : rep.isAutoId
+                                              ? 'AUTO ID'
+                                              : rep.typeBadge || 'MAIN ID'}
+                                          </span>
+                                        </div>
+                                        <span className="px-2 py-0.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-[#15803D] dark:text-emerald-300 font-mono font-bold text-[11px]">
+                                          Max Rank: R{rep.currentMaxRank || 1}
+                                        </span>
+                                      </div>
+
+                                      <div className="text-[11px] font-mono text-slate-400 flex items-center justify-between">
+                                        <span>
+                                          อัพไลน์ R1: <strong className="text-slate-900 dark:text-white">#{rep.parentId}</strong> ({rep.side})
+                                        </span>
+                                        <span>
+                                          ผู้แนะนำตรง: <strong className="text-amber-600 dark:text-amber-300">#{rep.directSponsorNodeId}</strong>
+                                        </span>
+                                      </div>
+
+                                      {/* Earnings & Pools of this ID */}
+                                      <div className="grid grid-cols-3 gap-1.5 font-mono text-[10px]">
+                                        <div className="bg-slate-900/90 border border-emerald-500/30 rounded-lg p-1.5 text-center">
+                                          <span className="text-slate-400 block">30% แนะนำ</span>
+                                          <span className="text-emerald-400 font-extrabold text-xs">
+                                            +{Number(rep.direct30TotalUsdt || 0).toFixed(2)} U
+                                          </span>
+                                        </div>
+                                        <div className="bg-slate-900/90 border border-cyan-500/30 rounded-lg p-1.5 text-center">
+                                          <span className="text-slate-400 block">30% ค่าชั้น</span>
+                                          <span className="text-cyan-300 font-extrabold text-xs">
+                                            +{Number(rep.level30TotalUsdt || 0).toFixed(2)} U
+                                          </span>
+                                        </div>
+                                        <div className="bg-slate-900/90 border border-indigo-500/30 rounded-lg p-1.5 text-center">
+                                          <span className="text-slate-400 block">35% อัพเกรด</span>
+                                          <span className="text-indigo-300 font-extrabold text-xs">
+                                            +{Number(rep.vault35GrossTotalUsdt || 0).toFixed(2)} U
+                                          </span>
+                                        </div>
+                                      </div>
+
+                                      {/* 15-Level Breakdown per ID inside Wallet IDs Modal */}
+                                      {(() => {
+                                        const ls = rep.levelSummary || nodeInActiveRank?.levelSummary;
+                                        const tiers = ls?.tiersBreakdown || [];
+                                        const thisTotal = ls?.thisNodeLevelTotalUsdt ?? 0;
+                                        const clonesTotal = ls?.clonesLevelTotalUsdt ?? 0;
+                                        const ratePerNode = ls?.ratePerNodeUsdt ?? 0.1;
+                                        const receivedPayingNodes = tiers.reduce(
+                                          (acc: number, t: any) => acc + Number(t.leftPayingNodesCount || 0),
+                                          0
+                                        );
+                                        const remainingPayingNodes = Math.max(0, 32767 - receivedPayingNodes);
+                                        const remainingUsdt = Number((remainingPayingNodes * ratePerNode).toFixed(2));
+
+                                        return (
+                                          <div className="bg-slate-900/80 border border-cyan-500/30 rounded-lg p-2 space-y-1 font-mono text-[10px]">
+                                            <div className="flex items-center justify-between flex-wrap gap-1">
+                                              <span className="text-cyan-300 font-bold">
+                                                🪜 ค่าชั้น 15 ชั้น: รับแล้ว{' '}
+                                                <strong className="text-emerald-300">
+                                                  {receivedPayingNodes.toLocaleString()} / 32,767 รหัส
+                                                </strong>
+                                              </span>
+                                              <span className="text-amber-300 font-bold">
+                                                คงเหลืออีก {remainingPayingNodes.toLocaleString()} รหัส (
+                                                {remainingUsdt.toLocaleString(undefined, {
+                                                  minimumFractionDigits: 2,
+                                                  maximumFractionDigits: 2,
+                                                })}{' '}
+                                                U)
+                                              </span>
+                                            </div>
+                                            {tiers.length > 0 ? (
+                                              <div className="flex flex-wrap items-center gap-1 pt-1 border-t border-slate-800">
+                                                {tiers.map((t: any) => (
+                                                  <span
+                                                    key={`wallet-lvl-${rep.id}-${t.tier}`}
+                                                    className="px-1.5 py-0.5 rounded bg-slate-950 border border-cyan-500/30 text-slate-200"
+                                                  >
+                                                    ชั้น {t.tier}:{' '}
+                                                    <strong className="text-emerald-400">
+                                                      +{Number(t.amountUsdt || 0).toFixed(2)}U
+                                                    </strong>{' '}
+                                                    ({t.leftPayingNodesCount} รหัส
+                                                    {t.leftNodeIds && t.leftNodeIds.length > 0
+                                                      ? ` #${t.leftNodeIds.join(',#')}`
+                                                      : ''}
+                                                    )
+                                                  </span>
+                                                ))}
+                                                <span className="ml-auto text-cyan-300 font-bold">
+                                                  โหนดนี้ +{thisTotal.toFixed(2)}U
+                                                  {clonesTotal > 0 ? ` (+โคลน ${clonesTotal.toFixed(2)}U)` : ''}
+                                                </span>
+                                              </div>
+                                            ) : (
+                                              <div className="text-slate-500">
+                                                ยังไม่มีชั้นที่รับค่าชั้นใต้โหนดนี้ (เหลืออีก 15 ชั้น)
+                                              </div>
+                                            )}
+                                          </div>
+                                        );
+                                      })()}
+
+                                      {!rep.isClone && (
+                                        <div className="grid grid-cols-3 gap-1.5 font-mono text-[10px]">
+                                          <div className="bg-slate-900/60 border border-amber-500/25 rounded-lg p-1 text-center">
+                                            <span className="text-slate-400 block">Upgrade Pool</span>
+                                            <span className="text-amber-300 font-bold">
+                                              {Number(rep.upgradeRankPool ?? nodeInActiveRank?.upgradeRankPool ?? 0).toFixed(2)} U
+                                            </span>
+                                          </div>
+                                          <div className="bg-slate-900/60 border border-yellow-500/25 rounded-lg p-1 text-center">
+                                            <span className="text-slate-400 block">Auto ID Pool</span>
+                                            <span className="text-yellow-300 font-bold">
+                                              {Number(rep.newAutoIdPool ?? nodeInActiveRank?.newAutoIdPool ?? 0).toFixed(2)} U (
+                                              {Math.max(
+                                                (rep.autoIdsSpawned || []).length,
+                                                Number(rep.totalAutoIdCount || 0),
+                                                nodeInActiveRank?.totalAutoIdCount || 0
+                                              )}{' '}
+                                              รหัส)
+                                            </span>
+                                          </div>
+                                          <div className="bg-slate-900/60 border border-rose-500/25 rounded-lg p-1 text-center">
+                                            <span className="text-slate-400 block">Extra ID Pool</span>
+                                            <span className="text-rose-300 font-bold">
+                                              {Number(rep.newExtraIdPool ?? nodeInActiveRank?.newExtraIdPool ?? 0).toFixed(2)} U (
+                                              {Math.max(
+                                                (rep.autoExtraIdsSpawned || []).length,
+                                                Number(rep.totalExtraIdCount || 0)
+                                              )}{' '}
+                                              รหัส)
+                                            </span>
+                                          </div>
+                                        </div>
+                                      )}
+
+                                      {/* Referral Link Row for this ID */}
+                                      <div className="flex items-center justify-between gap-2 bg-slate-50 dark:bg-slate-900/90 border border-blue-200/80 dark:border-indigo-500/35 rounded-lg px-2.5 py-1.5 font-mono text-[10.5px]">
+                                        <div className="flex items-center gap-1.5 min-w-0">
+                                          <Link2 className="w-3.5 h-3.5 text-[#2563EB] dark:text-indigo-400 shrink-0" />
+                                          <span className="text-[#334155] dark:text-slate-300 truncate">
+                                            {buildReferralLink(rep.originMainId || rep.id)}
+                                          </span>
+                                        </div>
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            copyReferralLink(
+                                              rep.originMainId || rep.id,
+                                              `wallet-modal-ref-${rep.id}`
+                                            )
+                                          }
+                                          className="px-2 py-0.5 rounded bg-[#2563EB] hover:bg-blue-700 dark:bg-indigo-600 dark:hover:bg-indigo-500 text-white font-bold text-[10px] shrink-0 inline-flex items-center gap-1 cursor-pointer transition"
+                                        >
+                                          {copiedReferralKey === `wallet-modal-ref-${rep.id}` ? (
+                                            <>
+                                              <Check className="w-3 h-3" />
+                                              <span>คัดลอกลิ้งแล้ว</span>
+                                            </>
+                                          ) : (
+                                            <>
+                                              <Copy className="w-3 h-3" />
+                                              <span>คัดลอกลิ้งแนะนำ #{rep.originMainId || rep.id}</span>
+                                            </>
+                                          )}
+                                        </button>
+                                      </div>
+
+                                      {/* Action Buttons for this ID */}
+                                      <div className="flex items-center gap-2 pt-1">
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const targetNodeId = nodeInActiveRank
+                                              ? nodeInActiveRank.id
+                                              : Number(rep.id);
+                                            const curMaxR = Number(rep.currentMaxRank || 1);
+                                            setModalUpgradeTargetRank(Math.min(18, curMaxR + 1));
+                                            setModalUpgradeMessage(null);
+                                            setModalUpgradeError(null);
+                                            setBenefitModalTab('all');
+                                            if (!activeNodesMap.has(targetNodeId)) {
+                                              setSelectedRank(1);
+                                              loadOnChainTree(1);
+                                            }
+                                            setIsWalletIdsModalOpen(false);
+                                            setExpandedBenefitNodeId(targetNodeId);
+                                          }}
+                                          className="flex-1 py-1.5 px-2.5 rounded-lg bg-[#2563EB] hover:bg-blue-700 dark:bg-gradient-to-r dark:from-indigo-600 dark:to-violet-600 dark:hover:from-indigo-500 dark:hover:to-violet-500 text-white font-bold text-[11px] transition cursor-pointer flex items-center justify-center gap-1 shadow-xs"
+                                        >
+                                          <Coins className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+                                          <span>
+                                            {Number(rep.currentMaxRank || 1) >= 18
+                                              ? 'ดูผลประโยชน์ (Max R18)'
+                                              : 'ดูผลประโยชน์ / อัพ Rank'}
+                                          </span>
+                                        </button>
+
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const targetNodeId = nodeInActiveRank
+                                              ? nodeInActiveRank.id
+                                              : Number(rep.id);
+                                            if (!activeNodesMap.has(targetNodeId)) {
+                                              setSelectedRank(1);
+                                              loadOnChainTree(1);
+                                            }
+                                            navigateToNode(targetNodeId);
+                                            setIsWalletIdsModalOpen(false);
+                                          }}
+                                          className="py-1.5 px-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-[#0F172A] border border-slate-200/80 dark:bg-slate-900 dark:hover:bg-slate-800 dark:text-amber-300 dark:border-slate-700 font-bold text-[11px] transition cursor-pointer"
+                                        >
+                                          🎯 ไปที่โหนด
+                                        </button>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+
+                              {group.items.length > WALLET_PAGE_SIZE && (
+                                <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-200/80 dark:border-slate-800 text-xs font-mono">
+                                  <button
+                                    type="button"
+                                    disabled={groupCurrentPage <= 1}
+                                    onClick={() =>
+                                      setModalSectionPages((prev) => ({
+                                        ...prev,
+                                        [pageKey]: groupCurrentPage - 1,
+                                      }))
+                                    }
+                                    className="px-3 py-1.5 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-900 dark:bg-slate-900 dark:hover:bg-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-700 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed transition"
+                                  >
+                                    ◀ ก่อนหน้า
+                                  </button>
+                                  <span className="text-slate-600 dark:text-slate-400">
+                                    หน้า <strong className="text-amber-600 dark:text-amber-300">{groupCurrentPage}</strong> /{' '}
+                                    {groupTotalPages} (แสดง 10 รายการ/หน้า)
                                   </span>
-                                  <span className="text-amber-300 font-bold">
-                                    คงเหลืออีก {remainingPayingNodes.toLocaleString()} รหัส (
-                                    {remainingUsdt.toLocaleString(undefined, {
-                                      minimumFractionDigits: 2,
-                                      maximumFractionDigits: 2,
-                                    })}{' '}
-                                    U)
-                                  </span>
+                                  <button
+                                    type="button"
+                                    disabled={groupCurrentPage >= groupTotalPages}
+                                    onClick={() =>
+                                      setModalSectionPages((prev) => ({
+                                        ...prev,
+                                        [pageKey]: groupCurrentPage + 1,
+                                      }))
+                                    }
+                                    className="px-3 py-1.5 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-900 dark:bg-slate-900 dark:hover:bg-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-700 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed transition"
+                                  >
+                                    ถัดไป ▶
+                                  </button>
                                 </div>
-                                {tiers.length > 0 ? (
-                                  <div className="flex flex-wrap items-center gap-1 pt-1 border-t border-slate-800">
-                                    {tiers.map((t: any) => (
-                                      <span
-                                        key={`wallet-lvl-${rep.id}-${t.tier}`}
-                                        className="px-1.5 py-0.5 rounded bg-slate-950 border border-cyan-500/30 text-slate-200"
-                                      >
-                                        ชั้น {t.tier}:{' '}
-                                        <strong className="text-emerald-400">
-                                          +{Number(t.amountUsdt || 0).toFixed(2)}U
-                                        </strong>{' '}
-                                        ({t.leftPayingNodesCount} รหัส
-                                        {t.leftNodeIds && t.leftNodeIds.length > 0
-                                          ? ` #${t.leftNodeIds.join(',#')}`
-                                          : ''}
-                                        )
-                                      </span>
-                                    ))}
-                                    <span className="ml-auto text-cyan-300 font-bold">
-                                      โหนดนี้ +{thisTotal.toFixed(2)}U
-                                      {clonesTotal > 0 ? ` (+โคลน ${clonesTotal.toFixed(2)}U)` : ''}
-                                    </span>
-                                  </div>
-                                ) : (
-                                  <div className="text-slate-500">
-                                    ยังไม่มีชั้นที่รับค่าชั้นใต้โหนดนี้ (เหลืออีก 15 ชั้น)
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })()}
-
-                          {!rep.isClone && (
-                            <div className="grid grid-cols-3 gap-1.5 font-mono text-[10px]">
-                              <div className="bg-slate-900/60 border border-amber-500/25 rounded-lg p-1 text-center">
-                                <span className="text-slate-400 block">Upgrade Pool</span>
-                                <span className="text-amber-300 font-bold">
-                                  {Number(rep.upgradeRankPool ?? nodeInActiveRank?.upgradeRankPool ?? 0).toFixed(2)} U
-                                </span>
-                              </div>
-                              <div className="bg-slate-900/60 border border-yellow-500/25 rounded-lg p-1 text-center">
-                                <span className="text-slate-400 block">Auto ID Pool</span>
-                                <span className="text-yellow-300 font-bold">
-                                  {Number(rep.newAutoIdPool ?? nodeInActiveRank?.newAutoIdPool ?? 0).toFixed(2)} U (
-                                  {Math.max(
-                                    (rep.autoIdsSpawned || []).length,
-                                    Number(rep.totalAutoIdCount || 0),
-                                    nodeInActiveRank?.totalAutoIdCount || 0
-                                  )}{' '}
-                                  รหัส)
-                                </span>
-                              </div>
-                              <div className="bg-slate-900/60 border border-rose-500/25 rounded-lg p-1 text-center">
-                                <span className="text-slate-400 block">Extra ID Pool</span>
-                                <span className="text-rose-300 font-bold">
-                                  {Number(rep.newExtraIdPool ?? nodeInActiveRank?.newExtraIdPool ?? 0).toFixed(2)} U (
-                                  {Math.max((rep.autoExtraIdsSpawned || []).length, Number(rep.totalExtraIdCount || 0))} รหัส)
-                                </span>
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Referral Link Row for this ID */}
-                          <div className="flex items-center justify-between gap-2 bg-white dark:bg-slate-900/90 border border-blue-200/80 dark:border-indigo-500/35 rounded-lg px-2.5 py-1.5 font-mono text-[10.5px]">
-                            <div className="flex items-center gap-1.5 min-w-0">
-                              <Link2 className="w-3.5 h-3.5 text-[#2563EB] dark:text-indigo-400 shrink-0" />
-                              <span className="text-[#334155] dark:text-slate-300 truncate">
-                                {buildReferralLink(rep.originMainId || rep.id)}
-                              </span>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                copyReferralLink(rep.originMainId || rep.id, `wallet-modal-ref-${rep.id}`)
-                              }
-                              className="px-2 py-0.5 rounded bg-[#2563EB] hover:bg-blue-700 dark:bg-indigo-600 dark:hover:bg-indigo-500 text-white font-bold text-[10px] shrink-0 inline-flex items-center gap-1 cursor-pointer transition"
-                            >
-                              {copiedReferralKey === `wallet-modal-ref-${rep.id}` ? (
-                                <>
-                                  <Check className="w-3 h-3" />
-                                  <span>คัดลอกลิ้งแล้ว</span>
-                                </>
-                              ) : (
-                                <>
-                                  <Copy className="w-3 h-3" />
-                                  <span>คัดลอกลิ้งแนะนำ #{rep.originMainId || rep.id}</span>
-                                </>
                               )}
-                            </button>
-                          </div>
-
-                          {/* Action Buttons for this ID */}
-                          <div className="flex items-center gap-2 pt-1">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const targetNodeId = nodeInActiveRank ? nodeInActiveRank.id : Number(rep.id);
-                                const curMaxR = Number(rep.currentMaxRank || 1);
-                                setModalUpgradeTargetRank(Math.min(18, curMaxR + 1));
-                                setModalUpgradeMessage(null);
-                                setModalUpgradeError(null);
-                                setBenefitModalTab('all');
-                                if (!activeNodesMap.has(targetNodeId)) {
-                                  setSelectedRank(1);
-                                  loadOnChainTree(1);
-                                }
-                                setIsWalletIdsModalOpen(false);
-                                setExpandedBenefitNodeId(targetNodeId);
-                              }}
-                              className="flex-1 py-1.5 px-2.5 rounded-lg bg-[#2563EB] hover:bg-blue-700 dark:bg-gradient-to-r dark:from-indigo-600 dark:to-violet-600 dark:hover:from-indigo-500 dark:hover:to-violet-500 text-white font-bold text-[11px] transition cursor-pointer flex items-center justify-center gap-1 shadow-xs"
-                            >
-                              <Coins className="w-3.5 h-3.5 text-amber-300 shrink-0" />
-                              <span>
-                                {Number(rep.currentMaxRank || 1) >= 18
-                                  ? 'ดูผลประโยชน์ (Max R18)'
-                                  : 'ดูผลประโยชน์ / อัพ Rank'}
-                              </span>
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const targetNodeId = nodeInActiveRank ? nodeInActiveRank.id : Number(rep.id);
-                                if (!activeNodesMap.has(targetNodeId)) {
-                                  setSelectedRank(1);
-                                  loadOnChainTree(1);
-                                }
-                                navigateToNode(targetNodeId);
-                                setIsWalletIdsModalOpen(false);
-                              }}
-                              className="py-1.5 px-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-[#0F172A] border border-slate-200/80 dark:bg-slate-900 dark:hover:bg-slate-800 dark:text-amber-300 dark:border-slate-700 font-bold text-[11px] transition cursor-pointer"
-                            >
-                              🎯 ไปที่โหนด
-                            </button>
-                          </div>
+                            </>
+                          )}
                         </div>
                       );
                     })}
-                    </div>
-                    {walletReports.length > WALLET_PAGE_SIZE && (
-                      <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-800 text-xs font-mono">
-                        <button
-                          type="button"
-                          disabled={walletCurrentPage <= 1}
-                          onClick={() =>
-                            setModalSectionPages((prev) => ({
-                              ...prev,
-                              [`wallet_${activeWalletLower}`]: walletCurrentPage - 1,
-                            }))
-                          }
-                          className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed transition"
-                        >
-                          ◀ ก่อนหน้า
-                        </button>
-                        <span className="text-slate-400">
-                          หน้า <strong className="text-amber-300">{walletCurrentPage}</strong> / {walletTotalPages} (แสดง 10 รายการ/หน้า • รหัสล่าสุดขึ้นก่อน)
-                        </span>
-                        <button
-                          type="button"
-                          disabled={walletCurrentPage >= walletTotalPages}
-                          onClick={() =>
-                            setModalSectionPages((prev) => ({
-                              ...prev,
-                              [`wallet_${activeWalletLower}`]: walletCurrentPage + 1,
-                            }))
-                          }
-                          className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed transition"
-                        >
-                          ถัดไป ▶
-                        </button>
-                      </div>
-                    )}
-                  </>
+                  </div>
                 )}
               </div>
 
