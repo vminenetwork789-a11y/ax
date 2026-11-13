@@ -6952,9 +6952,15 @@ async function startApp() {
 
         if (!rep.isClone) {
           const cloneLvlSum = Number(
-            Math.max(0, rep.level30TotalUsdt - rep.levelSummary.thisNodeLevelTotalUsdt).toFixed(2)
+            rep.level30History
+              .filter((h) => (h.note || '').includes('ผ่านโคลน'))
+              .reduce((s, h) => s + (Number(h.amountUsdt) || 0), 0)
+              .toFixed(2)
           );
           rep.levelSummary.clonesLevelTotalUsdt = cloneLvlSum;
+          rep.levelSummary.thisNodeLevelTotalUsdt = Number(
+            Math.max(0, rep.level30TotalUsdt - cloneLvlSum).toFixed(2)
+          );
           rep.levelSummary.combinedLevelTotalUsdt = Number(rep.level30TotalUsdt.toFixed(2));
         } else {
           rep.levelSummary.clonesLevelTotalUsdt = 0;

@@ -84,13 +84,50 @@ export function useWeb3() {
     txHash: string | null;
     error: string | null;
     successMessage: string | null;
+    assignedNodeIds?: number[];
   }>({
     isLoading: false,
     step: '',
     txHash: null,
     error: null,
     successMessage: null,
+    assignedNodeIds: undefined,
   });
+
+  const extractCreatedRank1IdsFromReceipt = (receipt: any) => {
+    const mainIds = new Set<number>();
+    const cloneIds = new Set<number>();
+    try {
+      const iface = new ethers.Interface(MATRIX_ABI);
+      for (const log of receipt?.logs || []) {
+        try {
+          const parsed = iface.parseLog({ topics: [...log.topics], data: log.data });
+          if (!parsed) continue;
+          if (parsed.name === 'NodeCreated' && Number(parsed.args.rank) === 1) {
+            const nId = Number(parsed.args.nodeId);
+            if (nId > 0) {
+              if (parsed.args.isClone) {
+                cloneIds.add(nId);
+              } else if (!parsed.args.isExtraId) {
+                mainIds.add(nId);
+              }
+            }
+          } else if (parsed.name === 'UserRegistered') {
+            const mId = Number(parsed.args.mainNodeId);
+            if (mId > 0) mainIds.add(mId);
+          }
+        } catch {
+          // Ignore unrelated logs
+        }
+      }
+    } catch {
+      // Ignore parse errors
+    }
+    return {
+      mainIds: Array.from(mainIds).sort((a, b) => a - b),
+      cloneIds: Array.from(cloneIds).sort((a, b) => a - b),
+    };
+  };
 
   const isBscTestnet = chainId === BSC_TESTNET_CHAIN_ID;
 
@@ -882,7 +919,7 @@ export function useWeb3() {
         throw new Error(regData?.error || 'การสมัครสมาชิกไม่สำเร็จ');
       }
       const assignedIds: number[] = Array.isArray(regData.assignedNodeIds)
-        ? regData.assignedNodeIds
+        ? regData.assignedNodeIds.map(Number).filter((id: number) => id > 0)
         : [];
       const firstPlacement = Array.isArray(regData.placements) ? regData.placements[0] : null;
       const sideText = firstPlacement
@@ -893,22 +930,28 @@ export function useWeb3() {
         ? 'RIGHT ลูกขวา'
         : 'LEFT ลูกซ้าย';
       const parentText = firstPlacement?.parentId || autoOptions?.targetParentId || sponsorNodeId;
+      const idsLabel = assignedIds.map((id) => `#${id}`).join(', ');
 
       setTxState({
         isLoading: false,
-        step: 'สำเร็จ!',
+        step: idsLabel ? `สมัครสำเร็จ! ได้รับเลขไอดี ${idsLabel}` : 'สำเร็จ!',
         txHash: regData.txHash || null,
         error: null,
+        assignedNodeIds: assignedIds,
         successMessage:
           regData.message ||
-          `🎉 สมัครสมาชิกสำเร็จ! ได้รับรหัส ${assignedIds.map((id) => `#${id}`).join(', ')} วางที่ Parent #${parentText} (${sideText}) ภายใต้ผู้แนะนำ #${sponsorNodeId}`,
+          `🎉 สมัครสมาชิกสำเร็จ! ได้รับเลขไอดี ${idsLabel} วางที่ Parent #${parentText} (${sideText}) ภายใต้ผู้แนะนำ #${sponsorNodeId}`,
       });
 
       await refreshUserData(regData.owner || targetOwnerAddr);
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('matrix:tree:refresh'));
       }
-      return regData;
+      return {
+        ...regData,
+        hash: regData.txHash || null,
+        assignedNodeIds: assignedIds,
+      };
     };
 
     let activeTicket: any = null;
@@ -1107,44 +1150,85 @@ export function useWeb3() {
       }));
 
       const receipt = await regTx.wait();
+      const { mainIds: parsedMainIds, cloneIds: parsedCloneIds } =
+        extractCreatedRank1IdsFromReceipt(receipt);
 
       // Confirm ticket reservation in Queue
       if (activeTicket?.ticketId) {
         await confirmQueueTicket(activeTicket.ticketId, receipt.hash);
       }
+
+      await fetch('/api/db/sync', { method: 'POST' }).catch(() => {});
+
+      let assignedIds = parsedMainIds;
+      if (assignedIds.length === 0) {
+        try {
+          const profRes = await fetch(
+            `/api/matrix/profile/${userAddr}?contract=${currentContract}`,
+            { headers: { Accept: 'application/json' } }
+          );
+          if (profRes.ok) {
+            const profJson = await profRes.json();
+            const ownedMainIds: number[] = Array.isArray(profJson?.profile?.ownedMainIdsRank1)
+              ? profJson.profile.ownedMainIdsRank1.map(Number).filter((id: number) => id > 0)
+              : [];
+            if (ownedMainIds.length > 0) {
+              assignedIds = ownedMainIds.slice(-countToReg);
+            }
+          }
+        } catch {
+          // Ignore lookup fallback error
+        }
+      }
+
+      const idsLabel = assignedIds.map((id) => `#${id}`).join(', ');
+      const clonesLabel =
+        parsedCloneIds.length > 0
+          ? ` (+โคลน ${parsedCloneIds.map((id) => `#${id}`).join(', ')})`
+          : '';
+
       reportTxToServer({
         txHash: receipt?.hash || regTx.hash,
         actionType: countToReg > 1 ? 'BATCH_REGISTER' : 'REGISTER',
         title:
           countToReg > 1
-            ? `สมัครแบบกลุ่ม (${countToReg} โหนด)`
-            : `สมัครสมาชิกใหม่ (Rank 1)`,
+            ? `สมัครแบบกลุ่ม (${countToReg} โหนด)${idsLabel ? ` • ID ${idsLabel}` : ''}`
+            : `สมัครสมาชิกใหม่${idsLabel ? ` (${idsLabel})` : ' (Rank 1)'}`,
         userAddress: userAddr,
+        mainNodeId: assignedIds[0] || undefined,
         rank: 1,
         amountUsdt: countToReg * r1UnitPrice,
         blockNumber: receipt?.blockNumber,
-        details: `Sponsor #${sponsorNodeId}`,
+        details: `Sponsor #${sponsorNodeId}${idsLabel ? ` | ID ${idsLabel}` : ''}`,
       });
 
       setTxState({
         isLoading: false,
-        step: 'สำเร็จ!',
+        step: idsLabel ? `สมัครสำเร็จ! ได้รับเลขไอดี ${idsLabel}` : 'สมัครสมาชิกสำเร็จ!',
         txHash: receipt.hash,
         error: null,
+        assignedNodeIds: assignedIds,
         successMessage:
           autoParentId > 0
-            ? `🎉 สมัครสมาชิกสำเร็จ! ลงตำแหน่งออโต้ที่ Parent #${autoParentId} (${sideLabel}) ภายใต้ผู้แนะนำ #${sponsorNodeId} (จองผ่าน FIFO Queue)`
-            : `🎉 สมัครสมาชิก Fractal Flow (Rank 1 - ${countToReg * r1UnitPrice} USDT) สำเร็จเรียบร้อย! (Sponsor Node ID: #${sponsorNodeId})`,
+            ? `🎉 สมัครสมาชิกสำเร็จ!${idsLabel ? ` ได้รับเลขไอดี ${idsLabel}` : ''}${clonesLabel} • ลงตำแหน่งที่ Parent #${autoParentId} (${sideLabel}) ภายใต้ผู้แนะนำ #${sponsorNodeId}`
+            : `🎉 สมัครสมาชิกสำเร็จ!${idsLabel ? ` ได้รับเลขไอดี ${idsLabel}` : ''}${clonesLabel} (Rank 1 - ${countToReg * r1UnitPrice} USDT | Sponsor #${sponsorNodeId})`,
       });
 
-      await fetch('/api/db/sync', { method: 'POST' }).catch(() => {});
       await refreshUserData(userAddr);
 
       // อัปเดตผังต้นไม้ไบนารี่ทันทีเมื่อสมัครสำเร็จ
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('matrix:tree:refresh'));
       }
-      return receipt;
+      return {
+        success: true,
+        hash: receipt.hash,
+        txHash: receipt.hash,
+        blockNumber: receipt.blockNumber,
+        assignedNodeIds: assignedIds,
+        cloneNodeIds: parsedCloneIds,
+        receipt,
+      };
     } catch (err: any) {
       console.warn('Register transaction notice:', err);
       if (activeTicket?.ticketId) {
@@ -1271,24 +1355,29 @@ export function useWeb3() {
       }));
 
       const receipt = await batchTx.wait();
+      const { mainIds: batchMainIds, cloneIds: batchCloneIds } =
+        extractCreatedRank1IdsFromReceipt(receipt);
+      const batchIdsLabel = batchMainIds.map((id) => `#${id}`).join(', ');
 
       reportTxToServer({
         txHash: receipt?.hash || batchTx.hash,
         actionType: 'BATCH_REGISTER',
-        title: `สมัครแบบกลุ่ม (Batch ${count} โหนด)`,
+        title: `สมัครแบบกลุ่ม (Batch ${count} โหนด)${batchIdsLabel ? ` • ID ${batchIdsLabel}` : ''}`,
         userAddress: userAddr,
+        mainNodeId: batchMainIds[0] || undefined,
         rank: 1,
         amountUsdt: count * r1UnitPrice,
         blockNumber: receipt?.blockNumber,
-        details: `Sponsor #${sponsorNodeId}`,
+        details: `Sponsor #${sponsorNodeId}${batchIdsLabel ? ` | ID ${batchIdsLabel}` : ''}`,
       });
 
       setTxState({
         isLoading: false,
-        step: 'สำเร็จ!',
+        step: batchIdsLabel ? `สมัครสำเร็จ! ได้รับเลขไอดี ${batchIdsLabel}` : 'สำเร็จ!',
         txHash: receipt.hash,
         error: null,
-        successMessage: `🎉 สมัครแบบกลุ่ม (Batch Registration ${count} โหนด = ${count * r1UnitPrice} USDT) สำเร็จเรียบร้อย!`,
+        assignedNodeIds: batchMainIds,
+        successMessage: `🎉 สมัครแบบกลุ่ม (${count} โหนด = ${count * r1UnitPrice} USDT) สำเร็จ!${batchIdsLabel ? ` ได้รับเลขไอดี ${batchIdsLabel}` : ''}`,
       });
 
       await fetch('/api/db/sync', { method: 'POST' }).catch(() => {});
@@ -1298,7 +1387,14 @@ export function useWeb3() {
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('matrix:tree:refresh'));
       }
-      return receipt;
+      return {
+        success: true,
+        hash: receipt.hash,
+        txHash: receipt.hash,
+        assignedNodeIds: batchMainIds,
+        cloneNodeIds: batchCloneIds,
+        receipt,
+      };
     } catch (err: any) {
       const msgStr = String(err?.message || '');
       if (msgStr.includes('ONCHAIN_PRICE_MISMATCH')) {
@@ -1319,20 +1415,25 @@ export function useWeb3() {
             const regData = await regRes.json();
             if (regRes.ok && regData?.success) {
               const r1UnitPrice = RANK_PRICES_USDT[0] || 5;
+              const fallbackIds: number[] = Array.isArray(regData.assignedNodeIds)
+                ? regData.assignedNodeIds.map(Number).filter((id: number) => id > 0)
+                : [];
+              const fallbackIdsLabel = fallbackIds.map((id) => `#${id}`).join(', ');
               setTxState({
                 isLoading: false,
-                step: 'สำเร็จ!',
+                step: fallbackIdsLabel ? `สมัครสำเร็จ! ได้รับเลขไอดี ${fallbackIdsLabel}` : 'สำเร็จ!',
                 txHash: regData.txHash || null,
                 error: null,
+                assignedNodeIds: fallbackIds,
                 successMessage:
                   regData.message ||
-                  `🎉 สมัครแบบกลุ่ม (${count} โหนด = ${count * r1UnitPrice} USDT) สำเร็จเรียบร้อย!`,
+                  `🎉 สมัครแบบกลุ่ม (${count} โหนด = ${count * r1UnitPrice} USDT) สำเร็จ!${fallbackIdsLabel ? ` ได้รับเลขไอดี ${fallbackIdsLabel}` : ''}`,
               });
               await refreshUserData(regData.owner || targetOwner);
               if (typeof window !== 'undefined') {
                 window.dispatchEvent(new CustomEvent('matrix:tree:refresh'));
               }
-              return regData;
+              return { ...regData, assignedNodeIds: fallbackIds };
             }
           }
         } catch (dbErr) {
@@ -1924,14 +2025,19 @@ export function useWeb3() {
         if (activeBatchTicket?.ticketId) {
           await confirmQueueTicket(activeBatchTicket.ticketId, result.txHash);
         }
+        await fetch('/api/db/sync', { method: 'POST' }).catch(() => {});
+        const assignedIds: number[] = Array.isArray(result.assignedNodeIds)
+          ? result.assignedNodeIds.map(Number).filter((id: number) => id > 0)
+          : [];
+        const idsLabel = assignedIds.map((id) => `#${id}`).join(', ');
         setTxState({
           isLoading: false,
-          step: 'สำเร็จ!',
+          step: idsLabel ? `สมัครสำเร็จ! ได้รับเลขไอดี ${idsLabel}` : 'สำเร็จ!',
           txHash: result.txHash || null,
           error: null,
-          successMessage: `🎉 สมัครแบบกลุ่ม (${applicantsQueue.length} โหนด) ลงตำแหน่งออโต้สำเร็จ! Tx: ${result.txHash} (ผ่านระบบ FIFO Queue)`,
+          assignedNodeIds: assignedIds,
+          successMessage: `🎉 สมัครแบบกลุ่ม (${applicantsQueue.length} โหนด) สำเร็จ!${idsLabel ? ` ได้รับเลขไอดี ${idsLabel}` : ''}`,
         });
-        await fetch('/api/db/sync', { method: 'POST' }).catch(() => {});
         await refreshUserData(userAddr);
 
         // อัปเดตผังต้นไม้ไบนารี่ทันทีเมื่อสมัครแบบกลุ่มสำเร็จ

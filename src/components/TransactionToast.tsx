@@ -18,6 +18,7 @@ export interface TxState {
   txHash: string | null;
   error: string | null;
   successMessage?: string | null;
+  assignedNodeIds?: number[];
 }
 
 export type Language = 'th' | 'en';
@@ -30,6 +31,7 @@ export interface CustomTransactionToastEvent {
   txHash?: string | null;
   timestamp?: string;
   durationMs?: number;
+  assignedNodeIds?: number[];
 }
 
 const TX_TOAST_EVENT_NAME = 'matrix:tx:toast';
@@ -60,6 +62,7 @@ interface ActiveToastItem {
   timestamp: string;
   durationMs: number;
   source: 'web3' | 'custom';
+  assignedNodeIds?: number[];
 }
 
 interface TransactionToastProps {
@@ -140,8 +143,17 @@ export const TransactionToast: React.FC<TransactionToastProps> = ({
         message: detail.message,
         txHash: detail.txHash || null,
         timestamp: detail.timestamp || new Date().toISOString(),
-        durationMs: detail.durationMs ?? (detail.status === 'confirmed' ? 8000 : detail.status === 'error' ? 9000 : 0),
+        durationMs:
+          detail.durationMs ??
+          (detail.status === 'confirmed'
+            ? detail.assignedNodeIds && detail.assignedNodeIds.length > 0
+              ? 12000
+              : 8000
+            : detail.status === 'error'
+            ? 9000
+            : 0),
         source: 'custom',
+        assignedNodeIds: detail.assignedNodeIds,
       };
 
       setCustomToasts((prev) => {
@@ -172,18 +184,19 @@ export const TransactionToast: React.FC<TransactionToastProps> = ({
     ? `${txState.isLoading}-${txState.step}-${txState.txHash || ''}-${txState.error || ''}-${txState.successMessage || ''}`
     : null;
 
-  // Auto-dismiss confirmed web3 toast after 8 seconds unless hovered
+  // Auto-dismiss confirmed web3 toast after 8.5–12 seconds unless hovered
   useEffect(() => {
     if (!txState || txState.isLoading || (!txState.successMessage && !txState.error)) return;
     if (hoveredId === 'web3-active-toast') return;
 
+    const hasAssignedIds = Array.isArray(txState.assignedNodeIds) && txState.assignedNodeIds.length > 0;
     const timeout = window.setTimeout(() => {
       if (onClear) {
         onClear();
       } else if (currentWeb3Key) {
         setDismissedWeb3Key(currentWeb3Key);
       }
-    }, 8500);
+    }, hasAssignedIds ? 12000 : 8500);
 
     return () => clearTimeout(timeout);
   }, [txState, hoveredId, onClear, currentWeb3Key]);
@@ -220,14 +233,34 @@ export const TransactionToast: React.FC<TransactionToastProps> = ({
       message: txState.error || txState.successMessage || txState.step || '',
       txHash: txState.txHash,
       timestamp: web3ConfirmedAt,
-      durationMs: status === 'pending' ? 0 : 8500,
+      durationMs:
+        status === 'pending'
+          ? 0
+          : txState.assignedNodeIds && txState.assignedNodeIds.length > 0
+          ? 12000
+          : 8500,
       source: 'web3',
+      assignedNodeIds: txState.assignedNodeIds,
     });
   }
 
   for (const ct of customToasts) {
-    // Avoid duplicate if same txHash is already shown in web3-active-toast
+    // Avoid duplicate if same txHash or confirmed registration IDs are already shown in web3-active-toast
     if (ct.txHash && activeToasts.some((a) => a.txHash === ct.txHash && a.status === ct.status)) {
+      continue;
+    }
+    if (
+      ct.status === 'confirmed' &&
+      ct.assignedNodeIds &&
+      ct.assignedNodeIds.length > 0 &&
+      activeToasts.some(
+        (a) =>
+          a.source === 'web3' &&
+          a.status === 'confirmed' &&
+          a.assignedNodeIds &&
+          a.assignedNodeIds.some((id) => ct.assignedNodeIds!.includes(id))
+      )
+    ) {
       continue;
     }
     activeToasts.push(ct);
@@ -379,6 +412,27 @@ export const TransactionToast: React.FC<TransactionToastProps> = ({
                         {toast.message}
                       </p>
                     )}
+
+                    {/* Prominent Assigned Registration ID(s) Highlight */}
+                    {isConfirmed &&
+                      toast.assignedNodeIds &&
+                      toast.assignedNodeIds.length > 0 && (
+                        <div className="mt-2.5 flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-emerald-500/15 border border-emerald-400/45">
+                          <span className="text-[11px] font-bold text-emerald-200">
+                            {isTh ? 'เลขไอดีที่ได้รับ:' : 'Assigned ID:'}
+                          </span>
+                          <div className="flex items-center flex-wrap gap-1.5">
+                            {toast.assignedNodeIds.map((nid) => (
+                              <span
+                                key={nid}
+                                className="px-2.5 py-0.5 rounded-lg bg-emerald-400 text-slate-950 font-mono text-sm font-black shadow-sm"
+                              >
+                                #{nid}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
 
                     {/* Transaction Hash Interactive Pill */}
                     {toast.txHash && (

@@ -833,7 +833,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           : `Sponsor #${regSponsorId} (${regNodeCount} ID)`,
     });
     try {
-      await onRegisterWithSponsor(regSponsorId, {
+      const regRes = await onRegisterWithSponsor(regSponsorId, {
         targetParentId: regTargetParentId,
         isLeft: regIsLeft,
         count: regNodeCount,
@@ -842,18 +842,36 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('matrix:tree:refresh'));
       }
-      const okMsg =
-        language === 'th' ? 'สมัครสมาชิกสำเร็จเรียบร้อยแล้ว!' : 'Registration confirmed!';
+      const assignedIds: number[] = Array.isArray(regRes?.assignedNodeIds)
+        ? regRes.assignedNodeIds.map(Number).filter((id: number) => id > 0)
+        : [];
+      const idsLabel = assignedIds.map((id) => `#${id}`).join(', ');
+      const okMsg = idsLabel
+        ? language === 'th'
+          ? `🎉 สมัครสมาชิกสำเร็จ! ได้รับเลขไอดี ${idsLabel}`
+          : `🎉 Registration confirmed! Assigned ID: ${idsLabel}`
+        : language === 'th'
+        ? 'สมัครสมาชิกสำเร็จเรียบร้อยแล้ว!'
+        : 'Registration confirmed!';
       setRegTxMessage(okMsg);
       emitTransactionToast({
         id: toastId,
         status: 'confirmed',
-        step: language === 'th' ? 'ยืนยันการสมัครสมาชิกสำเร็จ!' : 'Registration Confirmed!',
+        step: idsLabel
+          ? language === 'th'
+            ? `สมัครสำเร็จ! ได้รับเลขไอดี ${idsLabel}`
+            : `Confirmed! Assigned ID: ${idsLabel}`
+          : language === 'th'
+          ? 'ยืนยันการสมัครสมาชิกสำเร็จ!'
+          : 'Registration Confirmed!',
         message: okMsg,
+        txHash: regRes?.txHash || regRes?.hash || null,
+        assignedNodeIds: assignedIds,
+        durationMs: 12000,
       });
       setTimeout(() => {
         setIsRegisterModalOpen(false);
-      }, 1200);
+      }, 650);
     } catch (err: any) {
       const errMsg = err?.message || 'Registration failed';
       setRegTxError(errMsg);
@@ -4172,11 +4190,13 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           for (const pId of currentFrontier) {
             const pObj = rawNodes.get(pId);
             if (!pObj) continue;
+            const pOrigin = !pObj.isClone ? pObj : rawNodes.get(originMainIdMap.get(pObj.id) || pObj.id) || pObj;
+            const isExtraP = Boolean(pObj.isExtraId || pOrigin.isExtraId);
             if (pObj.leftChild > 0 && rawNodes.has(pObj.leftChild) && !visitedSub.has(pObj.leftChild)) {
               visitedSub.add(pObj.leftChild);
               nextFrontier.push(pObj.leftChild);
               const lcObj = rawNodes.get(pObj.leftChild);
-              if (!lcObj?.isAdminFreeUpgrade) {
+              if (!lcObj?.isAdminFreeUpgrade && !isExtraP) {
                 leftNodeIds.push(pObj.leftChild);
               }
             }
@@ -4206,9 +4226,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
 
         const receivedLevelsCount = tiersBreakdown.filter((t) => t.leftPayingNodesCount > 0).length;
         const remainingLevelsCount = Math.max(0, 15 - receivedLevelsCount);
-        const clonesLvlTotal = !node.isClone
-          ? Number(Math.max(0, node.unilevelRewardAllNodes - thisNodeLvlTotal).toFixed(2))
-          : 0;
+        const clonesLvlTotal = 0;
         node.levelSummary = {
           maxLevels: 15,
           receivedLevelsCount,
@@ -4216,9 +4234,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           ratePerNodeUsdt: ratePerNode,
           thisNodeLevelTotalUsdt: thisNodeLvlTotal,
           clonesLevelTotalUsdt: clonesLvlTotal,
-          combinedLevelTotalUsdt: !node.isClone
-            ? Number(node.unilevelRewardAllNodes.toFixed(2))
-            : thisNodeLvlTotal,
+          combinedLevelTotalUsdt: Number((thisNodeLvlTotal + clonesLvlTotal).toFixed(2)),
           tiersBreakdown,
         };
       }
