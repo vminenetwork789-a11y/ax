@@ -1600,7 +1600,7 @@ export function useWeb3() {
 
     setTxState({
       isLoading: true,
-      step: `กำลังตรวจสอบข้อมูลสำหรับอัปเกรดแรงค์ ${targetRank}${mIdNum > 0 ? ` (รหัสหลัก #${mIdNum})` : ''}...`,
+      step: `กำลังตรวจสอบข้อมูลบนบล็อกเชนสำหรับอัปเกรดแรงค์ ${targetRank}${mIdNum > 0 ? ` (รหัสหลัก #${mIdNum})` : ''}...`,
       txHash: null,
       error: null,
       successMessage: null,
@@ -1618,336 +1618,239 @@ export function useWeb3() {
           if (typeof info.upgradeRankPool === 'number') {
             dbUpgradeRankPool = info.upgradeRankPool;
           }
-          if (typeof info.currentRank === 'number' && targetRank <= info.currentRank) {
-            const errMsg = `รหัสหลัก #${mIdNum} อยู่ใน Rank ${info.currentRank} เรียบร้อยแล้ว (ไม่สามารถกดย้อนหลังสู่ Rank ${targetRank} ได้)`;
-            setTxState({
-              isLoading: false,
-              step: '',
-              txHash: null,
-              error: errMsg,
-              successMessage: null,
-            });
-            return { success: false, error: errMsg };
-          }
         }
       } catch {
-        // ignore info fetch error
+        // ignore info fetch error; will verify directly on-chain below
       }
     }
 
     try {
-      let signer: ethers.Signer | null = null;
-      let userAddr = account || '';
+      // Strictly require real Web3 wallet & BSC Testnet — NEVER silently fake-upgrade in DB without USDT payment
+      const { signer, userAddr } = await ensureWalletAndBscTestnet();
+      const currentContract = contractAddressRef.current || CONTRACT_ADDRESS;
+      const currentUsdt = usdtAddressRef.current || USDT_ADDRESS;
 
-      if (window.ethereum) {
+      const matrixContract = new ethers.Contract(currentContract, MATRIX_ABI, signer);
+      const usdtContract = new ethers.Contract(currentUsdt, USDT_ABI, signer);
+
+      let usdtDecimals = 18;
+      try {
+        usdtDecimals = Number(await usdtContract.decimals());
+      } catch {
+        usdtDecimals = 18;
+      }
+
+      // 0. Verify exact on-chain owner of Main ID #mIdNum
+      let onChainOwner = mainIdOwner;
+      if (mIdNum > 0 && typeof matrixContract.rankNodes === 'function') {
         try {
-          const res = await ensureWalletAndBscTestnet();
-          signer = res.signer;
-          userAddr = res.userAddr;
-        } catch (walletErr: any) {
-          console.warn('Browser wallet connect notice during upgrade:', walletErr);
+          const r1Node = await matrixContract.rankNodes(1, BigInt(mIdNum));
+          const nodeOwnerAddr = String(r1Node?.owner ?? r1Node?.[1] ?? '');
+          if (nodeOwnerAddr && nodeOwnerAddr !== ethers.ZeroAddress) {
+            onChainOwner = nodeOwnerAddr;
+          }
+        } catch {
+          // fallback to API mainIdOwner
         }
       }
 
-      const isWalletOwnerOfMainId =
-        !mainIdOwner ||
-        mainIdOwner === ethers.ZeroAddress ||
-        (userAddr && userAddr.toLowerCase() === mainIdOwner.toLowerCase());
+      if (
+        onChainOwner &&
+        onChainOwner !== ethers.ZeroAddress &&
+        userAddr.toLowerCase() !== onChainOwner.toLowerCase()
+      ) {
+        throw new Error(
+          `กระเป๋าที่เชื่อมต่ออยู่ (${userAddr.slice(0, 6)}...${userAddr.slice(-4)}) ไม่ใช่เจ้าของรหัสหลัก #${mIdNum} (เจ้าของคือ ${onChainOwner.slice(0, 6)}...${onChainOwner.slice(-4)}) กรุณาสลับกระเป๋าใน MetaMask / Bitget Wallet ก่อนกดอัพเกรด`
+        );
+      }
 
-      if (signer && userAddr && isWalletOwnerOfMainId) {
+      // 1. Fetch exact on-chain current rank directly from contract
+      let onChainCurrentRank = 1;
+      try {
+        if (mIdNum > 0 && typeof matrixContract.getMainIdCurrentRank === 'function') {
+          onChainCurrentRank = Number(await matrixContract.getMainIdCurrentRank(BigInt(mIdNum)));
+        } else if (typeof matrixContract.users === 'function') {
+          const uAcc = await matrixContract.users(userAddr);
+          onChainCurrentRank = Number(uAcc.currentMaxRank || 1);
+        }
+      } catch {
+        onChainCurrentRank = 1;
+      }
+
+      if (targetRank <= onChainCurrentRank) {
+        throw new Error(
+          `รหัสหลัก #${mIdNum} อยู่ใน Rank ${onChainCurrentRank} บนบล็อกเชนเรียบร้อยแล้ว (ไม่สามารถอัปเกรดย้อนหลังได้)`
+        );
+      }
+
+      if (targetRank !== onChainCurrentRank + 1) {
+        throw new Error(
+          `เงื่อนไข Smart Contract กำหนดให้อัปเกรดทีละ 1 ขั้นตามลำดับ (ปัจจุบันอยู่ Rank ${onChainCurrentRank} ต้องอัปเกรดสู่ Rank ${onChainCurrentRank + 1} ก่อน)`
+        );
+      }
+
+      // 2. Read exact on-chain target rank price & live on-chain Upgrade Vault (getMainIdThreePools)
+      let targetPrice: bigint = ethers.parseUnits(nominalPrice.toString(), usdtDecimals);
+      try {
+        const onChainRankPriceRaw: bigint = await matrixContract.rankPrice(targetRank);
+        if (onChainRankPriceRaw > 0n) {
+          targetPrice = onChainRankPriceRaw;
+        }
+      } catch {
+        // use nominalPrice
+      }
+
+      let savedInVault: bigint = ethers.parseUnits(
+        Math.max(0, dbUpgradeRankPool).toFixed(2),
+        usdtDecimals
+      );
+      if (mIdNum > 0 && typeof matrixContract.getMainIdThreePools === 'function') {
         try {
-          // Option A: On-Chain Transaction via MetaMask / Web3 Wallet
-          const currentContract = contractAddressRef.current || CONTRACT_ADDRESS;
-          const currentUsdt = usdtAddressRef.current || USDT_ADDRESS;
-
-          const matrixContract = new ethers.Contract(currentContract, MATRIX_ABI, signer);
-          const usdtContract = new ethers.Contract(currentUsdt, USDT_ABI, signer);
-
-          let usdtDecimals = 18;
-          try {
-            usdtDecimals = Number(await usdtContract.decimals());
-          } catch {
-            usdtDecimals = 18;
-          }
-
-          // 1. Fetch exact on-chain current rank directly from contract to avoid ErrStepByStep / ErrRankActive
-          let onChainCurrentRank = 1;
-          try {
-            if (mIdNum > 0 && typeof matrixContract.getMainIdCurrentRank === 'function') {
-              onChainCurrentRank = Number(await matrixContract.getMainIdCurrentRank(BigInt(mIdNum)));
-            } else if (typeof matrixContract.users === 'function') {
-              const uAcc = await matrixContract.users(userAddr);
-              onChainCurrentRank = Number(uAcc.currentMaxRank || 1);
-            }
-          } catch {
-            onChainCurrentRank = 1;
-          }
-
-          if (targetRank <= onChainCurrentRank) {
-            const errMsg = `รหัสหลัก #${mIdNum} อยู่ใน Rank ${onChainCurrentRank} บนบล็อกเชนเรียบร้อยแล้ว (ไม่สามารถอัปเกรดย้อนหลังได้)`;
-            setTxState({
-              isLoading: false,
-              step: '',
-              txHash: null,
-              error: errMsg,
-              successMessage: null,
-            });
-            return { success: false, error: errMsg };
-          }
-
-          if (targetRank !== onChainCurrentRank + 1) {
-            const errMsg = `เงื่อนไข Smart Contract กำหนดให้อัปเกรดทีละ 1 ขั้นตามลำดับ (ปัจจุบันอยู่ Rank ${onChainCurrentRank} ต้องอัปเกรดสู่ Rank ${onChainCurrentRank + 1} ก่อน)`;
-            setTxState({
-              isLoading: false,
-              step: '',
-              txHash: null,
-              error: errMsg,
-              successMessage: null,
-            });
-            return { success: false, error: errMsg };
-          }
-
-          // 2. Verify deployed contract rankPrice(targetRank) matches nominalPrice before sending on-chain tx
-          try {
-            const onChainRankPriceRaw: bigint = await matrixContract.rankPrice(targetRank);
-            const onChainRankPriceUsdt = Number(ethers.formatUnits(onChainRankPriceRaw, usdtDecimals));
-            if (Math.abs(onChainRankPriceUsdt - nominalPrice) > 0.01) {
-              throw new Error(
-                `ONCHAIN_PRICE_MISMATCH: สัญญาบนเชนตั้งราคา Rank ${targetRank} ไว้ที่ ${onChainRankPriceUsdt} USDT ไม่ตรงกับตารางราคาใหม่ (${nominalPrice} USDT) — ระบบดำเนินการผ่าน Upgrade Engine ในราคา ${nominalPrice} USDT`
-              );
-            }
-          } catch (priceErr: any) {
-            if (String(priceErr?.message || '').includes('ONCHAIN_PRICE_MISMATCH')) {
-              throw priceErr;
-            }
-          }
-
-          const targetPrice: bigint = ethers.parseUnits(nominalPrice.toString(), usdtDecimals);
-          const savedInVault: bigint = ethers.parseUnits(
-            Math.max(0, dbUpgradeRankPool).toFixed(2),
-            usdtDecimals
+          const poolsRes = await matrixContract.getMainIdThreePools(
+            onChainOwner || userAddr,
+            BigInt(mIdNum)
           );
-
-          const amountToPay = targetPrice > savedInVault ? targetPrice - savedInVault : BigInt(0);
-          const formattedDiffUsdt = Number(ethers.formatUnits(amountToPay, usdtDecimals)).toFixed(2);
-          const vaultDeductedBn = savedInVault > targetPrice ? targetPrice : savedInVault;
-          const formattedVaultDeducted = Number(ethers.formatUnits(vaultDeductedBn, usdtDecimals)).toFixed(2);
-
-          // Verify user has sufficient USDT in wallet for the difference
-          if (amountToPay > BigInt(0)) {
-            const currentUsdtBal: bigint = await usdtContract.balanceOf(userAddr).catch(() => BigInt(0));
-            if (currentUsdtBal < amountToPay) {
-              const formattedHave = Number(ethers.formatUnits(currentUsdtBal, usdtDecimals)).toFixed(2);
-              throw new Error(
-                `เหรียญ USDT ในกระเป๋าไม่เพียงพอสำหรับชำระส่วนต่าง: ต้องใช้ ${formattedDiffUsdt} USDT (หักจากกระปุกแล้ว ${formattedVaultDeducted} USDT) แต่ในกระเป๋ามีเพียง ${formattedHave} USDT`
-              );
-            }
-
-            setTxState((prev) => ({
-              ...prev,
-              step: `ตรวจสอบสิทธิ์อนุมัติเหรียญ USDT สำหรับเงินส่วนต่าง ${formattedDiffUsdt} USDT (หักลบ Vault ${formattedVaultDeducted} USDT)...`,
-            }));
-
-            const currentAllowance = await usdtContract.allowance(userAddr, currentContract);
-            if (currentAllowance < amountToPay) {
-              setTxState((prev) => ({
-                ...prev,
-                step: `ขั้นตอนที่ 1/2: กรุณากดยืนยันอนุมัติวงเงินส่วนต่าง ${formattedDiffUsdt} USDT ใน MetaMask...`,
-              }));
-              const approveTx = await usdtContract.approve(currentContract, ethers.MaxUint256, {
-                gasLimit: 120000n,
-              });
-              setTxState((prev) => ({
-                ...prev,
-                step: `ส่งคำสั่งอนุมัติวงเงินส่วนต่าง (${formattedDiffUsdt} USDT) แล้ว กำลังรอการยืนยันบน BNB Testnet...`,
-                txHash: approveTx.hash,
-              }));
-              const approveTimeoutMsg = 'หมดเวลาการตรวจสอบการอนุมัติเหรียญ USDT (เกิน 2.5 นาที) ไม่สำเร็จทันที กรุณาลองใหม่อีกครั้ง';
-              await waitTxWithTimeout(approveTx, RANK_UPGRADE_TIMEOUT_MS, approveTimeoutMsg);
-            }
+          const onChainVaultRaw = poolsRes?.upgradeRankPool ?? poolsRes?.[3];
+          if (onChainVaultRaw !== undefined && onChainVaultRaw !== null) {
+            savedInVault = BigInt(onChainVaultRaw);
           }
-
-          let upgradeTx: any = null;
-          const gasSettings = { gasLimit: 1200000n }; // Headroom for clone cascading and extra ID checks
-
-          if (mIdNum > 0 && typeof matrixContract.upgradeRankForMainId === 'function') {
-            await matrixContract.upgradeRankForMainId.staticCall(BigInt(mIdNum), Number(targetRank));
-            setTxState((prev) => ({
-              ...prev,
-              step: `กำลังส่งคำสั่งอัปเกรดแรงค์ ${targetRank} สำหรับรหัสหลัก #${mIdNum}... กรุณายืนยันใน MetaMask`,
-            }));
-            try {
-              const estimatedGas = await matrixContract.upgradeRankForMainId.estimateGas(BigInt(mIdNum), Number(targetRank));
-              upgradeTx = await matrixContract.upgradeRankForMainId(BigInt(mIdNum), Number(targetRank), {
-                gasLimit: (estimatedGas * 13n) / 10n + 50000n,
-              });
-            } catch {
-              upgradeTx = await matrixContract.upgradeRankForMainId(BigInt(mIdNum), Number(targetRank), gasSettings);
-            }
-          } else {
-            await matrixContract.upgradeRank.staticCall(Number(targetRank));
-            setTxState((prev) => ({
-              ...prev,
-              step: `กำลังส่งคำสั่งอัปเกรดแรงค์ ${targetRank}... กรุณายืนยันใน MetaMask`,
-            }));
-            try {
-              const estimatedGas = await matrixContract.upgradeRank.estimateGas(Number(targetRank));
-              upgradeTx = await matrixContract.upgradeRank(Number(targetRank), {
-                gasLimit: (estimatedGas * 13n) / 10n + 50000n,
-              });
-            } catch {
-              upgradeTx = await matrixContract.upgradeRank(Number(targetRank), gasSettings);
-            }
-          }
-
-          setTxState((prev) => ({
-            ...prev,
-            step: 'ส่งคำสั่งแล้ว กำลังรอการตรวจสอบบนบล็อกเชน (จำกัดเวลา 2.5 นาที)...',
-            txHash: upgradeTx.hash,
-          }));
-
-          const upgradeTimeoutMsg = `หมดเวลาการตรวจสอบธุรกรรมอัปเกรดแรงค์ ${targetRank} (เกิน 2.5 นาที) การอัปเกรดไม่สำเร็จทันที`;
-          const receipt = await waitTxWithTimeout(upgradeTx, RANK_UPGRADE_TIMEOUT_MS, upgradeTimeoutMsg);
-
-          reportTxToServer({
-            txHash: receipt?.hash || upgradeTx.hash,
-            actionType: 'UPGRADE',
-            title: `อัปเกรด${mIdNum > 0 ? `รหัสหลัก #${mIdNum} ` : ''}→ Rank ${targetRank}`,
-            userAddress: mainIdOwner || userAddr,
-            mainNodeId: mIdNum > 0 ? mIdNum : undefined,
-            rank: targetRank,
-            amountUsdt: nominalPrice,
-            blockNumber: receipt?.blockNumber,
-          });
-
-          setTxState((prev) => ({
-            ...prev,
-            step: `ยืนยันการอัปเกรด Rank ${targetRank} สำเร็จ! กำลังอัปเดตข้อมูลและรีเฟรชหน้าเว็บ...`,
-            txHash: receipt.hash,
-          }));
-
-          // Sync targetRank + source vault ranks FIRST so all APIs have fresh data before UI & reload
-          await Promise.race([
-            fetch(`/api/db/sync?rank=${targetRank}&fast=1`, { method: 'POST' }).catch(() => {}),
-            new Promise((resolve) => setTimeout(resolve, 4000)),
-          ]);
-
-          const upgradeStepLabel = `อัปเกรด Rank ${targetRank} สำเร็จ!`;
-          const upgradeSuccessMsg = `🚀 อัปเกรด${mIdNum > 0 ? `รหัสหลัก #${mIdNum} ` : ''}สู่แรงค์ ${targetRank} (${nominalPrice} USDT) บนบล็อกเชนสำเร็จเรียบร้อย!`;
-
-          setTxState({
-            isLoading: false,
-            step: upgradeStepLabel,
-            txHash: receipt.hash,
-            error: null,
-            successMessage: upgradeSuccessMsg,
-          });
-
-          savePostTxNotice({
-            type: 'upgrade',
-            step: upgradeStepLabel,
-            message: upgradeSuccessMsg,
-            txHash: receipt.hash,
-            targetRank,
-            mainId: mIdNum,
-          });
-          savePostTxViewTarget({
-            type: 'upgrade',
-            selectedRank: targetRank,
-            selectedMainId: mIdNum,
-            targetRank,
-            mainId: mIdNum,
-          });
-
-          await refreshUserData(userAddr);
-          if (typeof window !== 'undefined') {
-            window.dispatchEvent(new CustomEvent('matrix:tree:refresh'));
-          }
-          triggerAutoPageRefresh(1300);
-          return {
-            success: true,
-            hash: receipt.hash,
-            txHash: receipt.hash,
-            targetRank,
-            mainId: mIdNum,
-            receipt,
-          };
-        } catch (onChainErr: any) {
-          const rawErrMsg = String(
-            onChainErr?.reason || onChainErr?.shortMessage || onChainErr?.message || ''
-          );
-          const isUserRejected =
-            onChainErr?.code === 4001 ||
-            onChainErr?.code === 'ACTION_REJECTED' ||
-            rawErrMsg.toLowerCase().includes('user rejected') ||
-            rawErrMsg.toLowerCase().includes('user denied');
-
-          if (isUserRejected) {
-            throw new Error('ยกเลิกการทำรายการในกระเป๋า Web3 (User Rejected)');
-          }
-
-          // หากเกินเวลา 2.5 นาที (Timeout) ให้ตัดจบเป็น "ไม่สำเร็จทันที" ห้าม fallback หรือปล่อยค้าง
-          const isTimeout =
-            rawErrMsg.includes('เกิน 2.5 นาที') ||
-            rawErrMsg.includes('หมดเวลาการตรวจสอบ') ||
-            rawErrMsg.includes('timeout') ||
-            rawErrMsg.includes('TIMEOUT');
-          if (isTimeout) {
-            throw new Error(
-              `⏱️ หมดเวลาการรอการตรวจสอบของอัพ Rank (เกิน 2.5 นาที) การทำรายการไม่สำเร็จทันที กรุณาตรวจสอบสถานะในกระเป๋าหรือทำรายการใหม่อีกครั้ง`
-            );
-          }
-
-          console.warn(
-            `[Upgrade] On-chain upgrade notice for Main ID #${mIdNum} -> Rank ${targetRank}, proceeding with Database Upgrade Engine:`,
-            rawErrMsg
-          );
+        } catch {
+          // keep dbUpgradeRankPool estimate
         }
       }
 
-      // Option B: Database / Per-Main-ID Upgrade Engine
+      const amountToPay = targetPrice > savedInVault ? targetPrice - savedInVault : 0n;
+      const formattedDiffUsdt = Number(ethers.formatUnits(amountToPay, usdtDecimals)).toFixed(2);
+      const vaultDeductedBn = savedInVault > targetPrice ? targetPrice : savedInVault;
+      const formattedVaultDeducted = Number(ethers.formatUnits(vaultDeductedBn, usdtDecimals)).toFixed(2);
+
+      // 3. If user owes USDT difference, verify balance and request USDT Approve in wallet if needed
+      if (amountToPay > 0n) {
+        const currentUsdtBal: bigint = await usdtContract.balanceOf(userAddr).catch(() => 0n);
+        if (currentUsdtBal < amountToPay) {
+          const formattedHave = Number(ethers.formatUnits(currentUsdtBal, usdtDecimals)).toFixed(2);
+          throw new Error(
+            `เหรียญ USDT ในกระเป๋าไม่เพียงพอสำหรับชำระส่วนต่าง: ต้องใช้ ${formattedDiffUsdt} USDT (หักจากกระปุกแล้ว ${formattedVaultDeducted} USDT) แต่ในกระเป๋ามีเพียง ${formattedHave} USDT`
+          );
+        }
+
+        setTxState((prev) => ({
+          ...prev,
+          step: `ตรวจสอบสิทธิ์อนุมัติเหรียญ USDT สำหรับเงินส่วนต่าง ${formattedDiffUsdt} USDT (หักลบ Vault ${formattedVaultDeducted} USDT)...`,
+        }));
+
+        const currentAllowance = await usdtContract.allowance(userAddr, currentContract).catch(() => 0n);
+        if (currentAllowance < amountToPay) {
+          setTxState((prev) => ({
+            ...prev,
+            step: `ขั้นตอนที่ 1/2: กรุณากดยืนยันอนุมัติวงเงินตัด USDT (${formattedDiffUsdt} USDT) ในกระเป๋าของคุณ...`,
+          }));
+          const approveTx = await usdtContract.approve(currentContract, ethers.MaxUint256, {
+            gasLimit: 120000n,
+          });
+          setTxState((prev) => ({
+            ...prev,
+            step: `ส่งคำสั่งอนุมัติวงเงินส่วนต่าง (${formattedDiffUsdt} USDT) แล้ว กำลังรอการยืนยันบน BNB Testnet...`,
+            txHash: approveTx.hash,
+          }));
+          const approveTimeoutMsg =
+            'หมดเวลาการตรวจสอบการอนุมัติเหรียญ USDT (เกิน 2.5 นาที) ไม่สำเร็จทันที กรุณาลองใหม่อีกครั้ง';
+          await waitTxWithTimeout(approveTx, RANK_UPGRADE_TIMEOUT_MS, approveTimeoutMsg);
+        }
+      }
+
+      // 4. Send real on-chain Upgrade transaction via MetaMask / Bitget Wallet
+      let upgradeTx: any = null;
+      const gasSettings = { gasLimit: 1200000n };
+
+      if (mIdNum > 0 && typeof matrixContract.upgradeRankForMainId === 'function') {
+        await matrixContract.upgradeRankForMainId.staticCall(BigInt(mIdNum), Number(targetRank));
+        setTxState((prev) => ({
+          ...prev,
+          step:
+            amountToPay > 0n
+              ? `กรุณากดยืนยันในกระเป๋าเพื่อตัดเงิน ${formattedDiffUsdt} USDT และอัปเกรดแรงค์ ${targetRank} (รหัสหลัก #${mIdNum})...`
+              : `กรุณากดยืนยันในกระเป๋าเพื่อใช้ยอดจาก Vault (${formattedVaultDeducted} USDT) อัปเกรดแรงค์ ${targetRank} (#${mIdNum})...`,
+        }));
+        try {
+          const estimatedGas = await matrixContract.upgradeRankForMainId.estimateGas(
+            BigInt(mIdNum),
+            Number(targetRank)
+          );
+          upgradeTx = await matrixContract.upgradeRankForMainId(
+            BigInt(mIdNum),
+            Number(targetRank),
+            { gasLimit: (estimatedGas * 13n) / 10n + 50000n }
+          );
+        } catch {
+          upgradeTx = await matrixContract.upgradeRankForMainId(
+            BigInt(mIdNum),
+            Number(targetRank),
+            gasSettings
+          );
+        }
+      } else {
+        await matrixContract.upgradeRank.staticCall(Number(targetRank));
+        setTxState((prev) => ({
+          ...prev,
+          step:
+            amountToPay > 0n
+              ? `กรุณากดยืนยันในกระเป๋าเพื่อตัดเงิน ${formattedDiffUsdt} USDT และอัปเกรดแรงค์ ${targetRank}...`
+              : `กรุณากดยืนยันในกระเป๋าเพื่ออัปเกรดแรงค์ ${targetRank}...`,
+        }));
+        try {
+          const estimatedGas = await matrixContract.upgradeRank.estimateGas(Number(targetRank));
+          upgradeTx = await matrixContract.upgradeRank(Number(targetRank), {
+            gasLimit: (estimatedGas * 13n) / 10n + 50000n,
+          });
+        } catch {
+          upgradeTx = await matrixContract.upgradeRank(Number(targetRank), gasSettings);
+        }
+      }
+
       setTxState((prev) => ({
         ...prev,
-        step: `กำลังประมวลผลอัปเกรดแรงค์ ${targetRank} สำหรับรหัสหลัก #${mIdNum}...`,
+        step: 'ส่งคำสั่งแล้ว กำลังรอการยืนยันบนบล็อกเชน (จำกัดเวลา 2.5 นาที)...',
+        txHash: upgradeTx.hash,
       }));
 
-      const res = await fetch('/api/matrix/upgrade', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          targetRank,
-          mainId: mIdNum,
-          owner: mainIdOwner || userAddr || account,
-        }),
+      const upgradeTimeoutMsg = `หมดเวลาการตรวจสอบธุรกรรมอัปเกรดแรงค์ ${targetRank} (เกิน 2.5 นาที) การอัปเกรดไม่สำเร็จทันที`;
+      const receipt = await waitTxWithTimeout(
+        upgradeTx,
+        RANK_UPGRADE_TIMEOUT_MS,
+        upgradeTimeoutMsg
+      );
+
+      reportTxToServer({
+        txHash: receipt?.hash || upgradeTx.hash,
+        actionType: 'UPGRADE',
+        title: `อัปเกรด${mIdNum > 0 ? `รหัสหลัก #${mIdNum} ` : ''}→ Rank ${targetRank}`,
+        userAddress: onChainOwner || userAddr,
+        mainNodeId: mIdNum > 0 ? mIdNum : undefined,
+        rank: targetRank,
+        amountUsdt: Number(ethers.formatUnits(targetPrice, usdtDecimals)),
+        blockNumber: receipt?.blockNumber,
       });
 
-      const json = await res.json();
-      if (!res.ok || !json.success) {
-        const adminRes = await fetch('/api/admin/upgrade-rank', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            targetUser: mainIdOwner || userAddr || account,
-            mainId: mIdNum,
-            targetRank,
-          }),
-        });
-        const adminJson = await adminRes.json();
-        if (!adminRes.ok || !adminJson.success) {
-          throw new Error(adminJson.error || json.error || 'ไม่สามารถอัปเกรดแรงค์ได้');
-        }
-      }
+      setTxState((prev) => ({
+        ...prev,
+        step: `ยืนยันการอัปเกรด Rank ${targetRank} สำเร็จ! กำลังอัปเดตข้อมูลและรีเฟรชหน้าเว็บ...`,
+        txHash: receipt.hash,
+      }));
 
-      const upgradeTxHash = json.txHash || `0xupg${Date.now().toString(16)}`;
+      await Promise.race([
+        fetch(`/api/db/sync?rank=${targetRank}&fast=1`, { method: 'POST' }).catch(() => {}),
+        new Promise((resolve) => setTimeout(resolve, 4000)),
+      ]);
+
       const upgradeStepLabel = `อัปเกรด Rank ${targetRank} สำเร็จ!`;
-      const upgradeSuccessMsg =
-        json.message ||
-        `🚀 อัปเกรดรหัสหลัก #${mIdNum} สู่แรงค์ ${targetRank} (${nominalPrice} USDT) สำเร็จเรียบร้อย!`;
+      const finalPriceUsdt = Number(ethers.formatUnits(targetPrice, usdtDecimals));
+      const upgradeSuccessMsg = `🚀 อัปเกรด${mIdNum > 0 ? `รหัสหลัก #${mIdNum} ` : ''}สู่แรงค์ ${targetRank} (${finalPriceUsdt} USDT) บนบล็อกเชนสำเร็จเรียบร้อย!`;
 
       setTxState({
         isLoading: false,
         step: upgradeStepLabel,
-        txHash: upgradeTxHash,
+        txHash: receipt.hash,
         error: null,
         successMessage: upgradeSuccessMsg,
       });
@@ -1956,7 +1859,7 @@ export function useWeb3() {
         type: 'upgrade',
         step: upgradeStepLabel,
         message: upgradeSuccessMsg,
-        txHash: upgradeTxHash,
+        txHash: receipt.hash,
         targetRank,
         mainId: mIdNum,
       });
@@ -1968,20 +1871,32 @@ export function useWeb3() {
         mainId: mIdNum,
       });
 
-      await refreshUserData(mainIdOwner || userAddr || account || '0x622E20082e63c7220c5AF0A77Cbc437a98505311');
+      await refreshUserData(userAddr);
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('matrix:tree:refresh'));
       }
       triggerAutoPageRefresh(1300);
       return {
         success: true,
-        txHash: upgradeTxHash,
+        hash: receipt.hash,
+        txHash: receipt.hash,
         targetRank,
         mainId: mIdNum,
+        receipt,
       };
     } catch (err: any) {
       console.error('Upgrade transaction error:', err);
-      const errorMsg = err?.reason || err?.shortMessage || err?.message || 'การอัปเกรดแรงค์ล้มเหลว';
+      const rawErrMsg = String(err?.reason || err?.shortMessage || err?.message || '');
+      const isUserRejected =
+        err?.code === 4001 ||
+        err?.code === 'ACTION_REJECTED' ||
+        rawErrMsg.toLowerCase().includes('user rejected') ||
+        rawErrMsg.toLowerCase().includes('user denied');
+      const errorMsg = isUserRejected
+        ? 'ยกเลิกการทำรายการในกระเป๋า Web3 (User Rejected)'
+        : rawErrMsg.includes('เกิน 2.5 นาที') || rawErrMsg.includes('หมดเวลาการตรวจสอบ')
+        ? `⏱️ หมดเวลาการรอการตรวจสอบของอัพ Rank (เกิน 2.5 นาที) การทำรายการไม่สำเร็จทันที กรุณาตรวจสอบสถานะในกระเป๋าหรือทำรายการใหม่อีกครั้ง`
+        : rawErrMsg || 'การอัปเกรดแรงค์ล้มเหลว';
       setTxState({
         isLoading: false,
         step: '',

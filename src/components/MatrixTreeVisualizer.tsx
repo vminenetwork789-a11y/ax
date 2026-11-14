@@ -9070,38 +9070,9 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
               }
               confirmedTxHash = upgRes?.txHash || null;
             } else {
-              const res = await fetch('/api/matrix/upgrade', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  targetRank: actualTargetRank,
-                  mainId: targetMainId,
-                  owner: modalNode.owner,
-                }),
-              });
-              const data = await res.json();
-              if (!res.ok || !data?.success) {
-                throw new Error(data?.error || 'ไม่สามารถอัปเกรดแรงค์ได้');
-              }
-              confirmedTxHash = data?.txHash || null;
-              await fetch(`/api/db/sync?rank=${actualTargetRank}&fast=1`, { method: 'POST' }).catch(() => null);
-              savePostTxNotice({
-                type: 'upgrade',
-                step: `อัปเกรดสู่ Rank ${actualTargetRank} สำเร็จ!`,
-                message: `🚀 อัปเกรด Main ID #${targetMainId} สู่ Rank ${actualTargetRank} สำเร็จเรียบร้อยแล้ว!`,
-                txHash: confirmedTxHash,
-                targetRank: actualTargetRank,
-                mainId: targetMainId,
-              });
-              savePostTxViewTarget({
-                type: 'upgrade',
-                selectedRank: actualTargetRank,
-                selectedMainId: targetMainId,
-                focusNodeId: targetMainId,
-                targetRank: actualTargetRank,
-                mainId: targetMainId,
-              });
-              triggerAutoPageRefresh(1300);
+              throw new Error(
+                'กรุณาเชื่อมต่อกระเป๋า Web3 (MetaMask / Bitget Wallet) เพื่อยืนยันการตัดเงิน USDT บนบล็อกเชนก่อนอัปเกรดแรงค์'
+              );
             }
             const okMsg = `🚀 อัปเกรด Main ID #${targetMainId} สู่ Rank ${actualTargetRank} สำเร็จเรียบร้อยแล้ว!`;
             setModalUpgradeMessage(okMsg);
@@ -9320,14 +9291,14 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                         <button
                           type="button"
                           disabled={isModalUpgrading}
-                          onClick={() => handleTriggerModalUpgrade(effectiveTargetRank)}
+                          onClick={() => handleTriggerModalUpgrade(nextSequentialRank)}
                           className="px-3 py-1 rounded-full bg-gradient-to-r from-amber-500 via-orange-500 to-rose-500 hover:from-amber-400 hover:to-rose-400 text-slate-950 font-extrabold text-[11px] shadow-md transition flex items-center gap-1 cursor-pointer disabled:opacity-50"
                         >
                           <Sparkles className="w-3.5 h-3.5" />
                           <span>
                             {isModalUpgrading
                               ? 'กำลังอัพเกรด...'
-                              : `🚀 อัพ Rank R${effectiveTargetRank}`}
+                              : `🚀 อัพ Rank R${nextSequentialRank}`}
                           </span>
                         </button>
                       )
