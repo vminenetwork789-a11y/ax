@@ -684,6 +684,14 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
     const r = Number(initialPostTxTarget?.selectedRank || 0);
     return r >= 1 && r <= 18 ? r : 1;
   });
+  const selectedRankRef = useRef<number>(selectedRank);
+  useEffect(() => {
+    selectedRankRef.current = selectedRank;
+  }, [selectedRank]);
+  const treeLoadSeqRef = useRef<number>(0);
+  const inFlightRankRef = useRef<number | null>(null);
+  const inFlightTreePromiseRef = useRef<Promise<void> | null>(null);
+  const lastHandledTxRefreshRef = useRef<string>('');
   const [postTxBanner, setPostTxBanner] = useState<PostTxViewTarget | null>(() => {
     if (!initialPostTxTarget) return null;
     if (
@@ -1367,7 +1375,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         : isAutoId
         ? 'AUTO'
         : 'MAIN';
-      const key = `${repRank}-${repId}`;
+      const key = `${repRank}-${category}-${repId}`;
       map.set(key, {
         key,
         id: repId,
@@ -1401,17 +1409,120 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
       });
     }
 
-    // Merge live activeNodesMap entries owned by logged-in wallet (covers Rank 2+ Extra/Clone or brand-new IDs)
+    // Merge Rank 2-18 Extra IDs and Clones spawned across all reports owned by the logged-in wallet
+    for (const rep of perIdReportsMap.values()) {
+      const repOwnerLower = String(rep.owner || '').toLowerCase();
+      if (Array.isArray(rep.autoExtraIdsSpawned)) {
+        for (const ex of rep.autoExtraIdsSpawned) {
+          const exOwnerLower = String(ex.owner || rep.owner || '').toLowerCase();
+          if (exOwnerLower !== userLower) continue;
+          const exId = Number(ex.id || 0);
+          const exRank = Number(ex.rank || 2);
+          if (exId <= 0) continue;
+          const key = `${exRank}-EXTRA-${exId}`;
+          if (map.has(key)) continue;
+          map.set(key, {
+            key,
+            id: exId,
+            rank: exRank,
+            originMainId: exId,
+            category: 'EXTRA',
+            typeBadge: 'EXTRA ID',
+            label: ex.label || `Extra R${exRank}-#${exId}`,
+            currentMaxRank: exRank,
+            parentId: Number(ex.parentId || 0),
+            directSponsorNodeId: Number(ex.directSponsorNodeId || rep.id || 1),
+            direct30TotalUsdt: 0,
+            level30TotalUsdt: 0,
+            vault35GrossTotalUsdt: 0,
+          });
+        }
+      }
+      if (Array.isArray(rep.clonesSpawned)) {
+        for (const cl of rep.clonesSpawned) {
+          const clOwnerLower = String(cl.owner || repOwnerLower || '').toLowerCase();
+          if (clOwnerLower !== userLower) continue;
+          const clId = Number(cl.id || 0);
+          const clRank = Number(cl.rank || 1);
+          if (clId <= 0) continue;
+          const key = `${clRank}-CLONE-${clId}`;
+          if (map.has(key)) continue;
+          map.set(key, {
+            key,
+            id: clId,
+            rank: clRank,
+            originMainId: Number(rep.id || clId),
+            category: 'CLONE',
+            typeBadge: 'CLONE ID',
+            label: cl.label || `Main #${rep.id} (โคลน R${clRank}-#${clId})`,
+            currentMaxRank: Number(rep.currentMaxRank || clRank || 1),
+            parentId: Number(cl.parentId || 0),
+            directSponsorNodeId: Number(cl.directSponsorNodeId || rep.directSponsorNodeId || 1),
+            direct30TotalUsdt: 0,
+            level30TotalUsdt: 0,
+            vault35GrossTotalUsdt: 0,
+          });
+        }
+      }
+    }
+
+    // Merge all ranks from multiRankSnapshotsState owned by logged-in wallet
+    for (const [rNum, snapMap] of multiRankSnapshotsState.entries()) {
+      for (const sn of snapMap.values()) {
+        if (String(sn.owner || '').toLowerCase() !== userLower || sn.id <= 0) continue;
+        const isClone = Boolean(sn.isClone);
+        const isExtra = Boolean(sn.isExtraId) && !isClone;
+        const isAuto = !isClone && !isExtra && sn.originType === 'AUTO_NEW_MAIN';
+        const category: WalletOwnedIdOption['category'] = isClone
+          ? 'CLONE'
+          : isExtra
+          ? 'EXTRA'
+          : isAuto
+          ? 'AUTO'
+          : 'MAIN';
+        if (rNum > 1 && !isClone && !isExtra) {
+          const canonMain = Number(sn.originMainId || sn.id);
+          if (map.has(`1-MAIN-${canonMain}`) || map.has(`1-AUTO-${canonMain}`)) continue;
+        }
+        const key = `${rNum}-${category}-${sn.id}`;
+        if (map.has(key)) continue;
+        const origMain = Number(sn.originMainId || sn.id);
+        map.set(key, {
+          key,
+          id: sn.id,
+          rank: rNum,
+          originMainId: origMain,
+          category,
+          typeBadge:
+            category === 'CLONE'
+              ? 'CLONE ID'
+              : category === 'EXTRA'
+              ? 'EXTRA ID'
+              : category === 'AUTO'
+              ? 'AUTO ID'
+              : 'MAIN ID',
+          label:
+            category === 'EXTRA'
+              ? `Extra R${rNum}-#${sn.id}`
+              : category === 'CLONE'
+              ? `Main #${origMain} (โคลน R${rNum}-#${sn.id})`
+              : category === 'AUTO'
+              ? `Auto #${sn.id}`
+              : `Main #${sn.id}`,
+          currentMaxRank: rNum,
+          parentId: Number(sn.parentId || 0),
+          directSponsorNodeId: Number(sn.directSponsorNodeId || 1),
+          direct30TotalUsdt: 0,
+          level30TotalUsdt: 0,
+          vault35GrossTotalUsdt: Number(sn.nodeVault || 0),
+        });
+      }
+    }
+
+    // Merge live activeNodesMap entries owned by logged-in wallet (covers brand-new nodes not yet in snapshots)
     for (const n of onChainNodesMap.values()) {
       if (String(n.owner || '').toLowerCase() !== userLower || n.id <= 0) continue;
       const nRank = Number(n.rank || selectedRank || 1);
-      const key = `${nRank}-${n.id}`;
-      if (map.has(key)) continue;
-      if (nRank > 1 && !n.isExtraId && !n.isClone) {
-        // Primary Main IDs in Rank 2+ map to their Rank 1 ID if already listed
-        const r1Key = `1-${n.r1MainId || n.originMainId || n.id}`;
-        if (map.has(r1Key)) continue;
-      }
       const category: WalletOwnedIdOption['category'] = n.isClone
         ? 'CLONE'
         : n.isExtraId
@@ -1419,6 +1530,12 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         : n.isAutoMainId
         ? 'AUTO'
         : 'MAIN';
+      if (nRank > 1 && !n.isExtraId && !n.isClone) {
+        const canonMain = Number(n.r1MainId || n.originMainId || n.id);
+        if (map.has(`1-MAIN-${canonMain}`) || map.has(`1-AUTO-${canonMain}`)) continue;
+      }
+      const key = `${nRank}-${category}-${n.id}`;
+      if (map.has(key)) continue;
       map.set(key, {
         key,
         id: n.id,
@@ -1437,7 +1554,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           category === 'EXTRA'
             ? `Extra R${nRank}-#${n.id}`
             : category === 'CLONE'
-            ? `Clone R${nRank}-#${n.id}`
+            ? `Main #${n.r1MainId || n.originMainId || n.id} (โคลน R${nRank}-#${n.id})`
             : category === 'AUTO'
             ? `Auto #${n.id}`
             : `Main #${n.id}`,
@@ -1455,15 +1572,24 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
     for (const rawId of ownedWalletAllIds || []) {
       const idNum = Number(rawId);
       if (!idNum || idNum <= 0) continue;
-      const key = `1-${idNum}`;
-      if (map.has(key)) continue;
       const isMain = mainSet.has(idNum);
+      const category: WalletOwnedIdOption['category'] = isMain ? 'MAIN' : 'CLONE';
+      const key = `1-${category}-${idNum}`;
+      if (
+        map.has(key) ||
+        map.has(`1-MAIN-${idNum}`) ||
+        map.has(`1-AUTO-${idNum}`) ||
+        map.has(`1-EXTRA-${idNum}`) ||
+        map.has(`1-CLONE-${idNum}`)
+      ) {
+        continue;
+      }
       map.set(key, {
         key,
         id: idNum,
         rank: 1,
         originMainId: idNum,
-        category: isMain ? 'MAIN' : 'CLONE',
+        category,
         typeBadge: isMain ? 'MAIN ID' : 'CLONE ID',
         label: isMain ? `Main #${idNum}` : `Clone #${idNum}`,
         currentMaxRank: currentUserRank || 1,
@@ -1487,12 +1613,29 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
   }, [
     userAddress,
     perIdReportsMap,
+    multiRankSnapshotsState,
     onChainNodesMap,
     selectedRank,
     ownedWalletMainIds,
     ownedWalletAllIds,
     currentUserRank,
   ]);
+
+  const firstRegisteredWalletId = useMemo<WalletOwnedIdOption | null>(() => {
+    if (walletOwnedIdsList.length === 0) return null;
+    const catPriority: Record<WalletOwnedIdOption['category'], number> = {
+      MAIN: 0,
+      AUTO: 1,
+      EXTRA: 2,
+      CLONE: 3,
+    };
+    const sorted = [...walletOwnedIdsList].sort(
+      (a, b) => catPriority[a.category] - catPriority[b.category] || a.rank - b.rank || a.id - b.id
+    );
+    return sorted[0] || null;
+  }, [walletOwnedIdsList]);
+
+  const explicitlyClearedSwitchRef = useRef<boolean>(false);
 
   const selectedWalletSwitchItem = useMemo<WalletOwnedIdOption | null>(() => {
     if (!selectedWalletSwitchKey) return null;
@@ -1505,6 +1648,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
 
   // Restore saved switch ID for the logged-in wallet and reset cleanly on wallet switch / logout
   useEffect(() => {
+    explicitlyClearedSwitchRef.current = false;
     setIsIdSwitcherOpen(false);
     setSelectedIdAlertsFeed([]);
     setUnreadSelectedIdAlertCount(0);
@@ -1515,11 +1659,53 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
     }
     try {
       const saved = sessionStorage.getItem(`f27_wallet_switch_id_${userAddress.toLowerCase()}`);
-      setSelectedWalletSwitchKey(saved || null);
+      setSelectedWalletSwitchKey(saved && saved !== '__ALL__' ? saved : null);
     } catch {
       setSelectedWalletSwitchKey(null);
     }
   }, [userAddress]);
+
+  // Auto-default Switch ID button to the wallet's first registered ID on initial load / login
+  useEffect(() => {
+    if (!userAddress || !firstRegisteredWalletId) return;
+    if (explicitlyClearedSwitchRef.current) return;
+
+    const currentMatch = selectedWalletSwitchKey
+      ? walletOwnedIdsList.find((item) => item.key === selectedWalletSwitchKey)
+      : undefined;
+
+    if (currentMatch) {
+      const targetMainStr = String(
+        currentMatch.category === 'MAIN' || currentMatch.category === 'AUTO'
+          ? currentMatch.id
+          : currentMatch.originMainId || currentMatch.id
+      );
+      onSelectMainId?.(targetMainStr);
+      return;
+    }
+
+    // Migrate legacy key format (e.g. "1-2") if possible; otherwise default to first registered ID
+    let targetItem: WalletOwnedIdOption = firstRegisteredWalletId;
+    if (selectedWalletSwitchKey) {
+      const legacyMatch = walletOwnedIdsList.find(
+        (item) => `${item.rank}-${item.id}` === selectedWalletSwitchKey
+      );
+      if (legacyMatch) targetItem = legacyMatch;
+    }
+
+    setSelectedWalletSwitchKey(targetItem.key);
+    try {
+      sessionStorage.setItem(`f27_wallet_switch_id_${userAddress.toLowerCase()}`, targetItem.key);
+    } catch {
+      // Ignore
+    }
+    const mainStr = String(
+      targetItem.category === 'MAIN' || targetItem.category === 'AUTO'
+        ? targetItem.id
+        : targetItem.originMainId || targetItem.id
+    );
+    onSelectMainId?.(mainStr);
+  }, [userAddress, walletOwnedIdsList, firstRegisteredWalletId, selectedWalletSwitchKey, onSelectMainId]);
   const [isPathCalculatorOpen, setIsPathCalculatorOpen] = useState<boolean>(false);
   const [isLegendOpen, setIsLegendOpen] = useState<boolean>(false);
   const [isSecondaryWidgetsCollapsed, setIsSecondaryWidgetsCollapsed] = useState<boolean>(false);
@@ -1722,13 +1908,18 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
       targetRankParam?: number,
       options?: { silent?: boolean; forceSync?: boolean }
     ) => {
-      const activeRank = targetRankParam !== undefined ? targetRankParam : selectedRank;
+      const activeRank = targetRankParam !== undefined ? targetRankParam : selectedRankRef.current;
       const isSilent = Boolean(options?.silent);
       const forceSync = Boolean(options?.forceSync);
 
+      if (inFlightTreePromiseRef.current && inFlightRankRef.current === activeRank && !forceSync) {
+        return inFlightTreePromiseRef.current;
+      }
       if (isTreeSyncInFlightRef.current && isSilent && !forceSync) {
         return;
       }
+      const reqSeq = ++treeLoadSeqRef.current;
+      inFlightRankRef.current = activeRank;
       isTreeSyncInFlightRef.current = true;
 
       if (!isSilent) {
@@ -1737,6 +1928,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         setIsLiveSyncing(true);
       }
 
+      const runPromise = (async () => {
       try {
         const activeContract = contractAddress || CONTRACT_ADDRESS;
         let lazyContract: ethers.Contract | null = null;
@@ -1804,7 +1996,6 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             const data = await res.json();
             if (data.success && Array.isArray(data.nodes) && data.nodes.length > 0) {
               totalNodes = Number(data.totalNodes || data.nodes.length);
-              setTotalNodesInRank(totalNodes);
               fetchedRankCounts[activeRank] = totalNodes;
               setRankNodeCounts((prev) => ({ ...prev, [activeRank]: totalNodes }));
               for (const item of data.nodes) {
@@ -4692,7 +4883,12 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           await fetchPerIdHistoryForModal();
         }
 
+        if (reqSeq !== treeLoadSeqRef.current || activeRank !== selectedRankRef.current) {
+          return;
+        }
+
         knownNodeIdsByRankRef.current.set(activeRank, currentIdsSet);
+        setTotalNodesInRank(totalNodes);
         setMultiRankSnapshotsState(new Map(multiRankSnapshots as unknown as Map<number, Map<number, SimRawNode>>));
         setOnChainNodesMap(enrichedMap);
         setLastSyncTime(
@@ -4713,13 +4909,20 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           );
         }
       } finally {
-        isTreeSyncInFlightRef.current = false;
-        setIsLoadingTree(false);
-        setIsLiveSyncing(false);
-        setHasInitialTreeLoaded(true);
+        if (reqSeq === treeLoadSeqRef.current) {
+          isTreeSyncInFlightRef.current = false;
+          inFlightRankRef.current = null;
+          inFlightTreePromiseRef.current = null;
+          setIsLoadingTree(false);
+          setIsLiveSyncing(false);
+          setHasInitialTreeLoaded(true);
+        }
       }
+      })();
+      inFlightTreePromiseRef.current = runPromise;
+      return runPromise;
     },
-    [getWorkingProvider, selectedRank, contractAddress, fetchPerIdHistoryForModal]
+    [getWorkingProvider, contractAddress, fetchPerIdHistoryForModal]
   );
 
   // Automatic WebSocket / Backend API Reconnection Hook when network error is detected during Matrix refresh interval
@@ -4773,16 +4976,18 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
     };
   }, [isRealtimeActive, realtimeInterval, viewMode, selectedRank, loadOnChainTree]);
 
-  // 1. Auto-refresh tree when registration or batch registration succeeds
+  // 1. Auto-refresh tree ONLY when a new transaction succeeds or refreshTrigger actually increments
   useEffect(() => {
-    if (lastTxSuccess || refreshTrigger) {
-      loadOnChainTree(selectedRank, { silent: onChainNodesMap.size > 0, forceSync: true });
+    const txSig = `${String(lastTxSuccess || '')}|${String(refreshTrigger || 0)}`;
+    if ((lastTxSuccess || refreshTrigger) && lastHandledTxRefreshRef.current !== txSig) {
+      lastHandledTxRefreshRef.current = txSig;
+      loadOnChainTree(selectedRankRef.current, { silent: onChainNodesMap.size > 0, forceSync: true });
       setViewMode('onchain');
       setJustUpdatedBadge(true);
       const timer = setTimeout(() => setJustUpdatedBadge(false), 6000);
       return () => clearTimeout(timer);
     }
-  }, [lastTxSuccess, refreshTrigger, selectedRank, onChainNodesMap.size, loadOnChainTree]);
+  }, [lastTxSuccess, refreshTrigger, onChainNodesMap.size, loadOnChainTree]);
 
   // 2. Global event listener dispatched whenever user registers, upgrades, or activates nodes
   useEffect(() => {
@@ -5283,9 +5488,11 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
     };
   }, [autoExtraNotificationsData, selectedWalletSwitchItem]);
 
-  // Reset baseline keys whenever selected switch ID changes so switching doesn't burst historical items
+  // Reset baseline keys and scoped feed alerts whenever selected switch ID changes
   useEffect(() => {
     hasInitAutoExtraKeysRef.current = false;
+    setSelectedIdAlertsFeed([]);
+    setUnreadSelectedIdAlertCount(0);
   }, [selectedWalletSwitchKey]);
 
   // Detect new Auto ID / Extra ID arrivals in real-time (scoped to selected ID when switched)
@@ -5910,11 +6117,15 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
       const userLower = userAddress?.toLowerCase() || '';
       if (item.rank === rankNum && nodesMap.has(item.id)) {
         const direct = nodesMap.get(item.id)!;
-        if (!userLower || direct.owner.toLowerCase() === userLower) {
+        if (
+          (!userLower || direct.owner.toLowerCase() === userLower) &&
+          (item.category !== 'CLONE' || direct.isClone) &&
+          (item.category !== 'EXTRA' || direct.isExtraLineage)
+        ) {
           return direct.id;
         }
       }
-      if (rankNum === 1) {
+      if (rankNum === 1 && item.rank === 1) {
         const direct = nodesMap.get(item.id);
         if (direct && (!userLower || direct.owner.toLowerCase() === userLower)) {
           return direct.id;
@@ -5927,7 +6138,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           return item.rank === rankNum && n.id === item.id;
         }
         if (item.category === 'CLONE') {
-          return n.isClone && n.r1MainId === targetMain;
+          return item.rank === rankNum && n.isClone && (n.id === item.id || n.r1MainId === targetMain);
         }
         return (
           !n.isClone &&
@@ -5939,6 +6150,89 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
     },
     [userAddress]
   );
+
+  const resolveSwitchNodeInSnapshot = useCallback(
+    (item: WalletOwnedIdOption, targetRankNum: number): number | null => {
+      const snapMap = multiRankSnapshotsState.get(targetRankNum);
+      if (!snapMap || snapMap.size === 0) return null;
+      const userLower = userAddress?.toLowerCase() || '';
+      if (item.rank === targetRankNum && snapMap.has(item.id)) {
+        const direct = snapMap.get(item.id)!;
+        if (
+          (!userLower || String(direct.owner || '').toLowerCase() === userLower) &&
+          (item.category !== 'CLONE' || Boolean(direct.isClone)) &&
+          (item.category !== 'EXTRA' || Boolean(direct.isExtraId))
+        ) {
+          return direct.id;
+        }
+      }
+      const targetMain = item.originMainId || item.id;
+      const matched = Array.from(snapMap.values()).find((sn) => {
+        if (userLower && String(sn.owner || '').toLowerCase() !== userLower) return false;
+        if (item.category === 'EXTRA') {
+          return item.rank === targetRankNum && sn.id === item.id;
+        }
+        if (item.category === 'CLONE') {
+          return item.rank === targetRankNum && Boolean(sn.isClone) && (sn.id === item.id || Number(sn.originMainId || 0) === targetMain);
+        }
+        return (
+          !sn.isClone &&
+          !sn.isExtraId &&
+          (Number(sn.originMainId || sn.id) === targetMain || sn.id === targetMain)
+        );
+      });
+      return matched ? matched.id : null;
+    },
+    [multiRankSnapshotsState, userAddress]
+  );
+
+  const resolvedSwitchNodeIdInRank = useMemo<number | null>(() => {
+    if (!selectedWalletSwitchItem || viewMode !== 'onchain') return null;
+    return resolveNodeIdInRankMap(activeNodesMap, selectedWalletSwitchItem, selectedRank);
+  }, [selectedWalletSwitchItem, viewMode, activeNodesMap, selectedRank, resolveNodeIdInRankMap]);
+
+  const selectedSwitchOwnedRankNodes = useMemo<Array<{ rank: number; nodeId: number }>>(() => {
+    if (!selectedWalletSwitchItem) return [];
+    const results: Array<{ rank: number; nodeId: number }> = [
+      { rank: selectedWalletSwitchItem.rank, nodeId: selectedWalletSwitchItem.id },
+    ];
+    if (selectedWalletSwitchItem.category === 'CLONE' || selectedWalletSwitchItem.category === 'EXTRA') {
+      return results;
+    }
+    const targetMain = selectedWalletSwitchItem.originMainId || selectedWalletSwitchItem.id;
+    const seen = new Set<string>([`${selectedWalletSwitchItem.rank}-${selectedWalletSwitchItem.id}`]);
+    const userLower = userAddress?.toLowerCase() || '';
+
+    const rep = perIdReportsMap.get(targetMain);
+    if (rep && Array.isArray(rep.rankNodesList)) {
+      for (const rn of rep.rankNodesList) {
+        const rNum = Number(rn?.rank || 0);
+        const nId = Number(rn?.nodeId || 0);
+        if (rNum > 0 && nId > 0) {
+          const k = `${rNum}-${nId}`;
+          if (!seen.has(k)) {
+            seen.add(k);
+            results.push({ rank: rNum, nodeId: nId });
+          }
+        }
+      }
+    }
+
+    for (const [rNum, snapMap] of multiRankSnapshotsState.entries()) {
+      for (const sn of snapMap.values()) {
+        if (sn.isClone || sn.isExtraId) continue;
+        if (userLower && String(sn.owner || '').toLowerCase() !== userLower) continue;
+        if (Number(sn.originMainId || sn.id) === targetMain) {
+          const k = `${rNum}-${sn.id}`;
+          if (!seen.has(k)) {
+            seen.add(k);
+            results.push({ rank: rNum, nodeId: sn.id });
+          }
+        }
+      }
+    }
+    return results;
+  }, [selectedWalletSwitchItem, perIdReportsMap, multiRankSnapshotsState, userAddress]);
 
   // When a switched ID is active and rank data loads, keep focus rooted on that ID's subtree
   useEffect(() => {
@@ -5990,10 +6284,12 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
   const handleSelectWalletSwitchId = useCallback(
     async (item: WalletOwnedIdOption | null) => {
       setIsIdSwitcherOpen(false);
+      setSelectedIdAlertsFeed([]);
       setUnreadSelectedIdAlertCount(0);
       setSwitchRankNotice(null);
 
       if (!item) {
+        explicitlyClearedSwitchRef.current = true;
         setSelectedWalletSwitchKey(null);
         if (userAddress) {
           try {
@@ -6010,6 +6306,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         return;
       }
 
+      explicitlyClearedSwitchRef.current = false;
       setSelectedWalletSwitchKey(item.key);
       if (userAddress) {
         try {
@@ -6024,12 +6321,14 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         onSelectMainId?.(String(item.originMainId));
       }
 
-      // Decide target rank: Extra IDs live on their specific Rank; otherwise stay in selectedRank if placed there, else fallback to item's rank (R1)
+      // Decide target rank: Rank 2+ Extra/Clone IDs live on their specific Rank; otherwise stay in selectedRank if placed there, else fallback to item's rank (R1)
       let targetRank = selectedRank;
-      if (item.category === 'EXTRA' && item.rank >= 2) {
+      if ((item.category === 'EXTRA' || item.category === 'CLONE') && item.rank >= 2) {
         targetRank = item.rank;
       } else if (selectedRank > 1) {
-        const existsInCurrent = resolveNodeIdInRankMap(onChainNodesMap, item, selectedRank);
+        const existsInCurrent =
+          resolveNodeIdInRankMap(onChainNodesMap, item, selectedRank) ??
+          resolveSwitchNodeInSnapshot(item, selectedRank);
         if (!existsInCurrent && item.currentMaxRank < selectedRank) {
           targetRank = Math.max(1, item.rank || 1);
         }
@@ -6037,21 +6336,24 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         targetRank = 1;
       }
 
+      const optimisticRootId =
+        resolveSwitchNodeInSnapshot(item, targetRank) ??
+        (targetRank === selectedRank ? resolveNodeIdInRankMap(onChainNodesMap, item, targetRank) : null) ??
+        item.id;
+
+      setFocusRootId(optimisticRootId);
+      setNavigationHistory([optimisticRootId]);
+      setSearchInput(String(optimisticRootId));
+      setSelectedTreeNodeId(optimisticRootId);
+
       if (targetRank !== selectedRank) {
+        selectedRankRef.current = targetRank;
         setSelectedRank(targetRank);
       }
       setViewMode('onchain');
       setExpandedBenefitNodeId(null);
       await fetchPerIdHistoryForModal();
       await loadOnChainTree(targetRank, { silent: true, forceSync: true });
-
-      const resolvedAfter = resolveNodeIdInRankMap(onChainNodesMap, item, targetRank);
-      if (resolvedAfter) {
-        setFocusRootId(resolvedAfter);
-        setNavigationHistory([resolvedAfter]);
-        setSearchInput(String(resolvedAfter));
-        setSelectedTreeNodeId(resolvedAfter);
-      }
     },
     [
       userAddress,
@@ -6059,6 +6361,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
       onChainNodesMap,
       onSelectMainId,
       resolveNodeIdInRankMap,
+      resolveSwitchNodeInSnapshot,
       fetchPerIdHistoryForModal,
       loadOnChainTree,
     ]
@@ -6077,7 +6380,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
       }
     }
     setFocusRootId(resolvedNodeId);
-    setSearchInput(String(targetId));
+    setSearchInput(String(resolvedNodeId));
     setNavigationHistory((prev) => {
       if (prev[prev.length - 1] === resolvedNodeId) return prev;
       return [...prev, resolvedNodeId];
@@ -6091,6 +6394,10 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
       setNavigationHistory(nextHist);
       setFocusRootId(prevId);
       setSearchInput(String(prevId));
+    } else if (resolvedSwitchNodeIdInRank) {
+      setFocusRootId(resolvedSwitchNodeIdInRank);
+      setNavigationHistory([resolvedSwitchNodeIdInRank]);
+      setSearchInput(String(resolvedSwitchNodeIdInRank));
     } else {
       const currentRoot = activeNodesMap.get(focusRootId);
       if (currentRoot && currentRoot.parentId > 0) {
@@ -6108,12 +6415,13 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
     while (curr > 0 && !visited.has(curr)) {
       visited.add(curr);
       path.unshift(curr);
+      if (resolvedSwitchNodeIdInRank && curr === resolvedSwitchNodeIdInRank) break;
       const node = activeNodesMap.get(curr);
       if (!node || node.parentId === 0) break;
       curr = node.parentId;
     }
-    return path.length > 0 ? path : [1];
-  }, [focusRootId, activeNodesMap]);
+    return path.length > 0 ? path : [resolvedSwitchNodeIdInRank || 1];
+  }, [focusRootId, activeNodesMap, resolvedSwitchNodeIdInRank]);
 
   const copyAddress = (text: string) => {
     navigator.clipboard.writeText(text);
@@ -7252,6 +7560,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                       perIdReportsMap={perIdReportsMap}
                       onSelectRankAndNode={(r, nId) => {
                         if (selectedRank !== r) {
+                          selectedRankRef.current = r;
                           setSelectedRank(r);
                           loadOnChainTree(r);
                         }
@@ -7585,10 +7894,20 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                   type="button"
                   onClick={() => {
                     const targetRank = r;
+                    selectedRankRef.current = targetRank;
                     setSelectedRank(targetRank);
-                    setFocusRootId(1);
-                    setNavigationHistory([1]);
-                    setSearchInput('1');
+                    if (selectedWalletSwitchItem) {
+                      const snapNodeId = resolveSwitchNodeInSnapshot(selectedWalletSwitchItem, targetRank);
+                      const initialTarget = snapNodeId ?? selectedWalletSwitchItem.id;
+                      setFocusRootId(initialTarget);
+                      setNavigationHistory([initialTarget]);
+                      setSearchInput(String(initialTarget));
+                      setSelectedTreeNodeId(snapNodeId ?? null);
+                    } else {
+                      setFocusRootId(1);
+                      setNavigationHistory([1]);
+                      setSearchInput('1');
+                    }
                     setExpandedBenefitNodeId(null);
                     setLatestNewNodeAlert(null);
                     setZoomScale(0.55);
@@ -7749,7 +8068,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             <Activity className="w-3.5 h-3.5" />
             <span>Activity Feed</span>
             <span className="font-mono tabular-nums text-[10px] opacity-85">
-              #{selectedWalletSwitchItem?.id || (selectedTreeNodeId ?? (focusRootId > 1 ? focusRootId : Number(selectedMainId) || 1))}
+              #{selectedWalletSwitchItem?.id || 1}
             </span>
           </button>
         </div>
@@ -8204,6 +8523,59 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                         : `Loading Rank ${selectedRank} binary tree nodes...`}
                     </span>
                   </div>
+                ) : selectedWalletSwitchItem && viewMode === 'onchain' && !resolvedSwitchNodeIdInRank ? (
+                  <div className="py-16 px-4 max-w-md mx-auto flex flex-col items-center justify-center text-center gap-3">
+                    <div className="p-3.5 rounded-2xl bg-amber-100 dark:bg-amber-500/15 border border-amber-300 dark:border-amber-500/40 text-amber-700 dark:text-amber-300">
+                      <Layers className="w-7 h-7" />
+                    </div>
+                    <div className="space-y-1">
+                      <h4 className="text-sm sm:text-base font-extrabold text-[#0F172A] dark:text-white">
+                        {language === 'th'
+                          ? `${selectedWalletSwitchItem.label} ยังไม่มีตำแหน่งในผัง Rank ${selectedRank}`
+                          : `${selectedWalletSwitchItem.label} is not placed in Rank ${selectedRank} yet`}
+                      </h4>
+                      <p className="text-xs text-[#64748B] dark:text-slate-400">
+                        {language === 'th'
+                          ? `ผังต้นไม้กำลังอ้างอิงเฉพาะ ID ที่เลือกในปุ่มสลับ ID (Max Rank ปัจจุบัน: R${selectedWalletSwitchItem.currentMaxRank})`
+                          : `Binary tree is scoped to your selected Switch ID (Current Max Rank: R${selectedWalletSwitchItem.currentMaxRank})`}
+                      </p>
+                    </div>
+                    <div className="flex items-center justify-center gap-2 flex-wrap pt-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const targetR =
+                            selectedWalletSwitchItem.category === 'EXTRA' || selectedWalletSwitchItem.category === 'CLONE'
+                              ? selectedWalletSwitchItem.rank
+                              : Math.max(1, selectedWalletSwitchItem.currentMaxRank || selectedWalletSwitchItem.rank || 1);
+                          selectedRankRef.current = targetR;
+                          setSelectedRank(targetR);
+                          const snapNodeId = resolveSwitchNodeInSnapshot(selectedWalletSwitchItem, targetR);
+                          const nextRoot = snapNodeId ?? selectedWalletSwitchItem.id;
+                          setFocusRootId(nextRoot);
+                          setNavigationHistory([nextRoot]);
+                          setSearchInput(String(nextRoot));
+                          loadOnChainTree(targetR);
+                        }}
+                        className="px-3.5 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white font-bold text-xs shadow-sm cursor-pointer transition"
+                      >
+                        {language === 'th'
+                          ? `ไปที่ผัง R${selectedWalletSwitchItem.category === 'EXTRA' || selectedWalletSwitchItem.category === 'CLONE' ? selectedWalletSwitchItem.rank : Math.max(1, selectedWalletSwitchItem.currentMaxRank || 1)} ของ ${selectedWalletSwitchItem.label}`
+                          : `Go to ${selectedWalletSwitchItem.label} Rank`}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setBenefitModalTab('all');
+                          setExpandedBenefitNodeId(selectedWalletSwitchItem.originMainId || selectedWalletSwitchItem.id);
+                          fetchPerIdHistoryForModal();
+                        }}
+                        className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold text-xs shadow-sm cursor-pointer transition"
+                      >
+                        {language === 'th' ? 'ดูผลประโยชน์ / อัพ Rank' : 'View Benefits / Upgrade'}
+                      </button>
+                    </div>
+                  </div>
                 ) : (
                   renderBinarySubtree(focusRootId, 1)
                 )}
@@ -8482,6 +8854,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                             onClick={() => {
                               setIsIdSwitcherOpen(false);
                               if (selectedRank !== ev.rank) {
+                                selectedRankRef.current = ev.rank;
                                 setSelectedRank(ev.rank);
                                 loadOnChainTree(ev.rank);
                               }
@@ -8602,65 +8975,24 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         </div>
 
         {isActivityFeedOpen && (() => {
-          const clickedNode =
-            selectedTreeNodeId !== null && activeNodesMap.has(selectedTreeNodeId)
-              ? activeNodesMap.get(selectedTreeNodeId)!
-              : null;
-          const focusedNode =
-            !clickedNode && focusRootId > 1 && activeNodesMap.has(focusRootId)
-              ? activeNodesMap.get(focusRootId)!
-              : null;
-          const fallbackMainNum = Math.max(1, Number(selectedMainId) || 1);
-          const resolvedId = selectedWalletSwitchItem
-            ? selectedWalletSwitchItem.id
-            : clickedNode
-            ? clickedNode.id
-            : focusedNode
-            ? focusedNode.id
-            : fallbackMainNum;
-          const resolvedOriginMainId = selectedWalletSwitchItem
-            ? selectedWalletSwitchItem.originMainId
-            : clickedNode
-            ? Number(clickedNode.r1MainId || clickedNode.originMainId || clickedNode.id)
-            : focusedNode
-            ? Number(focusedNode.r1MainId || focusedNode.originMainId || focusedNode.id)
-            : fallbackMainNum;
-          const resolvedCategory: 'MAIN' | 'AUTO' | 'EXTRA' | 'CLONE' = selectedWalletSwitchItem
-            ? selectedWalletSwitchItem.category
-            : clickedNode
-            ? clickedNode.isClone
-              ? 'CLONE'
-              : clickedNode.isExtraId
-              ? 'EXTRA'
-              : clickedNode.isAutoMainId
-              ? 'AUTO'
-              : 'MAIN'
-            : focusedNode
-            ? focusedNode.isClone
-              ? 'CLONE'
-              : focusedNode.isExtraId
-              ? 'EXTRA'
-              : focusedNode.isAutoMainId
-              ? 'AUTO'
-              : 'MAIN'
+          const activeSwitch = selectedWalletSwitchItem;
+          const resolvedId = activeSwitch ? activeSwitch.id : 1;
+          const resolvedOriginMainId = activeSwitch ? activeSwitch.originMainId : 1;
+          const resolvedCategory: 'MAIN' | 'AUTO' | 'EXTRA' | 'CLONE' = activeSwitch
+            ? activeSwitch.category
             : 'MAIN';
-          const resolvedLabel = selectedWalletSwitchItem
-            ? selectedWalletSwitchItem.label
-            : clickedNode
-            ? clickedNode.isExtraId
-              ? clickedNode.extraMainLabel || `Extra R${clickedNode.rank}-#${clickedNode.id}`
-              : clickedNode.isClone
-              ? `Clone R${clickedNode.rank}-#${clickedNode.id}`
-              : clickedNode.isAutoMainId
-              ? `Auto #${clickedNode.id}`
-              : `Main #${clickedNode.id}`
-            : focusedNode
-            ? `Node #${focusedNode.id}`
-            : `Main #${fallbackMainNum}`;
+          const resolvedSwitchRank = activeSwitch ? activeSwitch.rank : 1;
+          const resolvedLabel = activeSwitch
+            ? activeSwitch.label
+            : language === 'th'
+            ? 'ภาพรวมระบบ (#1)'
+            : 'Global (#1)';
           const matchedPerIdReport =
-            perIdReportsMap.get(resolvedOriginMainId) ||
-            perIdReportsMap.get(resolvedId) ||
-            null;
+            resolvedCategory === 'CLONE' || resolvedCategory === 'EXTRA'
+              ? null
+              : perIdReportsMap.get(resolvedOriginMainId) ||
+                perIdReportsMap.get(resolvedId) ||
+                null;
 
           return (
             <MatrixActivityFeed
@@ -8668,9 +9000,11 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
               selectedId={resolvedId}
               selectedLabel={resolvedLabel}
               selectedCategory={resolvedCategory}
+              selectedSwitchRank={resolvedSwitchRank}
               originMainId={resolvedOriginMainId}
               selectedRank={selectedRank}
-              isStrictIdLocked={Boolean(selectedWalletSwitchItem)}
+              isStrictIdLocked={Boolean(activeSwitch)}
+              ownedRankNodesList={selectedSwitchOwnedRankNodes}
               wsConnected={isWsConnected}
               wsTransport={wsTransportType}
               wsLastSyncedAt={wsLastSyncedAt}
@@ -8683,6 +9017,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
               refreshTrigger={refreshTrigger || lastTxSuccess}
               onFocusNode={(targetNodeId, targetRankNum) => {
                 if (targetRankNum && targetRankNum >= 1 && targetRankNum <= 18 && targetRankNum !== selectedRank) {
+                  selectedRankRef.current = targetRankNum;
                   setSelectedRank(targetRankNum);
                   setFocusRootId(targetNodeId);
                   setSearchInput(String(targetNodeId));
@@ -9086,6 +9421,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
               });
             }
             setModalUpgradeTargetRank(Math.min(18, actualTargetRank + 1));
+            selectedRankRef.current = actualTargetRank;
             setSelectedRank(actualTargetRank);
             await fetchPerIdHistoryForModal();
             await loadOnChainTree(actualTargetRank, { silent: true, forceSync: true });
@@ -9177,6 +9513,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
               });
             }
             setModalUpgradeTargetRank(Math.min(18, rankToUpgrade + 1));
+            selectedRankRef.current = rankToUpgrade;
             setSelectedRank(rankToUpgrade);
             await fetchPerIdHistoryForModal();
             await loadOnChainTree(rankToUpgrade, { silent: true, forceSync: false });
@@ -9785,7 +10122,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
 
                   {/* Box 2: ผลประโยชน์เฉพาะโหนดที่กด */}
                   <div className="rounded-xl bg-[#09191f] border border-emerald-500/40 p-3.5 space-y-2">
-                    <div className="flex items-center justify-between border-b border-emerald-500/20 pb-1.5">
+                    <div className="flex items-center justify-between border-b border-emerald-500/20 pb-1.5 flex-wrap gap-1.5">
                       <span className="font-bold text-emerald-400 text-xs sm:text-sm">
                         📍 ผลประโยชน์เฉพาะโหนดนี้ (R{modalNode.rank}-#{modalNode.id})
                       </span>
@@ -9797,6 +10134,45 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                           : 'Main Node'}
                       </span>
                     </div>
+
+                    {/* Quick Rank Node Switcher inside Box 2 so user can inspect R1..R18 without losing data */}
+                    {rankNodesList.length > 1 && (
+                      <div className="flex items-center gap-1 flex-wrap bg-slate-950/70 border border-slate-800 rounded-lg p-1.5 font-mono text-[10px]">
+                        <span className="text-slate-400 font-bold mr-1">ดูโหนดรายแรงค์:</span>
+                        {[...rankNodesList]
+                          .sort((a: any, b: any) => Number(a.rank || 1) - Number(b.rank || 1))
+                          .map((rn: any) => {
+                            const isCurrentNodeRank =
+                              Number(rn.rank) === modalNode.rank && Number(rn.nodeId) === modalNode.id;
+                            return (
+                              <button
+                                key={`box2-rn-${rn.rank}-${rn.nodeId}`}
+                                type="button"
+                                onClick={async () => {
+                                  const targetR = Number(rn.rank || 1);
+                                  const targetNId = Number(rn.nodeId || targetMainId);
+                                  if (selectedRank !== targetR) {
+                                    selectedRankRef.current = targetR;
+                                    setSelectedRank(targetR);
+                                    if (viewMode === 'onchain') {
+                                      await loadOnChainTree(targetR);
+                                    }
+                                  }
+                                  setExpandedBenefitNodeId(targetNId);
+                                }}
+                                className={`px-2 py-0.5 rounded border font-bold transition cursor-pointer ${
+                                  isCurrentNodeRank
+                                    ? 'bg-emerald-500 text-slate-950 border-emerald-300 shadow-xs'
+                                    : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border-slate-700'
+                                }`}
+                              >
+                                R{rn.rank}-#{rn.nodeId}
+                              </button>
+                            );
+                          })}
+                      </div>
+                    )}
+
                     <div className="space-y-1.5 font-mono text-xs">
                       <div className="flex items-center justify-between">
                         <span className="text-slate-300">30% ค่าแนะนำตรง (เฉพาะโหนดนี้):</span>
@@ -9819,7 +10195,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
 
                       {/* 15-Level Breakdown inside Box 2 */}
                       {(() => {
-                        const ls = modalNode.levelSummary || idReport?.levelSummary;
+                        const ls = modalNode.levelSummary || (modalNode.rank === 1 ? idReport?.levelSummary : undefined);
                         const tiers = ls?.tiersBreakdown || [];
                         const ratePerNode =
                           ls?.ratePerNodeUsdt ??
@@ -9830,11 +10206,20 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                         );
                         const remainingPayingNodes = Math.max(0, 32767 - receivedPayingNodes);
                         const remainingUsdt = Number((remainingPayingNodes * ratePerNode).toFixed(2));
+
+                        const r1Summary = modalNode.rank > 1 ? mainReport?.levelSummary : null;
+                        const r1Tiers = r1Summary?.tiersBreakdown || [];
+                        const r1ReceivedPayingNodes = r1Tiers.reduce(
+                          (acc: number, t: any) => acc + Number(t.leftPayingNodesCount || 0),
+                          0
+                        );
+
                         return (
                           <div className="mt-2 pt-2 border-t border-cyan-500/30 space-y-1.5 text-[11px]">
                             <div className="flex items-center justify-between flex-wrap gap-1">
                               <span className="text-cyan-300 font-extrabold">
-                                🪜 ค่าชั้นโหนดนี้: รับแล้ว {receivedPayingNodes.toLocaleString()} / 32,767 รหัส
+                                🪜 ค่าชั้นโหนดนี้ (R{modalNode.rank}-#{modalNode.id}): รับแล้ว{' '}
+                                {receivedPayingNodes.toLocaleString()} / 32,767 รหัส
                               </span>
                               <span className="text-amber-300 font-bold">
                                 คงเหลืออีก {remainingPayingNodes.toLocaleString()} รหัส (
@@ -9849,7 +10234,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                               <div className="space-y-1 bg-slate-950/80 p-2 rounded-lg border border-cyan-500/25">
                                 {tiers.map((t: any) => (
                                   <div
-                                    key={`modal-box1-tier-${t.tier}`}
+                                    key={`modal-box1-tier-${modalNode.rank}-${modalNode.id}-${t.tier}`}
                                     className="flex items-center justify-between gap-2 text-[10.5px]"
                                   >
                                     <span className="text-slate-300">
@@ -9867,7 +10252,54 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                               </div>
                             ) : (
                               <div className="text-slate-500 text-[10.5px]">
-                                ยังไม่มีชั้นที่รับค่าชั้นใต้โหนดนี้ (เหลืออีก 15 ชั้น)
+                                ยังไม่มีชั้นที่รับค่าชั้นใต้โหนด R{modalNode.rank}-#{modalNode.id} (เหลืออีก 15 ชั้น)
+                              </div>
+                            )}
+
+                            {/* Show primary R1 15-level breakdown when inspecting Rank > 1 node with 0 downlines */}
+                            {modalNode.rank > 1 && !modalNode.isClone && r1Tiers.length > 0 && (
+                              <div className="mt-2 pt-2 border-t border-indigo-500/30 space-y-1.5 bg-indigo-950/25 p-2 rounded-lg border border-indigo-500/30">
+                                <div className="flex items-center justify-between flex-wrap gap-1">
+                                  <span className="text-indigo-300 font-bold text-[10.5px]">
+                                    📊 ฐานค่าชั้นหลักใน Rank 1 (R1-#{targetMainId}): รับแล้ว{' '}
+                                    <strong className="text-emerald-300">
+                                      {r1ReceivedPayingNodes.toLocaleString()} / 32,767 รหัส
+                                    </strong>
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      selectedRankRef.current = 1;
+                                      setSelectedRank(1);
+                                      if (viewMode === 'onchain') {
+                                        await loadOnChainTree(1);
+                                      }
+                                      setExpandedBenefitNodeId(targetMainId);
+                                    }}
+                                    className="px-2 py-0.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[10px] cursor-pointer transition"
+                                  >
+                                    ดูโหนด R1-#{targetMainId} ↗
+                                  </button>
+                                </div>
+                                <div className="space-y-1">
+                                  {r1Tiers.map((t: any) => (
+                                    <div
+                                      key={`modal-box2-r1-tier-${targetMainId}-${t.tier}`}
+                                      className="flex items-center justify-between gap-2 text-[10.5px]"
+                                    >
+                                      <span className="text-slate-300">
+                                        • <strong className="text-cyan-300">ชั้นที่ {t.tier}</strong>: ซ้าย{' '}
+                                        <strong className="text-white">{t.leftPayingNodesCount}</strong> รหัส
+                                        {t.leftNodeIds && t.leftNodeIds.length > 0
+                                          ? ` (#${t.leftNodeIds.join(', #')})`
+                                          : ''}
+                                      </span>
+                                      <span className="text-emerald-400 font-extrabold">
+                                        +{Number(t.amountUsdt || 0).toFixed(2)} USDT
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
                               </div>
                             )}
                           </div>
@@ -10369,9 +10801,17 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                       <button
                         key={`modal-rn-${rn.rank}-${rn.nodeId}`}
                         type="button"
-                        onClick={() => {
-                          setSelectedRank(rn.rank);
-                          setFocusRootId(rn.nodeId);
+                        onClick={async () => {
+                          const targetR = Number(rn.rank || 1);
+                          const targetNId = Number(rn.nodeId || 1);
+                          selectedRankRef.current = targetR;
+                          setSelectedRank(targetR);
+                          if (viewMode === 'onchain') {
+                            await loadOnChainTree(targetR);
+                          }
+                          setFocusRootId(targetNId);
+                          setSearchInput(String(targetNId));
+                          setNavigationHistory([targetNId]);
                           setExpandedBenefitNodeId(null);
                         }}
                         className="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-indigo-950 border border-slate-700 hover:border-indigo-500/50 text-slate-200 transition cursor-pointer flex items-center justify-between"
@@ -10422,67 +10862,250 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           '0x622E20082e63c7220c5AF0A77Cbc437a98505311';
         const activeWalletLower = activeWallet.toLowerCase();
 
-        const walletReportsMap = new Map<number, any>();
+        const walletReportsMap = new Map<string, any>();
+
+        const computeSnapshotNodeLevelSummary = (rNum: number, rootNodeId: number, snapMap: Map<number, any>) => {
+          const unitPrice = RANK_PRICES_USDT[Math.max(0, rNum - 1)] || 5;
+          const ratePerNode = Number((unitPrice * 0.02).toFixed(2));
+          const tiersBreakdown: any[] = [];
+          let thisNodeLvlTotal = 0;
+          let frontier = [rootNodeId];
+          const visited = new Set<number>([rootNodeId]);
+
+          for (let tier = 1; tier <= 15; tier++) {
+            const nextFrontier: number[] = [];
+            const leftNodeIds: number[] = [];
+            const rightNodeIds: number[] = [];
+            for (const pid of frontier) {
+              const pObj = snapMap.get(pid);
+              if (!pObj) continue;
+              if (pObj.leftChild > 0 && !visited.has(pObj.leftChild)) {
+                visited.add(pObj.leftChild);
+                nextFrontier.push(pObj.leftChild);
+                const leftChildObj = snapMap.get(pObj.leftChild);
+                if (!leftChildObj?.isAdminFreeUpgrade) {
+                  leftNodeIds.push(pObj.leftChild);
+                }
+              }
+              if (pObj.rightChild > 0 && !visited.has(pObj.rightChild)) {
+                visited.add(pObj.rightChild);
+                nextFrontier.push(pObj.rightChild);
+                rightNodeIds.push(pObj.rightChild);
+              }
+            }
+            if (nextFrontier.length === 0) break;
+            const tierAmt = Number((leftNodeIds.length * ratePerNode).toFixed(2));
+            thisNodeLvlTotal = Number((thisNodeLvlTotal + tierAmt).toFixed(2));
+            tiersBreakdown.push({
+              tier,
+              maxCapacity: Math.pow(2, tier),
+              totalNodesInTier: nextFrontier.length,
+              leftPayingNodesCount: leftNodeIds.length,
+              rightRebirthNodesCount: rightNodeIds.length,
+              ratePerNodeUsdt: ratePerNode,
+              amountUsdt: tierAmt,
+              allNodeIds: nextFrontier,
+              leftNodeIds,
+              rightNodeIds,
+            });
+            frontier = nextFrontier;
+          }
+          const receivedLevelsCount = tiersBreakdown.filter((t) => t.leftPayingNodesCount > 0).length;
+          return {
+            maxLevels: 15,
+            receivedLevelsCount,
+            remainingLevelsCount: Math.max(0, 15 - receivedLevelsCount),
+            ratePerNodeUsdt: ratePerNode,
+            thisNodeLevelTotalUsdt: thisNodeLvlTotal,
+            clonesLevelTotalUsdt: 0,
+            combinedLevelTotalUsdt: thisNodeLvlTotal,
+            tiersBreakdown,
+          };
+        };
+
         for (const rep of allReports) {
           if (String(rep.owner || '').toLowerCase() === activeWalletLower) {
-            walletReportsMap.set(Number(rep.id), rep);
+            const repRank = Number(rep.rank || 1);
+            const cat = rep.isClone ? 'CLONE' : rep.isExtraId ? 'EXTRA' : rep.isAutoId ? 'AUTO' : 'MAIN';
+            walletReportsMap.set(`${repRank}-${cat}-${Number(rep.id)}`, {
+              ...rep,
+              rank: repRank,
+            });
           }
         }
 
-        // Fallback: หากมีโหนดในผัง Rank 1 ที่เป็นของกระเป๋าที่ Login แต่ยังไม่อยู่ใน perIdReportsMap ให้แสดงทันที
-        if (selectedRank === 1) {
-          for (const n of activeNodesMap.values()) {
-            if (
-              String(n.owner || '').toLowerCase() === activeWalletLower &&
-              !walletReportsMap.has(Number(n.id))
-            ) {
-              walletReportsMap.set(Number(n.id), {
-                id: n.id,
-                label: n.isClone
-                  ? `Clone #${n.id} (ของ Main #${n.originMainId || n.id})`
-                  : n.isExtraId
-                  ? `Extra ID #${n.id}`
-                  : n.isAutoMainId
-                  ? `Auto ID #${n.id}`
-                  : `Main ID #${n.id}`,
-                typeBadge: n.isClone
-                  ? 'CLONE ID'
-                  : n.isExtraId
-                  ? 'EXTRA ID'
-                  : n.isAutoMainId
-                  ? 'AUTO ID'
-                  : 'MAIN ID',
-                isClone: Boolean(n.isClone),
-                isAutoId: Boolean(n.isAutoMainId),
-                isExtraId: Boolean(n.isExtraId),
-                originMainId: n.originMainId || n.id,
-                cloneRound: n.cloneRound || 0,
-                owner: n.owner,
-                directSponsorNodeId: n.directUplineNodeId || 1,
-                parentId: n.parentId || 0,
-                side: n.parentId === 0 ? 'ROOT' : n.isLeft ? 'LEFT' : 'RIGHT',
-                currentMaxRank: n.targetMainIdCurrentRank || 1,
-                direct30TotalUsdt: n.directRewardAllNodes || n.directRewardThisNode || 0,
-                level30TotalUsdt: n.unilevelRewardAllNodes || n.unilevelRewardThisNode || 0,
-                vault35GrossTotalUsdt: n.grossVaultFromLineage || n.vaultBalance || 0,
-                upgradeRankPool: n.upgradeRankPool || 0,
-                newAutoIdPool: n.newAutoIdPool || 0,
-                newExtraIdPool: n.newExtraIdPool || 0,
-                totalAutoIdCount: n.totalAutoIdCount || 0,
-                totalExtraIdCount: n.totalExtraIdCount || 0,
-                levelSummary: n.levelSummary,
+        // Merge Rank 2-18 Extra IDs & Clones from allReports.autoExtraIdsSpawned / clonesSpawned
+        for (const rep of allReports) {
+          const repOwnerLower = String(rep.owner || '').toLowerCase();
+          if (Array.isArray(rep.autoExtraIdsSpawned)) {
+            for (const ex of rep.autoExtraIdsSpawned) {
+              const exOwnerLower = String(ex.owner || repOwnerLower).toLowerCase();
+              if (exOwnerLower !== activeWalletLower) continue;
+              const exId = Number(ex.id || 0);
+              const exRank = Number(ex.rank || 2);
+              if (exId <= 0) continue;
+              const key = `${exRank}-EXTRA-${exId}`;
+              if (walletReportsMap.has(key)) continue;
+              const snapMap =
+                exRank === selectedRank
+                  ? (activeNodesMap as unknown as Map<number, any>)
+                  : multiRankSnapshotsState.get(exRank);
+              const ls = snapMap ? computeSnapshotNodeLevelSummary(exRank, exId, snapMap) : undefined;
+              const snapNode = snapMap?.get(exId);
+              walletReportsMap.set(key, {
+                id: exId,
+                rank: exRank,
+                label: ex.label || `Extra R${exRank}-#${exId}`,
+                typeBadge: 'EXTRA ID',
+                isClone: false,
+                isAutoId: false,
+                isExtraId: true,
+                originMainId: exId,
+                cloneRound: 0,
+                owner: ex.owner || rep.owner,
+                directSponsorNodeId: Number(ex.directSponsorNodeId || rep.id || 1),
+                parentId: Number(ex.parentId ?? snapNode?.parentId ?? 0),
+                side: ex.side || 'LEFT',
+                currentMaxRank: exRank,
+                direct30TotalUsdt: 0,
+                level30TotalUsdt: Number(ls?.thisNodeLevelTotalUsdt || 0),
+                vault35GrossTotalUsdt: Number(snapNode?.nodeVault ?? snapNode?.vaultBalance ?? 0),
+                upgradeRankPool: 0,
+                newAutoIdPool: 0,
+                newExtraIdPool: 0,
+                totalAutoIdCount: 0,
+                totalExtraIdCount: 0,
+                levelSummary: ls,
+              });
+            }
+          }
+          if (Array.isArray(rep.clonesSpawned)) {
+            for (const cl of rep.clonesSpawned) {
+              const clOwnerLower = String(cl.owner || repOwnerLower).toLowerCase();
+              if (clOwnerLower !== activeWalletLower) continue;
+              const clId = Number(cl.id || 0);
+              const clRank = Number(cl.rank || 1);
+              if (clId <= 0) continue;
+              const key = `${clRank}-CLONE-${clId}`;
+              if (walletReportsMap.has(key)) continue;
+              const snapMap =
+                clRank === selectedRank
+                  ? (activeNodesMap as unknown as Map<number, any>)
+                  : multiRankSnapshotsState.get(clRank);
+              const ls = snapMap ? computeSnapshotNodeLevelSummary(clRank, clId, snapMap) : undefined;
+              const snapNode = snapMap?.get(clId);
+              const unitPrice = RANK_PRICES_USDT[Math.max(0, clRank - 1)] || 5;
+              const leftChildObj = snapNode && snapNode.leftChild > 0 ? snapMap?.get(snapNode.leftChild) : undefined;
+              const hasPayingLeft = Boolean(leftChildObj && !leftChildObj.isAdminFreeUpgrade);
+              const estVault = Number(
+                snapNode?.nodeVault ??
+                  snapNode?.vaultBalance ??
+                  (hasPayingLeft ? unitPrice * 0.35 : 0)
+              );
+              walletReportsMap.set(key, {
+                id: clId,
+                rank: clRank,
+                label: cl.label || `Main #${rep.id} (โคลน R${clRank}-#${clId})`,
+                typeBadge: 'CLONE ID',
+                isClone: true,
+                isAutoId: false,
+                isExtraId: false,
+                originMainId: Number(rep.id),
+                cloneRound: Number(cl.cloneRound || 1),
+                cloneSequence: Number(cl.cloneSequence || 1),
+                owner: cl.owner || rep.owner,
+                directSponsorNodeId: Number(cl.directSponsorNodeId || rep.directSponsorNodeId || 1),
+                parentId: Number(cl.parentId ?? snapNode?.parentId ?? 0),
+                side: cl.side || 'RIGHT',
+                currentMaxRank: Number(rep.currentMaxRank || clRank || 1),
+                direct30TotalUsdt: 0,
+                level30TotalUsdt: Number(ls?.thisNodeLevelTotalUsdt || 0),
+                vault35GrossTotalUsdt: estVault,
+                levelSummary: ls,
               });
             }
           }
         }
 
+        // Fallback across ALL ranks in multiRankSnapshotsState and activeNodesMap (covers newly synced IDs not yet in reports)
+        const mergeSnapshotRankNodes = (rNum: number, nodesCollection: Iterable<any>, snapMap: Map<number, any>) => {
+          for (const n of nodesCollection) {
+            if (String(n.owner || '').toLowerCase() !== activeWalletLower || Number(n.id) <= 0) continue;
+            const isClone = Boolean(n.isClone);
+            const isExtra = Boolean(n.isExtraId || n.isExtraLineage) && !isClone;
+            const isAuto = !isClone && !isExtra && (Boolean(n.isAutoMainId) || n.originType === 'AUTO_NEW_MAIN');
+            const cat = isClone ? 'CLONE' : isExtra ? 'EXTRA' : isAuto ? 'AUTO' : 'MAIN';
+            const canonMain = Number(n.r1MainId || n.originMainId || n.id);
+            if (rNum > 1 && !isClone && !isExtra) {
+              if (walletReportsMap.has(`1-MAIN-${canonMain}`) || walletReportsMap.has(`1-AUTO-${canonMain}`)) {
+                continue;
+              }
+            }
+            const key = `${rNum}-${cat}-${Number(n.id)}`;
+            if (walletReportsMap.has(key)) continue;
+            const pNode = n.parentId > 0 ? snapMap.get(n.parentId) : undefined;
+            const side =
+              n.parentId === 0
+                ? 'ROOT'
+                : typeof n.isLeft === 'boolean'
+                ? n.isLeft
+                  ? 'LEFT'
+                  : 'RIGHT'
+                : pNode && pNode.leftChild === n.id
+                ? 'LEFT'
+                : 'RIGHT';
+            const ls = n.levelSummary || computeSnapshotNodeLevelSummary(rNum, Number(n.id), snapMap);
+            walletReportsMap.set(key, {
+              id: Number(n.id),
+              rank: rNum,
+              label: isClone
+                ? `Main #${canonMain} (โคลน R${rNum}-#${n.id})`
+                : isExtra
+                ? `Extra R${rNum}-#${n.id}`
+                : isAuto
+                ? `Auto ID #${n.id}`
+                : `Main ID #${n.id}`,
+              typeBadge: isClone ? 'CLONE ID' : isExtra ? 'EXTRA ID' : isAuto ? 'AUTO ID' : 'MAIN ID',
+              isClone,
+              isAutoId: isAuto,
+              isExtraId: isExtra,
+              originMainId: canonMain,
+              cloneRound: Number(n.cloneRound || 0),
+              owner: n.owner,
+              directSponsorNodeId: Number(n.directUplineNodeId ?? n.directSponsorNodeId ?? 1),
+              parentId: Number(n.parentId || 0),
+              side,
+              currentMaxRank: Number(n.targetMainIdCurrentRank || rNum || 1),
+              direct30TotalUsdt: Number(n.directRewardAllNodes || n.directRewardThisNode || 0),
+              level30TotalUsdt: Number(n.unilevelRewardAllNodes || n.unilevelRewardThisNode || ls?.thisNodeLevelTotalUsdt || 0),
+              vault35GrossTotalUsdt: Number(n.grossVaultFromLineage ?? n.vaultBalance ?? n.nodeVault ?? 0),
+              upgradeRankPool: Number(n.upgradeRankPool || 0),
+              newAutoIdPool: Number(n.newAutoIdPool || 0),
+              newExtraIdPool: Number(n.newExtraIdPool || 0),
+              totalAutoIdCount: Number(n.totalAutoIdCount || 0),
+              totalExtraIdCount: Number(n.totalExtraIdCount || 0),
+              levelSummary: ls,
+            });
+          }
+        };
+
+        for (const [rNum, snapMap] of multiRankSnapshotsState.entries()) {
+          mergeSnapshotRankNodes(rNum, snapMap.values(), snapMap as unknown as Map<number, any>);
+        }
+        mergeSnapshotRankNodes(
+          selectedRank,
+          activeNodesMap.values(),
+          activeNodesMap as unknown as Map<number, any>
+        );
+
         const walletReports = Array.from(walletReportsMap.values()).sort(
-          (a: any, b: any) => Number(b.id) - Number(a.id)
+          (a: any, b: any) =>
+            Number(b.rank || 1) - Number(a.rank || 1) || Number(b.id) - Number(a.id)
         );
 
         const WALLET_PAGE_SIZE = 10;
 
-        const mainAndAutoReports = walletReports.filter((rep: any) => !rep.isClone);
+        const mainAndAutoReports = walletReports.filter((rep: any) => !rep.isClone && !rep.isExtraId);
         const manualMainReports = walletReports.filter(
           (rep: any) => !rep.isClone && !rep.isAutoId && !rep.isExtraId
         );
@@ -10781,6 +11404,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                 {pagedGroupItems.map((rep: any) => {
                                   const repIdNum = Number(rep.id);
+                                  const repRankNum = Number(rep.rank || 1);
                                   const repOwnerLower = String(rep.owner || '').toLowerCase();
                                   const repRankNodeEntry = Array.isArray(rep.rankNodesList)
                                     ? rep.rankNodesList.find(
@@ -10788,7 +11412,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                                       )
                                     : undefined;
                                   const nodeInActiveRank = rep.isClone
-                                    ? selectedRank === 1
+                                    ? selectedRank === repRankNum
                                       ? (() => {
                                           const cand = activeNodesMap.get(repIdNum);
                                           return cand &&
@@ -10800,7 +11424,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                                         })()
                                       : undefined
                                     : rep.isExtraId
-                                    ? selectedRank === 1
+                                    ? selectedRank === repRankNum
                                       ? (() => {
                                           const cand = activeNodesMap.get(repIdNum);
                                           return cand &&
@@ -10866,12 +11490,16 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
 
                                   const displayTitle =
                                     rep.isExtraId && !rep.isClone
-                                      ? `Extra ID #${rep.id}`
+                                      ? rep.label || `Extra R${repRankNum}-#${rep.id}`
                                       : rep.label || `ID #${rep.id}`;
+
+                                  const cardKeyPrefix = `${repRankNum}-${
+                                    rep.isClone ? 'clone' : rep.isExtraId ? 'extra' : rep.isAutoId ? 'auto' : 'main'
+                                  }-${rep.id}`;
 
                                   return (
                                     <div
-                                      key={`wallet-id-card-${rep.id}`}
+                                      key={`wallet-id-card-${cardKeyPrefix}`}
                                       className="bg-white dark:bg-slate-950/90 border border-slate-200/80 dark:border-slate-800 hover:border-blue-300 dark:hover:border-indigo-500/50 rounded-xl p-3.5 space-y-2.5 transition shadow-xs"
                                     >
                                       <div className="flex items-center justify-between gap-2 flex-wrap border-b border-slate-200/80 dark:border-slate-800/90 pb-2">
@@ -10883,11 +11511,11 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                                             className={`px-2 py-0.5 rounded-full border font-mono font-bold text-[10px] ${badgeClass}`}
                                           >
                                             {rep.isClone
-                                              ? `${rep.typeBadge || 'CLONE ID'} • รอบที่ ${rep.cloneRound || 1}${
+                                              ? `${rep.typeBadge || 'CLONE ID'} (R${repRankNum}) • รอบที่ ${rep.cloneRound || 1}${
                                                   rep.cloneSequence ? ` (ใบที่ #${rep.cloneSequence})` : ''
                                                 }`
                                               : rep.isExtraId
-                                              ? 'EXTRA ID'
+                                              ? `EXTRA ID (R${repRankNum})`
                                               : rep.isAutoId
                                               ? 'AUTO ID'
                                               : rep.typeBadge || 'MAIN ID'}
@@ -10900,7 +11528,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
 
                                       <div className="text-[11px] font-mono text-slate-400 flex items-center justify-between">
                                         <span>
-                                          อัพไลน์ R1: <strong className="text-slate-900 dark:text-white">#{rep.parentId}</strong> ({rep.side})
+                                          อัพไลน์ R{repRankNum}: <strong className="text-slate-900 dark:text-white">#{rep.parentId}</strong> ({rep.side})
                                         </span>
                                         <span>
                                           ผู้แนะนำตรง: <strong className="text-amber-600 dark:text-amber-300">#{rep.directSponsorNodeId}</strong>
@@ -11040,12 +11668,12 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                                           onClick={() =>
                                             copyReferralLink(
                                               rep.originMainId || rep.id,
-                                              `wallet-modal-ref-${rep.id}`
+                                              `wallet-modal-ref-${cardKeyPrefix}`
                                             )
                                           }
                                           className="px-2 py-0.5 rounded bg-[#2563EB] hover:bg-blue-700 dark:bg-indigo-600 dark:hover:bg-indigo-500 text-white font-bold text-[10px] shrink-0 inline-flex items-center gap-1 cursor-pointer transition"
                                         >
-                                          {copiedReferralKey === `wallet-modal-ref-${rep.id}` ? (
+                                          {copiedReferralKey === `wallet-modal-ref-${cardKeyPrefix}` ? (
                                             <>
                                               <Check className="w-3 h-3" />
                                               <span>คัดลอกลิ้งแล้ว</span>
@@ -11067,16 +11695,18 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                                             const targetNodeId = nodeInActiveRank
                                               ? nodeInActiveRank.id
                                               : Number(rep.id);
-                                            const curMaxR = Number(rep.currentMaxRank || 1);
+                                            const targetRank = nodeInActiveRank ? selectedRank : repRankNum;
+                                            const curMaxR = Number(rep.currentMaxRank || targetRank || 1);
                                             setModalUpgradeTargetRank(Math.min(18, curMaxR + 1));
                                             setModalUpgradeMessage(null);
                                             setModalUpgradeError(null);
                                             setBenefitModalTab('all');
                                             setIsWalletIdsModalOpen(false);
-                                            if (!nodeInActiveRank) {
-                                              setSelectedRank(1);
+                                            if (!nodeInActiveRank && selectedRank !== targetRank) {
+                                              selectedRankRef.current = targetRank;
+                                              setSelectedRank(targetRank);
                                               if (viewMode === 'onchain') {
-                                                await loadOnChainTree(1);
+                                                await loadOnChainTree(targetRank);
                                               }
                                             }
                                             setExpandedBenefitNodeId(targetNodeId);
@@ -11097,11 +11727,25 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                                             const targetNodeId = nodeInActiveRank
                                               ? nodeInActiveRank.id
                                               : Number(rep.id);
+                                            const targetRank = nodeInActiveRank ? selectedRank : repRankNum;
                                             setIsWalletIdsModalOpen(false);
-                                            if (!nodeInActiveRank) {
-                                              setSelectedRank(1);
+                                            const matchedSwitchItem = walletOwnedIdsList.find(
+                                              (item) =>
+                                                item.id === Number(rep.id) &&
+                                                item.rank === repRankNum &&
+                                                ((rep.isClone && item.category === 'CLONE') ||
+                                                  (rep.isExtraId && item.category === 'EXTRA') ||
+                                                  (!rep.isClone && !rep.isExtraId && (item.category === 'MAIN' || item.category === 'AUTO')))
+                                            );
+                                            if (matchedSwitchItem) {
+                                              await handleSelectWalletSwitchId(matchedSwitchItem);
+                                              return;
+                                            }
+                                            if (!nodeInActiveRank && selectedRank !== targetRank) {
+                                              selectedRankRef.current = targetRank;
+                                              setSelectedRank(targetRank);
                                               if (viewMode === 'onchain') {
-                                                await loadOnChainTree(1);
+                                                await loadOnChainTree(targetRank);
                                               }
                                               setFocusRootId(targetNodeId);
                                               setSearchInput(String(targetNodeId));
@@ -12292,6 +12936,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                     const targetNode = liveAutoExtraToast.id || 1;
                     setLiveAutoExtraToast(null);
                     if (selectedRank !== targetR) {
+                      selectedRankRef.current = targetR;
                       setSelectedRank(targetR);
                       loadOnChainTree(targetR);
                     }
@@ -12801,6 +13446,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                                         onClick={async () => {
                                           setIsAutoExtraAlertModalOpen(false);
                                           if (selectedRank !== 1) {
+                                            selectedRankRef.current = 1;
                                             setSelectedRank(1);
                                             if (viewMode === 'onchain') {
                                               await loadOnChainTree(1);
@@ -12821,6 +13467,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                                         onClick={async () => {
                                           setIsAutoExtraAlertModalOpen(false);
                                           if (selectedRank !== 1) {
+                                            selectedRankRef.current = 1;
                                             setSelectedRank(1);
                                             if (viewMode === 'onchain') {
                                               await loadOnChainTree(1);
@@ -12957,6 +13604,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                                         onClick={async () => {
                                           setIsAutoExtraAlertModalOpen(false);
                                           if (selectedRank !== item.rank) {
+                                            selectedRankRef.current = item.rank;
                                             setSelectedRank(item.rank);
                                             if (viewMode === 'onchain') {
                                               await loadOnChainTree(item.rank);
@@ -13111,6 +13759,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                                   onClick={async () => {
                                     setIsAutoExtraAlertModalOpen(false);
                                     if (selectedRank !== 1) {
+                                      selectedRankRef.current = 1;
                                       setSelectedRank(1);
                                       if (viewMode === 'onchain') {
                                         await loadOnChainTree(1);

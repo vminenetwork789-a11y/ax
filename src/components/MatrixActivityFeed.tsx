@@ -51,9 +51,11 @@ export interface MatrixActivityFeedProps {
   selectedId: number;
   selectedLabel: string;
   selectedCategory?: 'MAIN' | 'AUTO' | 'EXTRA' | 'CLONE';
+  selectedSwitchRank?: number;
   originMainId: number;
   selectedRank: number;
   isStrictIdLocked: boolean;
+  ownedRankNodesList?: Array<{ rank: number; nodeId: number }>;
   wsConnected: boolean;
   wsTransport: string;
   wsLastSyncedAt: string | null;
@@ -123,9 +125,11 @@ export const MatrixActivityFeed: React.FC<MatrixActivityFeedProps> = ({
   selectedId,
   selectedLabel,
   selectedCategory = 'MAIN',
+  selectedSwitchRank = 1,
   originMainId,
   selectedRank,
   isStrictIdLocked,
+  ownedRankNodesList,
   wsConnected,
   wsTransport,
   wsLastSyncedAt,
@@ -194,40 +198,78 @@ export const MatrixActivityFeed: React.FC<MatrixActivityFeedProps> = ({
     ]);
   };
 
-  // Compute node IDs belonging to or directly under the selected ID for accurate filtering
+  // Compute rank-scoped (rank, nodeId) keys belonging to or directly under the selected Switch ID
   const scopedNodeContext = useMemo(() => {
-    const ownedNodeIds = new Set<number>([selectedId]);
     const isSpecificSubNode = selectedCategory === 'EXTRA' || selectedCategory === 'CLONE';
-    if (!isSpecificSubNode && originMainId > 0) {
-      ownedNodeIds.add(originMainId);
+    const effectiveSwitchRank = Math.max(1, Number(selectedSwitchRank || 1));
+    const ownedRankNodeKeys = new Set<string>();
+    const ownedNodeIdsInActiveRank = new Set<number>();
+
+    if (selectedId > 0) {
+      ownedRankNodeKeys.add(`${effectiveSwitchRank}-${selectedId}`);
     }
 
-    if (!isSpecificSubNode && Array.isArray(perIdReport?.rankNodesList)) {
-      for (const rn of perIdReport.rankNodesList) {
-        const nid = Number(rn?.nodeId || 0);
-        if (nid > 0) ownedNodeIds.add(nid);
+    if (!isSpecificSubNode) {
+      if (originMainId > 0) ownedRankNodeKeys.add(`1-${originMainId}`);
+      if (selectedId > 0) ownedRankNodeKeys.add(`1-${selectedId}`);
+
+      if (Array.isArray(perIdReport?.rankNodesList)) {
+        for (const rn of perIdReport.rankNodesList) {
+          const rNum = Number(rn?.rank || 0);
+          const nid = Number(rn?.nodeId || 0);
+          if (rNum > 0 && nid > 0) {
+            ownedRankNodeKeys.add(`${rNum}-${nid}`);
+          }
+        }
+      }
+
+      if (Array.isArray(ownedRankNodesList)) {
+        for (const rn of ownedRankNodesList) {
+          if (rn.rank > 0 && rn.nodeId > 0) {
+            ownedRankNodeKeys.add(`${rn.rank}-${rn.nodeId}`);
+          }
+        }
       }
     }
 
-    // Collect downline subtree under selectedId in activeNodesMap
+    // Resolve the exact node ID representing the selected Switch ID inside activeNodesMap (current selectedRank)
+    let activeRankRootId: number | null = null;
+    if (activeNodesMap.size > 0) {
+      if (isSpecificSubNode) {
+        if (selectedRank === effectiveSwitchRank && activeNodesMap.has(selectedId)) {
+          const candidate = activeNodesMap.get(selectedId)!;
+          const matchesCat =
+            (selectedCategory === 'CLONE' && Boolean(candidate.isClone)) ||
+            (selectedCategory === 'EXTRA' && Boolean(candidate.isExtraId));
+          if (matchesCat) {
+            activeRankRootId = candidate.id;
+            ownedNodeIdsInActiveRank.add(candidate.id);
+          }
+        }
+      } else {
+        for (const n of activeNodesMap.values()) {
+          if (
+            ownedRankNodeKeys.has(`${n.rank || selectedRank}-${n.id}`) ||
+            (!n.isClone &&
+              !n.isExtraId &&
+              (n.r1MainId === originMainId || n.originMainId === originMainId || (selectedRank === 1 && n.id === selectedId)))
+          ) {
+            ownedRankNodeKeys.add(`${n.rank || selectedRank}-${n.id}`);
+            ownedNodeIdsInActiveRank.add(n.id);
+            if (activeRankRootId === null) activeRankRootId = n.id;
+          }
+        }
+      }
+    }
+
+    // Collect downline subtree under activeRankRootId in activeNodesMap (strictly scoped to selectedRank)
     const downlineNodeIds = new Set<number>();
+    const downlineRankNodeKeys = new Set<string>();
     const directChildIds = new Set<number>();
     const queue: number[] = [];
 
-    if (activeNodesMap.has(selectedId)) {
-      queue.push(selectedId);
-    } else if (!isSpecificSubNode && originMainId > 0 && activeNodesMap.has(originMainId)) {
-      queue.push(originMainId);
-    } else {
-      for (const n of activeNodesMap.values()) {
-        if (
-          n.id === selectedId ||
-          (!isSpecificSubNode && (n.r1MainId === originMainId || n.originMainId === originMainId) && !n.isClone && !n.isExtraId)
-        ) {
-          ownedNodeIds.add(n.id);
-          queue.push(n.id);
-        }
-      }
+    if (activeRankRootId !== null) {
+      queue.push(activeRankRootId);
     }
 
     const visited = new Set<number>();
@@ -237,40 +279,72 @@ export const MatrixActivityFeed: React.FC<MatrixActivityFeedProps> = ({
       visited.add(currId);
       const node = activeNodesMap.get(currId);
       if (!node) continue;
+      const nodeRank = Number(node.rank || selectedRank || 1);
       if (node.leftChild > 0) {
-        if (currId === selectedId || ownedNodeIds.has(currId)) directChildIds.add(node.leftChild);
+        if (currId === activeRankRootId || ownedNodeIdsInActiveRank.has(currId)) {
+          directChildIds.add(node.leftChild);
+        }
         downlineNodeIds.add(node.leftChild);
+        downlineRankNodeKeys.add(`${nodeRank}-${node.leftChild}`);
         queue.push(node.leftChild);
       }
       if (node.rightChild > 0) {
-        if (currId === selectedId || ownedNodeIds.has(currId)) directChildIds.add(node.rightChild);
+        if (currId === activeRankRootId || ownedNodeIdsInActiveRank.has(currId)) {
+          directChildIds.add(node.rightChild);
+        }
         downlineNodeIds.add(node.rightChild);
+        downlineRankNodeKeys.add(`${nodeRank}-${node.rightChild}`);
         queue.push(node.rightChild);
       }
     }
 
-    // Also include nodes where selectedId is direct sponsor/upline in active rank
-    for (const n of activeNodesMap.values()) {
-      if (
-        ownedNodeIds.has(Number(n.directUplineNodeId || 0)) ||
-        ownedNodeIds.has(Number(n.parentId || 0))
-      ) {
-        downlineNodeIds.add(n.id);
+    // Also include direct sponsored / placed nodes in active rank under activeRankRootId
+    if (activeRankRootId !== null) {
+      for (const n of activeNodesMap.values()) {
+        if (n.id === activeRankRootId) continue;
+        const nRank = Number(n.rank || selectedRank || 1);
+        if (
+          ownedNodeIdsInActiveRank.has(Number(n.directUplineNodeId || 0)) ||
+          ownedNodeIdsInActiveRank.has(Number(n.parentId || 0))
+        ) {
+          downlineNodeIds.add(n.id);
+          downlineRankNodeKeys.add(`${nRank}-${n.id}`);
+        }
       }
     }
 
     return {
-      ownedNodeIds,
+      ownedRankNodeKeys,
+      ownedNodeIdsInActiveRank,
+      activeRankRootId,
       downlineNodeIds,
+      downlineRankNodeKeys,
       directChildIds,
       isSpecificSubNode,
+      effectiveSwitchRank,
     };
-  }, [selectedId, originMainId, selectedCategory, perIdReport, activeNodesMap]);
+  }, [
+    selectedId,
+    originMainId,
+    selectedCategory,
+    selectedSwitchRank,
+    selectedRank,
+    perIdReport,
+    ownedRankNodesList,
+    activeNodesMap,
+  ]);
 
-  // Merge and normalize all real-time + historical events filtered strictly for the selected ID
+  // Merge and normalize all real-time + historical events filtered strictly for the selected Switch ID
   const activityItems = useMemo<NormalizedActivityItem[]>(() => {
     const itemsMap = new Map<string, NormalizedActivityItem>();
-    const { ownedNodeIds, downlineNodeIds, isSpecificSubNode } = scopedNodeContext;
+    const {
+      ownedRankNodeKeys,
+      ownedNodeIdsInActiveRank,
+      activeRankRootId,
+      downlineNodeIds,
+      downlineRankNodeKeys,
+      isSpecificSubNode,
+    } = scopedNodeContext;
 
     const addItem = (item: NormalizedActivityItem) => {
       const existing = itemsMap.get(item.id);
@@ -279,10 +353,9 @@ export const MatrixActivityFeed: React.FC<MatrixActivityFeedProps> = ({
       }
     };
 
-    const matchesOwnedOrSubNode = (nodeIdNum: number, mainIdNum?: number) => {
-      if (nodeIdNum > 0 && ownedNodeIds.has(nodeIdNum)) return true;
-      if (!isSpecificSubNode && mainIdNum && mainIdNum > 0 && ownedNodeIds.has(mainIdNum)) return true;
-      return false;
+    const matchesRankNode = (rankNum: number, nodeIdNum: number) => {
+      if (nodeIdNum <= 0 || rankNum <= 0) return false;
+      return ownedRankNodeKeys.has(`${rankNum}-${nodeIdNum}`);
     };
 
     // 1. Live & Historical Reward Logs (wsRewardLogs + apiRewardLogs)
@@ -293,8 +366,8 @@ export const MatrixActivityFeed: React.FC<MatrixActivityFeedProps> = ({
       const rankNum = Number(r.rank || 1);
       const rType = String(r.rewardType || 'DIRECT').toUpperCase();
       const amountNum = Number(parseFloat(String(r.amount || '0')) || 0);
-      const isRecipient = ownedNodeIds.has(toId);
-      const isSenderVault = rType.includes('VAULT') && ownedNodeIds.has(fromId);
+      const isRecipient = matchesRankNode(rankNum, toId);
+      const isSenderVault = rType.includes('VAULT') && matchesRankNode(rankNum, fromId);
 
       if (!isRecipient && !isSenderVault) continue;
       if (rType === 'UNPAID_LEVEL_FAMILY_POOL' && toId === 0) continue;
@@ -531,9 +604,12 @@ export const MatrixActivityFeed: React.FC<MatrixActivityFeedProps> = ({
     for (const u of combinedUpgrades) {
       const mId = Number(u.mainNodeId || 0);
       const newNid = Number(u.newNodeId || 0);
-      if (!matchesOwnedOrSubNode(newNid, mId)) continue;
-
       const toRank = Number(u.toRank || 2);
+      const matchesUpgrade =
+        (!isSpecificSubNode && mId > 0 && mId === originMainId) ||
+        matchesRankNode(toRank, newNid);
+      if (!matchesUpgrade) continue;
+
       const fromRank = Number(u.fromRank || Math.max(1, toRank - 1));
       const cost = parseFloat(String(u.rankPriceUsdt || u.costUsdt || '0')) || 0;
       const ts = String(u.createdAt || u.timestamp || '');
@@ -568,15 +644,26 @@ export const MatrixActivityFeed: React.FC<MatrixActivityFeedProps> = ({
       const cat = String(tx.category || '').toUpperCase();
       const txMainId = Number(tx.mainNodeId || 0);
       const txRank = Number(tx.rank || 1);
-      const regNodeMatch = String(tx.id || '').match(/^reg-r\d+-(\d+)$/);
-      const txNodeId = regNodeMatch ? Number(regNodeMatch[1]) : txMainId;
+      const regNodeMatch = String(tx.id || '').match(/^reg-r(\d+)-(\d+)$/);
+      const effectiveRank = regNodeMatch ? Number(regNodeMatch[1]) : txRank;
+      const txNodeId = regNodeMatch ? Number(regNodeMatch[2]) : txMainId;
 
-      const isSelfTx = matchesOwnedOrSubNode(txNodeId, txMainId);
+      const isSelfTx =
+        cat === 'PAYOUT'
+          ? matchesRankNode(effectiveRank, txNodeId)
+          : cat === 'UPGRADE'
+          ? (!isSpecificSubNode && txMainId > 0 && txMainId === originMainId) ||
+            matchesRankNode(effectiveRank, txNodeId)
+          : matchesRankNode(effectiveRank, txNodeId) ||
+            (!isSpecificSubNode && txMainId > 0 && txMainId === originMainId);
+
       const isDownlineReg =
         cat === 'REGISTRATION' &&
-        (downlineNodeIds.has(txNodeId) ||
-          String(tx.detailsEn || '').includes(`Parent #${selectedId}`) ||
-          String(tx.detailsTh || '').includes(`#${selectedId} (`));
+        (downlineRankNodeKeys.has(`${effectiveRank}-${txNodeId}`) ||
+          (activeRankRootId !== null &&
+            effectiveRank === selectedRank &&
+            (String(tx.detailsEn || '').includes(`Parent #${activeRankRootId}`) ||
+              String(tx.detailsTh || '').includes(`#${activeRankRootId} (`))));
 
       if (!isSelfTx && !isDownlineReg) continue;
       // Avoid duplicating payouts/upgrades already normalized above unless they carry a real txHash
@@ -594,7 +681,7 @@ export const MatrixActivityFeed: React.FC<MatrixActivityFeedProps> = ({
 
       const ts = String(tx.timestamp || '');
       addItem({
-        id: `tx-${tx.id || `${cat}-${txRank}-${txNodeId}`}`,
+        id: `tx-${tx.id || `${cat}-${effectiveRank}-${txNodeId}`}`,
         category: cat === 'PAYOUT' ? 'INCOME' : cat === 'UPGRADE' ? 'UPGRADE_VAULT' : 'NODE_SPAWN',
         subType: cat || 'TX',
         title:
@@ -607,8 +694,8 @@ export const MatrixActivityFeed: React.FC<MatrixActivityFeedProps> = ({
             : tx.titleEn || tx.titleTh || `Transaction #${txNodeId}`,
         subtitle:
           (language === 'th' ? tx.detailsTh : tx.detailsEn) ||
-          `Rank ${txRank} · ${shortenWallet(tx.userAddress)}`,
-        rank: txRank,
+          `Rank ${effectiveRank} · ${shortenWallet(tx.userAddress)}`,
+        rank: effectiveRank,
         focusNodeId: txNodeId > 0 ? txNodeId : undefined,
         amountUsdt: Number(tx.amountUsdt || 0) || undefined,
         amountDirection: cat === 'PAYOUT' ? 'IN' : cat === 'UPGRADE' ? 'OUT' : 'INFO',
@@ -637,15 +724,20 @@ export const MatrixActivityFeed: React.FC<MatrixActivityFeedProps> = ({
       });
     }
 
-    // 6. Live direct/subtree nodes in activeNodesMap for current rank (ensures downlines visible in tree also show up)
+    // 6. Live direct/subtree nodes in activeNodesMap for current rank (strictly under activeRankRootId)
     for (const n of activeNodesMap.values()) {
-      if (n.id === selectedId) continue;
-      if (!downlineNodeIds.has(n.id)) continue;
-      const existingRegId = `tx-reg-r1-${n.id}`;
+      if (ownedNodeIdsInActiveRank.has(n.id) || n.id === activeRankRootId) continue;
+      if (!downlineRankNodeKeys.has(`${n.rank || selectedRank}-${n.id}`)) continue;
+      const existingRegId = `tx-reg-r${n.rank || 1}-${n.id}`;
       const existingLiveId = `node-downline-${n.rank}-${n.id}`;
-      if (n.rank === 1 && itemsMap.has(existingRegId)) continue;
+      if (itemsMap.has(existingRegId)) continue;
 
-      const isDirectChild = n.parentId === selectedId || n.directUplineNodeId === selectedId;
+      const isDirectChild =
+        activeRankRootId !== null &&
+        (n.parentId === activeRankRootId ||
+          n.directUplineNodeId === activeRankRootId ||
+          ownedNodeIdsInActiveRank.has(n.parentId) ||
+          ownedNodeIdsInActiveRank.has(Number(n.directUplineNodeId || 0)));
       if (!isDirectChild && downlineNodeIds.size > 25) continue; // Keep feed focused on direct / recent subtree when huge
 
       const ts = String(n.createdAt || '');
@@ -686,6 +778,7 @@ export const MatrixActivityFeed: React.FC<MatrixActivityFeedProps> = ({
     selectedIdAlertsFeed,
     activeNodesMap,
     selectedId,
+    originMainId,
     selectedRank,
     wsLastSyncedAt,
     language,
@@ -762,7 +855,13 @@ export const MatrixActivityFeed: React.FC<MatrixActivityFeedProps> = ({
               {selectedLabel}
             </span>
             <span>·</span>
-            <span>{isStrictIdLocked ? (language === 'th' ? 'กรองเฉพาะ ID' : 'ID Locked') : `Main #${originMainId}`}</span>
+            <span>
+              {isStrictIdLocked
+                ? language === 'th'
+                  ? 'อ้างอิงปุ่มสลับ ID'
+                  : 'Switch ID Locked'
+                : `Main #${originMainId}`}
+            </span>
             <span>·</span>
             <span className="inline-flex items-center gap-1">
               {wsConnected && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />}
@@ -1027,7 +1126,9 @@ export const MatrixActivityFeed: React.FC<MatrixActivityFeedProps> = ({
       {/* Footer Timestamp */}
       <div className="px-3.5 py-2 border-t border-slate-200/80 dark:border-slate-800/90 bg-[#F8FAFC]/60 dark:bg-slate-950/60 flex items-center justify-between text-[10px] font-mono tabular-nums text-[#64748B] dark:text-slate-500 shrink-0">
         <span>
-          {language === 'th' ? `ผัง R${selectedRank} · กรอง ID #${selectedId}` : `Rank ${selectedRank} · ID #${selectedId}`}
+          {language === 'th'
+            ? `ผัง R${selectedRank} · เฉพาะ ${selectedLabel}`
+            : `Rank ${selectedRank} · ${selectedLabel}`}
         </span>
         <span>
           {wsLastSyncedAt || lastFetchedAt
