@@ -985,6 +985,11 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
   const [systemPoolsModalTab, setSystemPoolsModalTab] = useState<'all' | 'allsell' | 'family' | 'bot'>('all');
   const [botWalletLiveData, setBotWalletLiveData] = useState<any>(null);
   const [isLoadingBotWallet, setIsLoadingBotWallet] = useState<boolean>(false);
+  const [botWalletEditInput, setBotWalletEditInput] = useState<string>(
+    '0xB3832D4cc6daE0B24f1e6660d7C85dcc1F005Cd1'
+  );
+  const [isUpdatingBotWallet, setIsUpdatingBotWallet] = useState<boolean>(false);
+  const [botWalletUpdateMsg, setBotWalletUpdateMsg] = useState<string | null>(null);
   const fetchBotWalletHistory = useCallback(async (forceSync = false) => {
     setIsLoadingBotWallet(true);
     try {
@@ -995,6 +1000,9 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         const json = await res.json();
         if (json?.success) {
           setBotWalletLiveData(json);
+          if (json.botWallet) {
+            setBotWalletEditInput(String(json.botWallet));
+          }
         }
       }
     } catch {
@@ -1003,6 +1011,82 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
       setIsLoadingBotWallet(false);
     }
   }, []);
+  const handleSaveBotWalletAddress = useCallback(
+    async (nextAddr: string) => {
+      const trimmed = nextAddr.trim();
+      if (!ethers.isAddress(trimmed)) {
+        setBotWalletUpdateMsg('❌ รูปแบบที่อยู่กระเป๋าไม่ถูกต้อง (ต้องเป็น Address 0x...)');
+        return;
+      }
+      setIsUpdatingBotWallet(true);
+      setBotWalletUpdateMsg(null);
+      try {
+        const res = await fetch('/api/matrix/bot-wallet', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ botWallet: trimmed }),
+        });
+        const json = await res.json();
+        if (!res.ok || !json?.success) {
+          throw new Error(json?.error || 'อัปเดตกระเป๋าบอทไม่สำเร็จ');
+        }
+        setBotWalletEditInput(json.botWallet);
+        setSystemPoolsData((prev: any) =>
+          prev ? { ...prev, botWallet: json.botWallet } : prev
+        );
+        await fetchBotWalletHistory(true);
+        setBotWalletUpdateMsg(`✅ อัปเดตกระเป๋าบอทเป็น ${json.botWallet} เรียบร้อยแล้ว`);
+      } catch (err: any) {
+        setBotWalletUpdateMsg(`❌ ${err?.message || 'เกิดข้อผิดพลาดในการอัปเดตกระเป๋าบอท'}`);
+      } finally {
+        setIsUpdatingBotWallet(false);
+      }
+    },
+    [fetchBotWalletHistory]
+  );
+  const handleSyncBotWalletOnChain = useCallback(async () => {
+    if (typeof window === 'undefined' || !(window as any).ethereum) {
+      setBotWalletUpdateMsg('❌ ไม่พบ MetaMask / Web3 Wallet ในเบราว์เซอร์');
+      return;
+    }
+    const targetBot = (
+      botWalletEditInput ||
+      botWalletLiveData?.botWallet ||
+      '0xB3832D4cc6daE0B24f1e6660d7C85dcc1F005Cd1'
+    ).trim();
+    if (!ethers.isAddress(targetBot)) {
+      setBotWalletUpdateMsg('❌ ที่อยู่กระเป๋าบอทไม่ถูกต้อง');
+      return;
+    }
+    setIsUpdatingBotWallet(true);
+    setBotWalletUpdateMsg(null);
+    try {
+      const browserProvider = new ethers.BrowserProvider((window as any).ethereum);
+      await browserProvider.send('eth_requestAccounts', []);
+      const signer = await browserProvider.getSigner();
+      const contract = new ethers.Contract(CONTRACT_ADDRESS, MATRIX_ABI, signer);
+      const allSellAddr =
+        systemPoolsData?.allSellWallet || '0xBeFEB9871a20656aeF7E8d218f751e9C23FAF710';
+      const familyAddr =
+        systemPoolsData?.familyPoolWallet || '0x225DF4b5961f757f54728138F289Eaf49D4F275A';
+      const tx = await contract.setSystemWallets(allSellAddr, targetBot, familyAddr);
+      setBotWalletUpdateMsg('⏳ กำลังส่งธุรกรรมอัปเดต Bot Wallet ขึ้น Smart Contract...');
+      await tx.wait();
+      await fetch('/api/matrix/bot-wallet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ botWallet: targetBot }),
+      });
+      await fetchBotWalletHistory(true);
+      setBotWalletUpdateMsg('✅ อัปเดตกระเป๋าบอทขึ้น Smart Contract สำเร็จแล้ว');
+    } catch (err: any) {
+      setBotWalletUpdateMsg(
+        `❌ ${err?.shortMessage || err?.reason || err?.message || 'ไม่สามารถอัปเดตบน Smart Contract ได้ (ต้องใช้กระเป๋า Owner)'}`
+      );
+    } finally {
+      setIsUpdatingBotWallet(false);
+    }
+  }, [botWalletEditInput, botWalletLiveData?.botWallet, fetchBotWalletHistory, systemPoolsData]);
   const [isRunningAllSellAuto, setIsRunningAllSellAuto] = useState<boolean>(false);
   const [allSellAutoMsg, setAllSellAutoMsg] = useState<string | null>(null);
   const [isAutoExtraAlertModalOpen, setIsAutoExtraAlertModalOpen] = useState<boolean>(false);
@@ -1031,6 +1115,11 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
   const [isModalUpgrading, setIsModalUpgrading] = useState<boolean>(false);
   const [modalUpgradeMessage, setModalUpgradeMessage] = useState<string | null>(null);
   const [modalUpgradeError, setModalUpgradeError] = useState<string | null>(null);
+  useEffect(() => {
+    setModalUpgradeTargetRank(0);
+    setModalUpgradeMessage(null);
+    setModalUpgradeError(null);
+  }, [expandedBenefitNodeId]);
   const [isWalletIdsModalOpen, setIsWalletIdsModalOpen] = useState<boolean>(false);
   const [selectedInspectWallet, setSelectedInspectWallet] = useState<string>('');
   const [walletIdsStatusFilter, setWalletIdsStatusFilter] = useState<'all' | 'main' | 'auto' | 'extra' | 'clone'>('all');
@@ -1246,7 +1335,8 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
       setSelectedInspectWallet(userAddress);
     }
     fetchPerIdHistoryForModal();
-  }, [fetchPerIdHistoryForModal, selectedRank, refreshTrigger, lastTxSuccess, userAddress]);
+    fetchBotWalletHistory();
+  }, [fetchPerIdHistoryForModal, fetchBotWalletHistory, selectedRank, refreshTrigger, lastTxSuccess, userAddress]);
 
   const [isLoadingTree, setIsLoadingTree] = useState<boolean>(true);
   const [hasInitialTreeLoaded, setHasInitialTreeLoaded] = useState<boolean>(false);
@@ -7123,8 +7213,8 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                           🤖 กระเป๋าบอท (1%)
                         </span>
                         <span className="text-[10px] font-mono text-[#64748B] dark:text-slate-400">
-                          {(botWalletLiveData?.botWallet || systemPoolsData?.botWallet || '0xbFD03d4D69221085a63Dd372A5d59f952C084a56').slice(0, 6)}...
-                          {(botWalletLiveData?.botWallet || systemPoolsData?.botWallet || '0xbFD03d4D69221085a63Dd372A5d59f952C084a56').slice(-4)}
+                          {(botWalletLiveData?.botWallet || systemPoolsData?.botWallet || '0xB3832D4cc6daE0B24f1e6660d7C85dcc1F005Cd1').slice(0, 6)}...
+                          {(botWalletLiveData?.botWallet || systemPoolsData?.botWallet || '0xB3832D4cc6daE0B24f1e6660d7C85dcc1F005Cd1').slice(-4)}
                         </span>
                       </div>
                       <div className="flex items-center gap-2 flex-wrap font-mono text-xs text-[#334155] dark:text-slate-200">
@@ -8938,36 +9028,43 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           mainReport?.currentMaxRank || 1,
           modalNode.rank || 1
         );
+        const nextSequentialRank = Math.min(18, currentMaxR + 1);
+        const nextSeqRankPrice = RANK_PRICES_USDT[nextSequentialRank - 1] || 10;
+        const canAdminFreeUpgrade = isAuthorizedAdminWallet(userAddress) || Boolean(onAdminUpgrade);
         const effectiveTargetRank =
-          modalUpgradeTargetRank > currentMaxR
+          canAdminFreeUpgrade && modalUpgradeTargetRank > currentMaxR
             ? Math.min(18, modalUpgradeTargetRank)
-            : Math.min(18, currentMaxR + 1);
+            : nextSequentialRank;
         const targetRankPrice = RANK_PRICES_USDT[effectiveTargetRank - 1] || 10;
         const curUpgradePoolVal = Number(
           modalNode.isExtraLineage
             ? 0
             : mainReport?.upgradeRankPool ?? modalNode.upgradeRankPool ?? 0
         );
-        const poolDeduct = Math.min(curUpgradePoolVal, targetRankPrice);
-        const netDiffToPay = Math.max(0, Number((targetRankPrice - poolDeduct).toFixed(2)));
+        const poolDeduct = Math.min(curUpgradePoolVal, nextSeqRankPrice);
+        const netDiffToPay = Math.max(0, Number((nextSeqRankPrice - poolDeduct).toFixed(2)));
 
         const handleTriggerModalUpgrade = async (rankToUpgrade: number) => {
-          if (isModalUpgrading || currentMaxR >= 18 || rankToUpgrade <= currentMaxR || rankToUpgrade > 18) return;
+          const safeRank = nextSequentialRank;
+          if (isModalUpgrading || currentMaxR >= 18 || safeRank <= currentMaxR || safeRank > 18) return;
+          const actualTargetRank = rankToUpgrade === safeRank ? safeRank : safeRank;
           setIsModalUpgrading(true);
           setModalUpgradeError(null);
-          const pendingMsg = `กำลังอัปเกรด Main ID #${targetMainId} สู่ Rank ${rankToUpgrade} (${RANK_PRICES_USDT[rankToUpgrade - 1] || 10} USDT)...`;
+          const pendingMsg = `กำลังอัปเกรด Main ID #${targetMainId} สู่ Rank ${actualTargetRank} (${RANK_PRICES_USDT[actualTargetRank - 1] || 10} USDT)...`;
           setModalUpgradeMessage(pendingMsg);
-          const toastId = `modal-upgrade-${targetMainId}-${rankToUpgrade}-${Date.now()}`;
-          emitTransactionToast({
-            id: toastId,
-            status: 'pending',
-            step: `กำลังอัปเกรดสู่ Rank ${rankToUpgrade}...`,
-            message: pendingMsg,
-          });
+          const toastId = `modal-upgrade-${targetMainId}-${actualTargetRank}-${Date.now()}`;
+          if (!onUpgradeToRank) {
+            emitTransactionToast({
+              id: toastId,
+              status: 'pending',
+              step: `กำลังอัปเกรดสู่ Rank ${actualTargetRank}...`,
+              message: pendingMsg,
+            });
+          }
           try {
             let confirmedTxHash: string | null = null;
             if (onUpgradeToRank) {
-              const upgRes = await onUpgradeToRank(rankToUpgrade, targetMainId);
+              const upgRes = await onUpgradeToRank(actualTargetRank, targetMainId);
               if (upgRes && upgRes.success === false) {
                 throw new Error(upgRes.error || 'การอัปเกรดแรงค์ล้มเหลว');
               }
@@ -8977,7 +9074,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                  targetRank: rankToUpgrade,
+                  targetRank: actualTargetRank,
                   mainId: targetMainId,
                   owner: modalNode.owner,
                 }),
@@ -8987,48 +9084,52 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                 throw new Error(data?.error || 'ไม่สามารถอัปเกรดแรงค์ได้');
               }
               confirmedTxHash = data?.txHash || null;
-              await fetch(`/api/db/sync?rank=${rankToUpgrade}&fast=1`, { method: 'POST' }).catch(() => null);
+              await fetch(`/api/db/sync?rank=${actualTargetRank}&fast=1`, { method: 'POST' }).catch(() => null);
               savePostTxNotice({
                 type: 'upgrade',
-                step: `อัปเกรดสู่ Rank ${rankToUpgrade} สำเร็จ!`,
-                message: `🚀 อัปเกรด Main ID #${targetMainId} สู่ Rank ${rankToUpgrade} สำเร็จเรียบร้อยแล้ว!`,
+                step: `อัปเกรดสู่ Rank ${actualTargetRank} สำเร็จ!`,
+                message: `🚀 อัปเกรด Main ID #${targetMainId} สู่ Rank ${actualTargetRank} สำเร็จเรียบร้อยแล้ว!`,
                 txHash: confirmedTxHash,
-                targetRank: rankToUpgrade,
+                targetRank: actualTargetRank,
                 mainId: targetMainId,
               });
               savePostTxViewTarget({
                 type: 'upgrade',
-                selectedRank: rankToUpgrade,
+                selectedRank: actualTargetRank,
                 selectedMainId: targetMainId,
                 focusNodeId: targetMainId,
-                targetRank: rankToUpgrade,
+                targetRank: actualTargetRank,
                 mainId: targetMainId,
               });
               triggerAutoPageRefresh(1300);
             }
-            const okMsg = `🚀 อัปเกรด Main ID #${targetMainId} สู่ Rank ${rankToUpgrade} สำเร็จเรียบร้อยแล้ว!`;
+            const okMsg = `🚀 อัปเกรด Main ID #${targetMainId} สู่ Rank ${actualTargetRank} สำเร็จเรียบร้อยแล้ว!`;
             setModalUpgradeMessage(okMsg);
-            emitTransactionToast({
-              id: toastId,
-              status: 'confirmed',
-              step: `ยืนยันการอัปเกรด Rank ${rankToUpgrade} สำเร็จ!`,
-              message: okMsg,
-              txHash: confirmedTxHash,
-            });
-            setModalUpgradeTargetRank(Math.min(18, rankToUpgrade + 1));
-            setSelectedRank(rankToUpgrade);
+            if (!onUpgradeToRank) {
+              emitTransactionToast({
+                id: toastId,
+                status: 'confirmed',
+                step: `ยืนยันการอัปเกรด Rank ${actualTargetRank} สำเร็จ!`,
+                message: okMsg,
+                txHash: confirmedTxHash,
+              });
+            }
+            setModalUpgradeTargetRank(Math.min(18, actualTargetRank + 1));
+            setSelectedRank(actualTargetRank);
             await fetchPerIdHistoryForModal();
-            await loadOnChainTree(rankToUpgrade, { silent: true, forceSync: true });
+            await loadOnChainTree(actualTargetRank, { silent: true, forceSync: true });
           } catch (err: any) {
             const errMsg = err?.message || 'การอัปเกรดแรงค์ล้มเหลว';
             setModalUpgradeMessage(null);
             setModalUpgradeError(errMsg);
-            emitTransactionToast({
-              id: toastId,
-              status: 'error',
-              step: `อัปเกรด Rank ${rankToUpgrade} ไม่สำเร็จ`,
-              message: errMsg,
-            });
+            if (!onUpgradeToRank) {
+              emitTransactionToast({
+                id: toastId,
+                status: 'error',
+                step: `อัปเกรด Rank ${actualTargetRank} ไม่สำเร็จ`,
+                message: errMsg,
+              });
+            }
           } finally {
             setIsModalUpgrading(false);
           }
@@ -9041,12 +9142,14 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           const pendingMsg = `กำลังดำเนินการ Admin อัพ Rank ฟรี ให้ Main ID #${targetMainId} สู่ Rank ${rankToUpgrade} (ไม่จ่ายค่าคอมเมื่อวางซ้าย • ระบบโคลนนิ่งทำงานปกติเมื่อวางขวา)...`;
           setModalUpgradeMessage(pendingMsg);
           const toastId = `modal-admin-free-upgrade-${targetMainId}-${rankToUpgrade}-${Date.now()}`;
-          emitTransactionToast({
-            id: toastId,
-            status: 'pending',
-            step: `Admin อัพ Rank ฟรี สู่ Rank ${rankToUpgrade}...`,
-            message: pendingMsg,
-          });
+          if (!onAdminUpgrade) {
+            emitTransactionToast({
+              id: toastId,
+              status: 'pending',
+              step: `Admin อัพ Rank ฟรี สู่ Rank ${rankToUpgrade}...`,
+              message: pendingMsg,
+            });
+          }
           try {
             let confirmedTxHash: string | null = null;
             let okMsg = `✅ Admin Upgrade สำเร็จ! อัพ Rank รหัส #${targetMainId} ให้ฟรีสู่ Rank ${rankToUpgrade} เรียบร้อยแล้ว (ไม่จ่ายค่าคอมเมื่อวางซ้าย และระบบโคลนนิ่งทำงานปกติเมื่อวางขวา)`;
@@ -9093,13 +9196,15 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
               triggerAutoPageRefresh(1300);
             }
             setModalUpgradeMessage(okMsg);
-            emitTransactionToast({
-              id: toastId,
-              status: 'confirmed',
-              step: `Admin อัพ Rank ${rankToUpgrade} ฟรี สำเร็จ!`,
-              message: okMsg,
-              txHash: confirmedTxHash,
-            });
+            if (!onAdminUpgrade) {
+              emitTransactionToast({
+                id: toastId,
+                status: 'confirmed',
+                step: `Admin อัพ Rank ${rankToUpgrade} ฟรี สำเร็จ!`,
+                message: okMsg,
+                txHash: confirmedTxHash,
+              });
+            }
             setModalUpgradeTargetRank(Math.min(18, rankToUpgrade + 1));
             setSelectedRank(rankToUpgrade);
             await fetchPerIdHistoryForModal();
@@ -9108,12 +9213,14 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             const errMsg = err?.message || 'Admin อัพ Rank ฟรี ล้มเหลว';
             setModalUpgradeMessage(null);
             setModalUpgradeError(errMsg);
-            emitTransactionToast({
-              id: toastId,
-              status: 'error',
-              step: `Admin อัพ Rank ${rankToUpgrade} ฟรี ไม่สำเร็จ`,
-              message: errMsg,
-            });
+            if (!onAdminUpgrade) {
+              emitTransactionToast({
+                id: toastId,
+                status: 'error',
+                step: `Admin อัพ Rank ${rankToUpgrade} ฟรี ไม่สำเร็จ`,
+                message: errMsg,
+              });
+            }
           } finally {
             setIsModalUpgrading(false);
           }
@@ -9515,9 +9622,10 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                                 {Array.from({ length: Math.max(0, 18 - currentMaxR) }, (_, idx) => {
                                   const r = currentMaxR + 1 + idx;
                                   const p = RANK_PRICES_USDT[r - 1] || 10;
+                                  const isJumpBlocked = !canAdminFreeUpgrade && r > nextSequentialRank;
                                   return (
-                                    <option key={r} value={r}>
-                                      Rank {r} ({p.toLocaleString()} USDT)
+                                    <option key={r} value={r} disabled={isJumpBlocked}>
+                                      Rank {r} ({p.toLocaleString()} USDT){isJumpBlocked ? ` — ต้องอัพ Rank ${nextSequentialRank} ก่อน` : ''}
                                     </option>
                                   );
                                 })}
@@ -9525,24 +9633,29 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                             </div>
                             <span className="text-[10px] text-slate-300 font-mono">
                               หัก Pool:{' '}
-                              <strong className="text-amber-400">-{poolDeduct.toFixed(2)} U</strong> • จ่ายส่วนต่าง:{' '}
+                              <strong className="text-amber-400">-{poolDeduct.toFixed(2)} U</strong> • จ่ายส่วนต่าง (R{nextSequentialRank}):{' '}
                               <strong className="text-emerald-400">{netDiffToPay.toFixed(2)} U</strong>
                             </span>
                           </div>
+                          {effectiveTargetRank > nextSequentialRank && (
+                            <div className="text-[10px] text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-lg px-2.5 py-1">
+                              ⚠️ เงื่อนไข Smart Contract กำหนดให้ผู้ใช้ทั่วไปอัพเกรดทีละ 1 ขั้น (ต้องอัพสู่ Rank {nextSequentialRank} ก่อน · ส่วน Admin สามารถอัพข้ามไป Rank {effectiveTargetRank} ได้)
+                            </div>
+                          )}
                           <button
                             type="button"
                             disabled={isModalUpgrading}
-                            onClick={() => handleTriggerModalUpgrade(effectiveTargetRank)}
+                            onClick={() => handleTriggerModalUpgrade(nextSequentialRank)}
                             className="w-full py-2 px-3 rounded-xl bg-gradient-to-r from-amber-500 via-orange-500 to-indigo-600 hover:from-amber-400 hover:via-orange-400 hover:to-indigo-500 text-white font-extrabold text-xs shadow-lg shadow-indigo-950/60 border border-amber-300/40 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                           >
                             <Sparkles className="w-4 h-4 text-amber-200 shrink-0" />
                             <span>
                               {isModalUpgrading
-                                ? `กำลังอัพเกรด Main ID #${targetMainId} สู่ Rank ${effectiveTargetRank}...`
-                                : `🚀 อัพเกรด Main ID #${targetMainId} สู่ Rank ${effectiveTargetRank} (${targetRankPrice.toLocaleString()} USDT)`}
+                                ? `กำลังอัพเกรด Main ID #${targetMainId} สู่ Rank ${nextSequentialRank}...`
+                                : `🚀 อัพเกรด Main ID #${targetMainId} สู่ Rank ${nextSequentialRank} (${nextSeqRankPrice.toLocaleString()} USDT)`}
                             </span>
                           </button>
-                          {(isAuthorizedAdminWallet(userAddress) || Boolean(onAdminUpgrade)) && (
+                          {canAdminFreeUpgrade && (
                             <button
                               type="button"
                               disabled={isModalUpgrading}
@@ -11029,7 +11142,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         const botWallet =
           botWalletLiveData?.botWallet ||
           systemPoolsData?.botWallet ||
-          '0xbFD03d4D69221085a63Dd372A5d59f952C084a56';
+          '0xB3832D4cc6daE0B24f1e6660d7C85dcc1F005Cd1';
 
         const isOnChainMode = viewMode === 'onchain';
         const totalAllSellUsdt = isOnChainMode
@@ -11809,6 +11922,113 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                         </span>
                       </div>
                     </div>
+
+                    {/* Inline Bot Wallet Update & Smart Contract Sync */}
+                    <div className="bg-slate-900/80 border border-amber-500/25 rounded-lg p-2.5 space-y-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <input
+                          type="text"
+                          value={botWalletEditInput}
+                          onChange={(e) => setBotWalletEditInput(e.target.value)}
+                          placeholder="0x..."
+                          className="flex-1 min-w-[220px] px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-700 text-amber-200 font-mono text-[11px] focus:outline-none focus:border-amber-400"
+                        />
+                        <button
+                          type="button"
+                          disabled={isUpdatingBotWallet}
+                          onClick={() => handleSaveBotWalletAddress(botWalletEditInput)}
+                          className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-bold text-[11px] cursor-pointer disabled:opacity-50 transition"
+                        >
+                          {isUpdatingBotWallet ? 'กำลังบันทึก...' : 'บันทึกกระเป๋า'}
+                        </button>
+                      </div>
+                      {botWalletLiveData && botWalletLiveData.isContractSynced === false && (
+                        <div className="flex flex-wrap items-center justify-between gap-2 bg-amber-500/10 border border-amber-500/30 rounded-lg px-2.5 py-1.5 text-[10.5px] text-amber-200">
+                          <span>
+                            ⚠️ Smart Contract บนเชนยังชี้ไปที่{' '}
+                            <code className="font-mono text-amber-300">
+                              {String(botWalletLiveData.onChainContractBotWallet || '').slice(0, 8)}...
+                              {String(botWalletLiveData.onChainContractBotWallet || '').slice(-6)}
+                            </code>{' '}
+                            (ต้องใช้กระเป๋า Owner อัปเดตขึ้นเชนเพื่อให้ 1% เม็ดซ้ายอนาคตเข้ากระเป๋าใหม่)
+                          </span>
+                          <button
+                            type="button"
+                            disabled={isUpdatingBotWallet}
+                            onClick={handleSyncBotWalletOnChain}
+                            className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10.5px] cursor-pointer disabled:opacity-50 shrink-0 transition"
+                          >
+                            อัปเดตขึ้น Smart Contract (MetaMask)
+                          </button>
+                        </div>
+                      )}
+                      {botWalletUpdateMsg && (
+                        <div className="text-[10.5px] font-mono text-cyan-300">{botWalletUpdateMsg}</div>
+                      )}
+                    </div>
+
+                    {/* Real On-Chain USDT Transfer Logs for Bot Wallet */}
+                    {Array.isArray(botWalletLiveData?.onChainUsdtTransfers) &&
+                      botWalletLiveData.onChainUsdtTransfers.length > 0 && (
+                        <div className="bg-slate-900/75 border border-cyan-500/30 rounded-lg p-2.5 space-y-1.5">
+                          <div className="text-[11px] font-bold text-cyan-300 flex items-center justify-between gap-2">
+                            <span>
+                              🔗 ธุรกรรมรับ-ส่ง USDT บนเชนล่าสุดของกระเป๋า {botWallet.slice(0, 6)}...
+                              {botWallet.slice(-4)} ({botWalletLiveData.onChainUsdtTransfers.length} รายการ)
+                            </span>
+                            <span className="text-[10px] text-emerald-300 font-mono">
+                              ยอดคงเหลือจริง: {onChainBotBal.toFixed(2)} USDT
+                            </span>
+                          </div>
+                          <div className="space-y-1 max-h-36 overflow-y-auto">
+                            {botWalletLiveData.onChainUsdtTransfers.slice(0, 15).map((tr: any, idx: number) => (
+                              <div
+                                key={`bot-onchain-tr-${idx}`}
+                                className="bg-slate-950/80 px-2 py-1.5 rounded border border-slate-800 flex items-center justify-between gap-2 text-[10px] font-mono"
+                              >
+                                <div className="min-w-0 flex items-center gap-2 flex-wrap">
+                                  <span
+                                    className={`px-1.5 py-0.5 rounded font-bold ${
+                                      tr.direction === 'IN'
+                                        ? 'bg-emerald-500/20 text-emerald-300'
+                                        : 'bg-rose-500/20 text-rose-300'
+                                    }`}
+                                  >
+                                    {tr.direction === 'IN' ? 'รับเข้า' : 'โอนออก'}
+                                  </span>
+                                  <span className="text-slate-300 truncate">
+                                    {tr.direction === 'IN'
+                                      ? `จาก ${String(tr.from).slice(0, 6)}...${String(tr.from).slice(-4)}`
+                                      : `ไป ${String(tr.to).slice(0, 6)}...${String(tr.to).slice(-4)}`}
+                                  </span>
+                                  <span className="text-slate-500">Blk #{tr.blockNumber}</span>
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  <span
+                                    className={`font-extrabold ${
+                                      tr.direction === 'IN' ? 'text-emerald-400' : 'text-rose-400'
+                                    }`}
+                                  >
+                                    {tr.direction === 'IN' ? '+' : '-'}
+                                    {Number(tr.amountUsdt).toFixed(2)} U
+                                  </span>
+                                  {tr.txHash && (
+                                    <a
+                                      href={`https://testnet.bscscan.com/tx/${tr.txHash}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="text-cyan-300 hover:underline inline-flex items-center gap-0.5"
+                                    >
+                                      <span>Tx</span>
+                                      <ExternalLink className="w-2.5 h-2.5" />
+                                    </a>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
 
                     {botHistoryList.length === 0 ? (
                       <div className="text-slate-500 py-4 text-center">

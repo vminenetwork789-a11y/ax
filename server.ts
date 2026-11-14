@@ -781,6 +781,9 @@ export interface TransactionRecordModel {
   timestamp: string;
 }
 
+export const DEFAULT_BOT_WALLET = '0xB3832D4cc6daE0B24f1e6660d7C85dcc1F005Cd1';
+export const LEGACY_BOT_WALLET = '0xbFD03d4D69221085a63Dd372A5d59f952C084a56';
+
 interface PersistentMatrixDatabase {
   contractAddress: string;
   usdtAddress: string;
@@ -789,6 +792,7 @@ interface PersistentMatrixDatabase {
   systemWallets: {
     allSellWallet: string;
     botWallet: string;
+    customBotWallet?: string;
     familyPool: string;
     rootOwner: string;
   };
@@ -812,7 +816,8 @@ function createEmptyMatrixDB(contractAddr = CONTRACT_ADDRESS, usdtAddr = USDT_AD
     lastSyncedAt: new Date().toISOString(),
     systemWallets: {
       allSellWallet: '0xBeFEB9871a20656aeF7E8d218f751e9C23FAF710',
-      botWallet: '0xbFD03d4D69221085a63Dd372A5d59f952C084a56',
+      botWallet: DEFAULT_BOT_WALLET,
+      customBotWallet: DEFAULT_BOT_WALLET,
       familyPool: '0x225DF4b5961f757f54728138F289Eaf49D4F275A',
       rootOwner: '0x622E20082e63c7220c5AF0A77Cbc437a98505311',
     },
@@ -859,12 +864,21 @@ function loadMatrixDBFromDisk(): PersistentMatrixDatabase {
             }
           }
         }
-        const loaded = {
+        const loaded: PersistentMatrixDatabase = {
           ...createEmptyMatrixDB(CONTRACT_ADDRESS, USDT_ADDRESS),
           ...parsed,
           upgradeLogs: Array.isArray(parsed.upgradeLogs) ? parsed.upgradeLogs : [],
           transactionLogs: Array.isArray(parsed.transactionLogs) ? parsed.transactionLogs : [],
         };
+        if (
+          !loaded.systemWallets.customBotWallet &&
+          (!loaded.systemWallets.botWallet ||
+            loaded.systemWallets.botWallet.toLowerCase() === LEGACY_BOT_WALLET.toLowerCase())
+        ) {
+          loaded.systemWallets.botWallet = DEFAULT_BOT_WALLET;
+          loaded.systemWallets.customBotWallet = DEFAULT_BOT_WALLET;
+          strippedAny = true;
+        }
         if (strippedAny) {
           try {
             fs.writeFileSync(MATRIX_DB_FILE_PATH, JSON.stringify(loaded, null, 2), 'utf8');
@@ -1063,7 +1077,7 @@ function rebuildDatabaseRewardLogsFromNodes() {
 
   const rootOwnerAddr = r1Nodes[0]?.owner || matrixDB.systemWallets.rootOwner;
   const allSellAddr = matrixDB.systemWallets.allSellWallet || '0xBeFEB9871a20656aeF7E8d218f751e9C23FAF710';
-  const botAddr = matrixDB.systemWallets.botWallet || '0xbFD03d4D69221085a63Dd372A5d59f952C084a56';
+  const botAddr = matrixDB.systemWallets.customBotWallet || matrixDB.systemWallets.botWallet || DEFAULT_BOT_WALLET;
   const familyAddr = matrixDB.systemWallets.familyPool || '0x225DF4b5961f757f54728138F289Eaf49D4F275A';
 
   // Preserve any real txHash events captured live by the listener that still exist in current rank nodes
@@ -5450,7 +5464,21 @@ async function startApp() {
 
         if (blockNum > 0) matrixDB.lastSyncedBlock = blockNum;
         if (allSellAddr && ethers.isAddress(allSellAddr)) matrixDB.systemWallets.allSellWallet = allSellAddr;
-        if (botAddr && ethers.isAddress(botAddr)) matrixDB.systemWallets.botWallet = botAddr;
+        if (botAddr && ethers.isAddress(botAddr)) {
+          const preferredCustom = matrixDB.systemWallets.customBotWallet;
+          if (
+            preferredCustom &&
+            ethers.isAddress(preferredCustom) &&
+            botAddr.toLowerCase() === LEGACY_BOT_WALLET.toLowerCase()
+          ) {
+            matrixDB.systemWallets.botWallet = preferredCustom;
+          } else {
+            matrixDB.systemWallets.botWallet = botAddr;
+            if (botAddr.toLowerCase() !== LEGACY_BOT_WALLET.toLowerCase()) {
+              matrixDB.systemWallets.customBotWallet = botAddr;
+            }
+          }
+        }
         if (familyAddr && ethers.isAddress(familyAddr)) matrixDB.systemWallets.familyPool = familyAddr;
 
         const countsResults = await Promise.all(
@@ -6475,7 +6503,9 @@ async function startApp() {
       const familyPoolWalletAddr =
         matrixDB.systemWallets?.familyPool || '0x225DF4b5961f757f54728138F289Eaf49D4F275A';
       const botWalletAddr =
-        matrixDB.systemWallets?.botWallet || '0xbFD03d4D69221085a63Dd372A5d59f952C084a56';
+        matrixDB.systemWallets?.customBotWallet ||
+        matrixDB.systemWallets?.botWallet ||
+        DEFAULT_BOT_WALLET;
 
       let allSellTotalUsdt = 0;
       let familyPoolTotalUsdt = 0;
@@ -7402,6 +7432,31 @@ async function startApp() {
     }
   });
 
+  app.post('/api/matrix/bot-wallet', (req: Request, res: Response) => {
+    try {
+      const nextWallet = String(req.body?.botWallet || '').trim();
+      if (!ethers.isAddress(nextWallet)) {
+        return res.status(400).json({ success: false, error: 'Invalid wallet address format' });
+      }
+      const checksummed = ethers.getAddress(nextWallet);
+      matrixDB.systemWallets.botWallet = checksummed;
+      matrixDB.systemWallets.customBotWallet = checksummed;
+      for (const rl of matrixDB.rewardLogs || []) {
+        if (String(rl.rewardType || '').toUpperCase() === 'BOT') {
+          rl.recipient = checksummed;
+        }
+      }
+      saveMatrixDBToDisk();
+      return res.json({
+        success: true,
+        botWallet: checksummed,
+        systemWallets: matrixDB.systemWallets,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err?.message || 'Failed to update bot wallet' });
+    }
+  });
+
   app.get('/api/matrix/bot-wallet-history', async (req: Request, res: Response) => {
     try {
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
@@ -7418,17 +7473,43 @@ async function startApp() {
       );
       const usdtContract = new ethers.Contract(
         USDT_ADDRESS,
-        ['function balanceOf(address) view returns (uint256)'],
+        [
+          'function balanceOf(address) view returns (uint256)',
+          'event Transfer(address indexed from, address indexed to, uint256 value)',
+        ],
         provider
       );
 
+      let onChainContractBotWallet =
+        matrixDB.systemWallets?.botWallet || DEFAULT_BOT_WALLET;
       let botWalletAddr =
-        matrixDB.systemWallets?.botWallet || '0xbFD03d4D69221085a63Dd372A5d59f952C084a56';
+        matrixDB.systemWallets?.customBotWallet ||
+        matrixDB.systemWallets?.botWallet ||
+        DEFAULT_BOT_WALLET;
+
+      const queryWallet = String(req.query.wallet || '').trim();
+      if (queryWallet && ethers.isAddress(queryWallet)) {
+        botWalletAddr = ethers.getAddress(queryWallet);
+      }
+
       try {
         const onChainBotAddr = await contract.botWallet();
         if (onChainBotAddr && ethers.isAddress(onChainBotAddr) && onChainBotAddr !== ethers.ZeroAddress) {
-          botWalletAddr = String(onChainBotAddr);
-          matrixDB.systemWallets.botWallet = botWalletAddr;
+          onChainContractBotWallet = ethers.getAddress(String(onChainBotAddr));
+          if (!queryWallet) {
+            const preferredCustom = matrixDB.systemWallets?.customBotWallet;
+            if (
+              preferredCustom &&
+              ethers.isAddress(preferredCustom) &&
+              onChainContractBotWallet.toLowerCase() === LEGACY_BOT_WALLET.toLowerCase()
+            ) {
+              botWalletAddr = ethers.getAddress(preferredCustom);
+              matrixDB.systemWallets.botWallet = botWalletAddr;
+            } else {
+              botWalletAddr = onChainContractBotWallet;
+              matrixDB.systemWallets.botWallet = botWalletAddr;
+            }
+          }
         }
       } catch {
         // Use cached botWalletAddr
@@ -7436,13 +7517,74 @@ async function startApp() {
 
       let liveUsdtBalance = '0.00';
       let liveBnbBalance = '0.0000';
+      const onChainUsdtTransfers: Array<{
+        txHash: string;
+        blockNumber: number;
+        from: string;
+        to: string;
+        amountUsdt: number;
+        direction: 'IN' | 'OUT';
+        timestamp: string;
+      }> = [];
+
       try {
-        const [uBn, bBn] = await Promise.all([
+        const [uBn, bBn, latestBlk] = await Promise.all([
           usdtContract.balanceOf(botWalletAddr).catch(() => 0n),
           provider.getBalance(botWalletAddr).catch(() => 0n),
+          provider.getBlockNumber().catch(() => 0),
         ]);
-        liveUsdtBalance = Number(ethers.formatUnits(uBn, activeUsdtDecimals || 18)).toFixed(2);
+        const dec = activeUsdtDecimals || 18;
+        liveUsdtBalance = Number(ethers.formatUnits(uBn, dec)).toFixed(2);
         liveBnbBalance = Number(ethers.formatEther(bBn)).toFixed(4);
+
+        if (latestBlk > 0) {
+          const fromBlk = Math.max(0, latestBlk - 20000);
+          const filterIn = usdtContract.filters.Transfer(null, botWalletAddr);
+          const filterOut = usdtContract.filters.Transfer(botWalletAddr, null);
+          const [logsIn, logsOut] = await Promise.all([
+            usdtContract.queryFilter(filterIn, fromBlk, latestBlk).catch(() => []),
+            usdtContract.queryFilter(filterOut, fromBlk, latestBlk).catch(() => []),
+          ]);
+          const seenLogs = new Set<string>();
+          const allTransferLogs = [...logsIn, ...logsOut];
+          const uniqueBlocks = Array.from(new Set(allTransferLogs.map((l: any) => Number(l.blockNumber || 0)).filter(Boolean))).slice(0, 20);
+          const blockTimes = new Map<number, string>();
+          await Promise.all(
+            uniqueBlocks.map(async (bNum) => {
+              try {
+                const blk = await provider.getBlock(bNum);
+                if (blk?.timestamp) {
+                  blockTimes.set(bNum, new Date(Number(blk.timestamp) * 1000).toISOString());
+                }
+              } catch {
+                // Ignore
+              }
+            })
+          );
+
+          for (const ev of allTransferLogs as any[]) {
+            const txHash = String(ev.transactionHash || '');
+            const logIdx = Number(ev.index ?? ev.logIndex ?? 0);
+            const dedupKey = `${txHash}:${logIdx}`;
+            if (!txHash || seenLogs.has(dedupKey)) continue;
+            seenLogs.add(dedupKey);
+            const fromAddr = String(ev.args?.[0] || '');
+            const toAddr = String(ev.args?.[1] || '');
+            const rawVal = ev.args?.[2] ?? 0n;
+            const amt = Number(ethers.formatUnits(rawVal, dec));
+            const bNum = Number(ev.blockNumber || 0);
+            onChainUsdtTransfers.push({
+              txHash,
+              blockNumber: bNum,
+              from: fromAddr,
+              to: toAddr,
+              amountUsdt: Number(amt.toFixed(4)),
+              direction: toAddr.toLowerCase() === botWalletAddr.toLowerCase() ? 'IN' : 'OUT',
+              timestamp: blockTimes.get(bNum) || matrixDB.lastSyncedAt || new Date().toISOString(),
+            });
+          }
+          onChainUsdtTransfers.sort((a, b) => b.blockNumber - a.blockNumber);
+        }
       } catch {
         // Fallback below
       }
@@ -7550,12 +7692,16 @@ async function startApp() {
         success: true,
         contractAddress: matrixDB.contractAddress,
         botWallet: botWalletAddr,
+        onChainContractBotWallet,
+        isContractSynced:
+          botWalletAddr.toLowerCase() === onChainContractBotWallet.toLowerCase(),
         botTotalUsdt: Number(botTotalUsdt.toFixed(2)),
         onChainUsdtBalance: Number(liveUsdtBalance),
         onChainBnbBalance: Number(liveBnbBalance),
         botByRank,
         count: botHistory.length,
         botHistory,
+        onChainUsdtTransfers,
         botActionLogs,
         lastSyncedAt: matrixDB.lastSyncedAt,
       });

@@ -377,7 +377,7 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
         try {
           const [allSellAddr, botAddr, familyAddr] = await Promise.all([
             contract.allSellWallet().catch(() => '0xBeFEB9871a20656aeF7E8d218f751e9C23FAF710'),
-            contract.botWallet().catch(() => '0xbFD03d4D69221085a63Dd372A5d59f952C084a56'),
+            contract.botWallet().catch(() => '0xB3832D4cc6daE0B24f1e6660d7C85dcc1F005Cd1'),
             contract.familyPool().catch(() => '0x225DF4b5961f757f54728138F289Eaf49D4F275A'),
           ]);
 

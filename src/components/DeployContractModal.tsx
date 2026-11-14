@@ -48,7 +48,7 @@ export const DeployContractModal: React.FC<DeployContractModalProps> = ({
     '0xBeFEB9871a20656aeF7E8d218f751e9C23FAF710'
   );
   const [botWalletInput, setBotWalletInput] = useState<string>(
-    '0xbFD03d4D69221085a63Dd372A5d59f952C084a56'
+    '0xB3832D4cc6daE0B24f1e6660d7C85dcc1F005Cd1'
   );
   const [familyPoolInput, setFamilyPoolInput] = useState<string>(
     '0x225DF4b5961f757f54728138F289Eaf49D4F275A'
@@ -112,7 +112,7 @@ export const DeployContractModal: React.FC<DeployContractModalProps> = ({
     setUsdtAddressInput('0x05f24E1F598DF1aE8d0B424ce978f8ea33bB752b');
     setUsdtDecimalsInput(18);
     setAllSellWalletInput('0xBeFEB9871a20656aeF7E8d218f751e9C23FAF710');
-    setBotWalletInput('0xbFD03d4D69221085a63Dd372A5d59f952C084a56');
+    setBotWalletInput('0xB3832D4cc6daE0B24f1e6660d7C85dcc1F005Cd1');
     setFamilyPoolInput('0x225DF4b5961f757f54728138F289Eaf49D4F275A');
     setRootUserInput('0x622E20082e63c7220c5AF0A77Cbc437a98505311');
     setPrivateKey('0xc9c4649effa5eaaab8dc0690b4e392aec7cf84ee49e2251a1800fe89ad3270ca');
