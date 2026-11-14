@@ -2623,6 +2623,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             }
           };
 
+          let replayedAdminUpgrades = 0;
           for (const sn of nonCloneSnaps) {
             sn.leftChild = 0;
             sn.rightChild = 0;
@@ -2633,7 +2634,17 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                 !p.isExtraId &&
                 (spMainId === 1 ? p.id === 1 : p.id === spMainId || p.originMainId === spMainId)
             );
-            const slot = spNodeInRank ? findSponsorSlot(spNodeInRank.id) : findBfsSlot(1);
+            let slot: { parentId: number; isLeft: boolean };
+            if (sn.isAdminFreeUpgrade) {
+              const adminRoundIdx = replayedAdminUpgrades % 2;
+              replayedAdminUpgrades++;
+              slot =
+                adminRoundIdx === 0 && spNodeInRank
+                  ? findSponsorSlot(spNodeInRank.id)
+                  : findBfsSlot(1);
+            } else {
+              slot = spNodeInRank ? findSponsorSlot(spNodeInRank.id) : findBfsSlot(1);
+            }
             const targetParent = placedMap.get(slot.parentId) || rootSnap;
             sn.parentId = targetParent.id;
             placedMap.set(sn.id, sn);
@@ -9449,69 +9460,17 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           const pendingMsg = `กำลังดำเนินการ Admin อัพ Rank ฟรี ให้ Main ID #${targetMainId} สู่ Rank ${rankToUpgrade} (ไม่จ่ายค่าคอมเมื่อวางซ้าย • ระบบโคลนนิ่งทำงานปกติเมื่อวางขวา)...`;
           setModalUpgradeMessage(pendingMsg);
           const toastId = `modal-admin-free-upgrade-${targetMainId}-${rankToUpgrade}-${Date.now()}`;
-          if (!onAdminUpgrade) {
-            emitTransactionToast({
-              id: toastId,
-              status: 'pending',
-              step: `Admin อัพ Rank ฟรี สู่ Rank ${rankToUpgrade}...`,
-              message: pendingMsg,
-            });
-          }
           try {
-            let confirmedTxHash: string | null = null;
-            let okMsg = `✅ Admin Upgrade สำเร็จ! อัพ Rank รหัส #${targetMainId} ให้ฟรีสู่ Rank ${rankToUpgrade} เรียบร้อยแล้ว (ไม่จ่ายค่าคอมเมื่อวางซ้าย และระบบโคลนนิ่งทำงานปกติเมื่อวางขวา)`;
-            if (onAdminUpgrade) {
-              const resObj = await onAdminUpgrade(String(targetMainId), rankToUpgrade);
-              if (resObj && resObj.success === false) {
-                throw new Error(resObj.error || 'Admin Upgrade ล้มเหลว');
-              }
-              if (resObj?.message) okMsg = resObj.message;
-              confirmedTxHash = resObj?.txHash || null;
-            } else {
-              const res = await fetch('/api/admin/upgrade-rank', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  mainId: targetMainId,
-                  targetUser: modalNode.owner,
-                  targetRank: rankToUpgrade,
-                }),
-              });
-              const data = await res.json();
-              if (!res.ok || !data?.success) {
-                throw new Error(data?.error || 'Admin Upgrade ล้มเหลว');
-              }
-              if (data?.message) okMsg = data.message;
-              confirmedTxHash = data?.txHash || null;
-              await fetch(`/api/db/sync?rank=${rankToUpgrade}&fast=1`, { method: 'POST' }).catch(() => null);
-              savePostTxNotice({
-                type: 'admin_upgrade',
-                step: `Admin อัพ Rank ${rankToUpgrade} ฟรี สำเร็จ!`,
-                message: okMsg,
-                txHash: confirmedTxHash,
-                targetRank: rankToUpgrade,
-                mainId: targetMainId,
-              });
-              savePostTxViewTarget({
-                type: 'admin_upgrade',
-                selectedRank: rankToUpgrade,
-                selectedMainId: targetMainId,
-                focusNodeId: targetMainId,
-                targetRank: rankToUpgrade,
-                mainId: targetMainId,
-              });
-              triggerAutoPageRefresh(1300);
-            }
-            setModalUpgradeMessage(okMsg);
             if (!onAdminUpgrade) {
-              emitTransactionToast({
-                id: toastId,
-                status: 'confirmed',
-                step: `Admin อัพ Rank ${rankToUpgrade} ฟรี สำเร็จ!`,
-                message: okMsg,
-                txHash: confirmedTxHash,
-              });
+              throw new Error('กรุณาเชื่อมต่อกระเป๋า Contract Owner บน BSC Testnet ก่อนสั่ง Admin อัพ Rank ฟรี On-Chain');
             }
+            let okMsg = `✅ Admin Upgrade สำเร็จ! อัพ Rank รหัส #${targetMainId} ให้ฟรีสู่ Rank ${rankToUpgrade} เรียบร้อยแล้ว (ไม่จ่ายค่าคอมเมื่อวางซ้าย และระบบโคลนนิ่งทำงานปกติเมื่อวางขวา)`;
+            const resObj = await onAdminUpgrade(String(targetMainId), rankToUpgrade);
+            if (resObj && resObj.success === false) {
+              throw new Error(resObj.error || 'Admin Upgrade ล้มเหลว');
+            }
+            if (resObj?.message) okMsg = resObj.message;
+            setModalUpgradeMessage(okMsg);
             setModalUpgradeTargetRank(Math.min(18, rankToUpgrade + 1));
             selectedRankRef.current = rankToUpgrade;
             setSelectedRank(rankToUpgrade);

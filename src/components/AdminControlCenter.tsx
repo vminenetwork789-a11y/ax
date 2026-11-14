@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { ethers } from 'ethers';
-import { MATRIX_ABI, RANK_PRICES_USDT } from '../contracts/config';
+import { MATRIX_ABI, RANK_PRICES_USDT, BSC_TESTNET_CHAIN_ID, BSC_TESTNET_PARAMS } from '../contracts/config';
 import {
   Shield,
   RefreshCw,
@@ -266,26 +266,97 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
     });
 
     try {
-      if (execMode === 'web3_wallet' && (window as any).ethereum) {
-        const provider = new ethers.BrowserProvider((window as any).ethereum);
+      if (execMode === 'web3_wallet') {
+        const ethereum = (window as any).ethereum;
+        if (!ethereum) {
+          throw new Error('ไม่พบกระเป๋า Web3 (MetaMask / Bitget) กรุณาเชื่อมต่อกระเป๋าหรือเปลี่ยนเป็นโหมด Server Admin Key');
+        }
+
+        // ตรวจสอบและสลับเครือข่ายเป็น BSC Testnet (Chain ID 97) อัตโนมัติ
+        const chainHex = await ethereum.request({ method: 'eth_chainId' }).catch(() => null);
+        const currentChainId = chainHex ? parseInt(String(chainHex), 16) : 0;
+        if (currentChainId !== BSC_TESTNET_CHAIN_ID) {
+          try {
+            await ethereum.request({
+              method: 'wallet_switchEthereumChain',
+              params: [{ chainId: BSC_TESTNET_PARAMS.chainId }],
+            });
+          } catch (switchErr: any) {
+            if (switchErr?.code === 4902) {
+              await ethereum.request({
+                method: 'wallet_addEthereumChain',
+                params: [BSC_TESTNET_PARAMS],
+              });
+            } else {
+              throw new Error('กรุณาสลับเครือข่าย MetaMask เป็น BNB Smart Chain Testnet (Chain ID 97) ก่อนทำรายการ');
+            }
+          }
+        }
+
+        const provider = new ethers.BrowserProvider(ethereum);
+        let accounts = await provider.listAccounts();
+        if (!accounts || accounts.length === 0) {
+          await ethereum.request({ method: 'eth_requestAccounts' });
+          accounts = await provider.listAccounts();
+        }
         const signer = await provider.getSigner();
+        const signerAddr = await signer.getAddress();
         const contract = new ethers.Contract(contractAddress, MATRIX_ABI, signer);
+
+        const isOnlyOwnerMethod = [
+          'adminUpgradeRankForMainId',
+          'adminUpgradeRank',
+          'setSystemWallets',
+          'emergencyWithdrawToken',
+          'emergencyWithdrawNative',
+          'transferOwnership',
+          'renounceOwnership',
+        ].includes(actionName);
+
+        let onChainOwner = '';
+        if (isOnlyOwnerMethod) {
+          onChainOwner = await contract.owner().catch(() => '');
+          if (onChainOwner && signerAddr.toLowerCase() !== onChainOwner.toLowerCase()) {
+            throw new Error(
+              `กระเป๋า MetaMask ที่เชื่อมต่อ (${signerAddr}) ไม่ใช่ Contract Owner (${onChainOwner}) กรุณาสลับเป็นกระเป๋า Owner หรือใช้โหมด Server Admin Key พร้อม Private Key ของ Owner`
+            );
+          }
+        }
+
         let tx: any;
 
         if (actionName === 'adminUpgradeRankForMainId') {
+          await contract.adminUpgradeRankForMainId.staticCall(Number(params.mainId), Number(params.targetRank));
           tx = await contract.adminUpgradeRankForMainId(Number(params.mainId), Number(params.targetRank));
         } else if (actionName === 'adminUpgradeRank') {
+          await contract.adminUpgradeRank.staticCall(params.targetUser, Number(params.targetRank));
           tx = await contract.adminUpgradeRank(params.targetUser, Number(params.targetRank));
         } else if (actionName === 'setSystemWallets') {
-          tx = await contract.setSystemWallets(params.allSell, params.bot, params.familyPool);
+          const a = String(params.allSell || '').trim();
+          const b = String(params.bot || '').trim();
+          const f = String(params.familyPool || '').trim();
+          await contract.setSystemWallets.staticCall(a, b, f);
+          tx = await contract.setSystemWallets(a, b, f);
         } else if (actionName === 'emergencyWithdrawToken') {
           const wei = ethers.parseUnits(String(params.amount), 18);
+          await contract.emergencyWithdrawToken.staticCall(params.token, wei);
           tx = await contract.emergencyWithdrawToken(params.token, wei);
         } else if (actionName === 'emergencyWithdrawNative') {
+          await contract.emergencyWithdrawNative.staticCall();
           tx = await contract.emergencyWithdrawNative();
         } else if (actionName === 'transferOwnership') {
-          tx = await contract.transferOwnership(params.newOwner);
+          const rawNewOwner = String(params.newOwner || '').trim();
+          if (!ethers.isAddress(rawNewOwner) || rawNewOwner === ethers.ZeroAddress) {
+            throw new Error('กรุณาระบุ Wallet Address ของ Owner ใหม่ให้ถูกต้อง (ไม่ใช่ 0x000...)');
+          }
+          const checksumNewOwner = ethers.getAddress(rawNewOwner);
+          if (onChainOwner && checksumNewOwner.toLowerCase() === onChainOwner.toLowerCase()) {
+            throw new Error(`กระเป๋า ${checksumNewOwner} เป็น Contract Owner ปัจจุบันอยู่แล้ว`);
+          }
+          await contract.transferOwnership.staticCall(checksumNewOwner);
+          tx = await contract.transferOwnership(checksumNewOwner);
         } else if (actionName === 'renounceOwnership') {
+          await contract.renounceOwnership.staticCall();
           tx = await contract.renounceOwnership();
         } else if (actionName === 'checkAndProcessAutoNewMainIdForNode') {
           tx = await contract.checkAndProcessAutoNewMainIdForNode(Number(params.mainNodeId));
@@ -322,7 +393,6 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
 
         const receipt: any = await waitWith2_5MinTimeout(tx);
         const hash = receipt?.hash || tx.hash;
-        const signerAddr = await signer.getAddress().catch(() => account || '');
         await fetch('/api/transactions/record', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -358,6 +428,16 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
           }).catch(() => {});
         } else {
           await fetch('/api/db/sync', { method: 'POST' }).catch(() => {});
+        }
+        if (actionName === 'transferOwnership') {
+          const nextOwner = ethers.getAddress(String(params.newOwner || '').trim());
+          setNewOwnerAddr('');
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('matrix:owner:updated', { detail: { newOwner: nextOwner } }));
+          }
+        } else if (actionName === 'renounceOwnership' && typeof window !== 'undefined') {
+          setRenounceConfirmText('');
+          window.dispatchEvent(new CustomEvent('matrix:owner:updated', { detail: { newOwner: ethers.ZeroAddress } }));
         }
         await fetchAdminOverview();
         onRefreshOnChainData();
@@ -399,6 +479,16 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
         throw new Error(data.error || `รันคำสั่ง ${actionName} ไม่สำเร็จ`);
       }
 
+      if (actionName === 'transferOwnership') {
+        const nextOwner = ethers.getAddress(String(data.newOwner || params.newOwner || '').trim());
+        setNewOwnerAddr('');
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('matrix:owner:updated', { detail: { newOwner: nextOwner } }));
+        }
+      } else if (actionName === 'renounceOwnership' && typeof window !== 'undefined') {
+        setRenounceConfirmText('');
+        window.dispatchEvent(new CustomEvent('matrix:owner:updated', { detail: { newOwner: ethers.ZeroAddress } }));
+      }
       await fetchAdminOverview();
       onRefreshOnChainData();
       if (typeof window !== 'undefined') {
@@ -414,7 +504,7 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
       setActionStatus({
         type: 'error',
         title: `คำสั่ง ${actionName} ล้มเหลว`,
-        message: err?.shortMessage || err?.message || 'เกิดข้อผิดพลาดในการส่งธุรกรรม',
+        message: err?.shortMessage || err?.reason || err?.message || 'เกิดข้อผิดพลาดในการส่งธุรกรรม',
       });
     }
   };
@@ -1176,10 +1266,26 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
               </div>
 
               <div className="space-y-3">
+                <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <span className="text-slate-400">Owner / Admin ปัจจุบันบนเชน:</span>
+                  <span className="font-mono text-emerald-400 font-semibold break-all">
+                    {overview?.wallets?.owner?.address || '-'}
+                  </span>
+                </div>
+
                 <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">
-                    โอนสิทธิ์ Owner ไปยังกระเป๋าใหม่ (newOwner Address)
-                  </label>
+                  <div className="flex items-center justify-between text-[11px] text-slate-400 mb-1">
+                    <span>โอนสิทธิ์ Owner ไปยังกระเป๋าใหม่ (newOwner Address)</span>
+                    {account && (
+                      <button
+                        type="button"
+                        onClick={() => setNewOwnerAddr(account)}
+                        className="text-purple-300 hover:text-purple-200 underline cursor-pointer"
+                      >
+                        ใส่กระเป๋าฉัน
+                      </button>
+                    )}
+                  </div>
                   <div className="flex gap-2">
                     <input
                       type="text"
@@ -1193,11 +1299,14 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
                       onClick={() =>
                         executeContractAdminFunction(
                           'transferOwnership',
-                          { newOwner: newOwnerAddr },
-                          `โอนสิทธิ์ Owner ของสัญญาให้กับ ${newOwnerAddr}`
+                          { newOwner: newOwnerAddr.trim() },
+                          `โอนสิทธิ์ Owner ของสัญญาให้กับ ${newOwnerAddr.trim()}`
                         )
                       }
-                      disabled={!ethers.isAddress(newOwnerAddr)}
+                      disabled={
+                        !ethers.isAddress(newOwnerAddr.trim()) ||
+                        newOwnerAddr.trim() === ethers.ZeroAddress
+                      }
                       className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs transition cursor-pointer disabled:opacity-50 whitespace-nowrap"
                     >
                       โอนสิทธิ์ (transferOwnership)

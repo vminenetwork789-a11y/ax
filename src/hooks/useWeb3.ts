@@ -94,6 +94,7 @@ export function useWeb3() {
   const [allowance, setAllowance] = useState<string>('0.00');
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [isLoadingProfile, setIsLoadingProfile] = useState(false);
+  const [contractOwner, setContractOwner] = useState<string | null>(null);
 
   const [txState, setTxState] = useState<{
     isLoading: boolean;
@@ -594,6 +595,48 @@ export function useWeb3() {
       window.removeEventListener('matrix:config:updated', handleConfigUpdated);
     };
   }, [account, refreshUserData]);
+
+  const refreshContractOwner = useCallback(async (overrideContract?: string) => {
+    const targetAddr = overrideContract || contractAddressRef.current || CONTRACT_ADDRESS;
+    if (!targetAddr || !ethers.isAddress(targetAddr)) return null;
+    try {
+      const readContract = new ethers.Contract(targetAddr, MATRIX_ABI, readOnlyBscProvider);
+      const onChainOwner = await readContract.owner().catch(() => null);
+      if (onChainOwner && ethers.isAddress(onChainOwner) && onChainOwner !== ethers.ZeroAddress) {
+        setContractOwner(onChainOwner);
+        return onChainOwner;
+      }
+    } catch {
+      // ignore RPC owner lookup error
+    }
+    try {
+      const res = await fetch('/api/admin/overview');
+      if (res.ok) {
+        const ov = await res.json();
+        const apiOwner = ov?.wallets?.owner?.address;
+        if (apiOwner && ethers.isAddress(apiOwner) && apiOwner !== ethers.ZeroAddress) {
+          setContractOwner(apiOwner);
+          return apiOwner;
+        }
+      }
+    } catch {
+      // ignore fallback error
+    }
+    return null;
+  }, []);
+
+  useEffect(() => {
+    refreshContractOwner(contractAddress);
+    const handleOwnerUpdated = (e: any) => {
+      if (e?.detail?.newOwner && ethers.isAddress(e.detail.newOwner)) {
+        setContractOwner(e.detail.newOwner);
+      } else {
+        refreshContractOwner(contractAddressRef.current);
+      }
+    };
+    window.addEventListener('matrix:owner:updated', handleOwnerUpdated);
+    return () => window.removeEventListener('matrix:owner:updated', handleOwnerUpdated);
+  }, [contractAddress, refreshContractOwner]);
 
   useEffect(() => {
     let savedSessionWallet: string | null = null;
@@ -2386,54 +2429,50 @@ export function useWeb3() {
         // ignore lookup error
       }
 
-      // 1. ลองตรวจสอบด้วย staticCall ก่อน หากเชื่อมต่อกระเป๋าOwner และสัญญารองรับการอัพฟรีโดยไม่ revert
-      if (window.ethereum && account) {
-        try {
-          const { signer, userAddr } = await ensureWalletAndBscTestnet();
-          const currentContract = contractAddressRef.current || CONTRACT_ADDRESS;
-          const matrixContract = new ethers.Contract(currentContract, MATRIX_ABI, signer);
-          const contractOwner = await matrixContract.owner().catch(() => '');
-
-          if (
-            contractOwner &&
-            userAddr &&
-            contractOwner.toLowerCase() === userAddr.toLowerCase()
-          ) {
-            let canExecuteOnChain = false;
-            const mainIdToCall = resolvedMainId > 0 ? resolvedMainId : isId ? parseInt(raw, 10) : 0;
-            try {
-              if (mainIdToCall > 0 && typeof matrixContract.adminUpgradeRankForMainId?.staticCall === 'function') {
-                await matrixContract.adminUpgradeRankForMainId.staticCall(mainIdToCall, parsedTargetRank);
-                canExecuteOnChain = true;
-              } else if (resolvedAddress && typeof matrixContract.adminUpgradeRank?.staticCall === 'function') {
-                await matrixContract.adminUpgradeRank.staticCall(resolvedAddress, parsedTargetRank);
-                canExecuteOnChain = true;
-              }
-            } catch {
-              // Deployed contract reverted on staticCall (e.g. old bytecode attempting USDT transfer with 0 balance)
-              canExecuteOnChain = false;
-            }
-
-            if (canExecuteOnChain) {
-              const tx =
-                mainIdToCall > 0
-                  ? await matrixContract.adminUpgradeRankForMainId(mainIdToCall, parsedTargetRank)
-                  : await matrixContract.adminUpgradeRank(resolvedAddress, parsedTargetRank);
-              setTxState((prev) => ({
-                ...prev,
-                step: 'กำลังรอการยืนยันธุรกรรม Admin Upgrade บนบล็อกเชน...',
-                txHash: tx.hash,
-              }));
-              const receipt = await tx.wait();
-              txHash = receipt?.hash || tx.hash;
-            }
-          }
-        } catch (onChainErr: any) {
-          console.warn('[Admin Upgrade] On-chain notice, applying Admin Free Rank Upgrade rule via API:', onChainErr);
-        }
+      // 1. บังคับทำรายการ On-Chain จริงเท่านั้น (ห้าม Fallback ไปยัง Database จำลองโดยไม่แจ้ง Error)
+      if (!window.ethereum || !account) {
+        throw new Error('กรุณาเชื่อมต่อ MetaMask (กระเป๋า Contract Owner) บน BSC Testnet ก่อนสั่ง Admin อัพ Rank ฟรี');
       }
 
-      // 2. บันทึกและประมวลผลตามเงื่อนไข Admin อัพ Rank ฟรี (ไม่จ่ายค่าคอมเมื่อวางซ้าย • ระบบโคลนนิ่งทำงานปกติเมื่อวางขวา)
+      const { signer, userAddr } = await ensureWalletAndBscTestnet();
+      const currentContract = contractAddressRef.current || CONTRACT_ADDRESS;
+      const matrixContract = new ethers.Contract(currentContract, MATRIX_ABI, signer);
+      const contractOwner = await matrixContract.owner().catch(() => '');
+
+      if (!contractOwner) {
+        throw new Error('ไม่สามารถตรวจสอบ Contract Owner จาก Smart Contract บนเชนได้');
+      }
+      if (!userAddr || contractOwner.toLowerCase() !== userAddr.toLowerCase()) {
+        throw new Error(
+          `กระเป๋าที่เชื่อมต่อ (${userAddr || 'ไม่ระบุ'}) ไม่ใช่ Contract Owner (${contractOwner}) ไม่สามารถสั่ง Admin อัพ Rank ฟรี บนเชนได้`
+        );
+      }
+
+      const mainIdToCall = resolvedMainId > 0 ? resolvedMainId : isId ? parseInt(raw, 10) : 0;
+      if (mainIdToCall > 0 && typeof matrixContract.adminUpgradeRankForMainId?.staticCall === 'function') {
+        await matrixContract.adminUpgradeRankForMainId.staticCall(mainIdToCall, parsedTargetRank);
+      } else if (resolvedAddress && typeof matrixContract.adminUpgradeRank?.staticCall === 'function') {
+        await matrixContract.adminUpgradeRank.staticCall(resolvedAddress, parsedTargetRank);
+      } else {
+        throw new Error('ไม่พบฟังก์ชัน Admin Upgrade หรือข้อมูลเป้าหมาย (Main ID / Wallet) ไม่เพียงพอสำหรับยิง On-Chain');
+      }
+
+      const tx =
+        mainIdToCall > 0
+          ? await matrixContract.adminUpgradeRankForMainId(mainIdToCall, parsedTargetRank)
+          : await matrixContract.adminUpgradeRank(resolvedAddress, parsedTargetRank);
+      setTxState((prev) => ({
+        ...prev,
+        step: 'กำลังรอการยืนยันธุรกรรม Admin Upgrade บนบล็อกเชน...',
+        txHash: tx.hash,
+      }));
+      const receipt = await tx.wait();
+      txHash = receipt?.hash || tx.hash;
+      if (!txHash) {
+        throw new Error('ไม่ได้รับ Transaction Hash จากบล็อกเชน การอัปเกรดไม่สำเร็จ');
+      }
+
+      // 2. ซิงค์ผลลัพธ์ที่ยืนยันบนบล็อกเชนแล้วลง Database (ไม่จ่ายค่าคอมเมื่อวางซ้าย • ระบบโคลนนิ่งทำงานปกติเมื่อวางขวา)
       const res = await fetch('/api/admin/upgrade-rank', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2441,16 +2480,13 @@ export function useWeb3() {
           targetUser: resolvedAddress || (isAddr ? raw : undefined),
           mainId: resolvedMainId > 0 ? resolvedMainId : isId ? parseInt(raw, 10) : undefined,
           targetRank: parsedTargetRank,
-          onChainConfirmed: Boolean(txHash),
-          txHash: txHash || undefined,
+          onChainConfirmed: true,
+          txHash,
         }),
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Admin upgrade API failed');
-      }
-      if (!txHash) {
-        txHash = data.txHash || `0xadmin${Date.now().toString(16)}`;
+        throw new Error(data.error || 'Admin upgrade sync API failed');
       }
 
       const finalMsg =
@@ -2495,7 +2531,13 @@ export function useWeb3() {
       };
     } catch (err: any) {
       console.error('handleAdminUpgrade error:', err);
-      const errMsg = err?.message || 'Admin Upgrade ล้มเหลว';
+      const isRejected =
+        err?.code === 4001 ||
+        err?.code === 'ACTION_REJECTED' ||
+        String(err?.message || '').toLowerCase().includes('user rejected');
+      const errMsg = isRejected
+        ? 'คุณยกเลิกการยืนยันธุรกรรมใน MetaMask (ยกเลิกการอัปเกรด ไม่มี Fallback ไปยัง Database)'
+        : err?.shortMessage || err?.reason || err?.message || 'Admin Upgrade ล้มเหลว';
       setTxState({
         isLoading: false,
         step: '',
@@ -2664,13 +2706,18 @@ export function useWeb3() {
     allowance,
     profile,
     isLoadingProfile,
+    contractOwner,
+    refreshContractOwner,
     txState,
     connectWallet,
     loginWithCustomInput,
     loginWithDemoUnregisteredWallet,
     disconnectWallet,
     switchToBscTestnet,
-    refreshUserData: () => account && refreshUserData(account),
+    refreshUserData: () => {
+      refreshContractOwner();
+      if (account) return refreshUserData(account);
+    },
     checkSponsorNode,
     previewNextPlacement,
     inspectRankData,

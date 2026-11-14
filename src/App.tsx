@@ -68,6 +68,7 @@ export default function App() {
     allowance,
     profile,
     isLoadingProfile,
+    contractOwner,
     contractAddress,
     usdtAddress,
     updateSmartContractAddress,
@@ -91,37 +92,40 @@ export default function App() {
   } = useWeb3();
 
   // Check if connected wallet is an authorized Admin (Root ID #1 / Contract Owner / AllSell Admin)
-  const isAdminUser = isAuthorizedAdminWallet(account, profile);
+  const isAdminUser = isAuthorizedAdminWallet(account, profile, contractOwner);
 
-  // If user is not an Admin, never allow Admin view to remain open
+  // Sync URL ?admin=1 or #admin on initial admin detection, and close Admin view if user is not an Admin
   useEffect(() => {
     if (!isAdminUser && isAdminView) {
       setIsAdminView(false);
       if (typeof window !== 'undefined' && window.location.hash.toLowerCase() === '#admin') {
-        window.history.replaceState(null, '', window.location.pathname);
+        window.history.replaceState(null, '', window.location.pathname + window.location.search);
       }
-    } else if (isAdminUser && typeof window !== 'undefined') {
+      return;
+    }
+    if (isAdminUser && typeof window !== 'undefined') {
       const hash = window.location.hash.toLowerCase();
       const q = new URLSearchParams(window.location.search).get('admin');
       if (hash === '#admin' || q === '1' || q === 'true') {
         setIsAdminView(true);
       }
     }
-  }, [isAdminUser, isAdminView]);
+  }, [isAdminUser]);
 
   const toggleAdminView = () => {
     if (!isAdminUser) return;
-    setIsAdminView((prev) => {
-      const next = !prev;
-      if (typeof window !== 'undefined') {
-        if (next) {
-          window.history.replaceState(null, '', '#admin');
-        } else if (window.location.hash.toLowerCase() === '#admin') {
-          window.history.replaceState(null, '', window.location.pathname);
-        }
+    const next = !isAdminView;
+    setIsAdminView(next);
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      if (next) {
+        url.hash = 'admin';
+      } else {
+        url.hash = '';
+        url.searchParams.delete('admin');
       }
-      return next;
-    });
+      window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+    }
   };
 
   // Check if connected wallet is already registered on-chain

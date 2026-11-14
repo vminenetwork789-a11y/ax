@@ -2020,6 +2020,7 @@ function reconcileRankTreeLinks(nodes: IndexedTreeNode[]): IndexedTreeNode[] {
         }
       };
 
+      let replayedAdminUpgrades = 0;
       for (const n of nonCloneList) {
         n.leftChild = 0;
         n.rightChild = 0;
@@ -2030,9 +2031,19 @@ function reconcileRankTreeLinks(nodes: IndexedTreeNode[]): IndexedTreeNode[] {
             !p.isExtraId &&
             (spMainId === 1 ? p.id === 1 : p.id === spMainId || p.originMainId === spMainId)
         );
-        const slot = spNodeInRank
-          ? findExtraIdPlacementInRankNodes(placedNodes, spNodeInRank.id)
-          : findShallowestLeftToRightSlotInRankNodes(placedNodes, 1);
+        let slot: { parentId: number; isLeft: boolean };
+        if (n.isAdminFreeUpgrade) {
+          const adminRoundIdx = replayedAdminUpgrades % 2;
+          replayedAdminUpgrades++;
+          slot =
+            adminRoundIdx === 0 && spNodeInRank
+              ? findExtraIdPlacementInRankNodes(placedNodes, spNodeInRank.id)
+              : findShallowestLeftToRightSlotInRankNodes(placedNodes, 1);
+        } else {
+          slot = spNodeInRank
+            ? findExtraIdPlacementInRankNodes(placedNodes, spNodeInRank.id)
+            : findShallowestLeftToRightSlotInRankNodes(placedNodes, 1);
+        }
 
         const targetParent = placedNodes.find((p) => p.id === slot.parentId) || rootNode;
         n.parentId = targetParent.id;
@@ -2110,17 +2121,7 @@ function findExtraIdPlacementInRankNodes(
     }
   }
 
-  // Priority 3: กรณีมีโคลนแต่โคลนติดตัวเต็ม ให้หาตำแหน่งว่างชั้นตื้นสุดภายใต้สายโคลนนิ่งของผู้แนะนำเท่านั้น
-  for (const cand of sorted) {
-    if (isSponsorClone(cand)) {
-      const cSlot = findShallowestLeftToRightSlotInRankNodes(rNodes, cand.id);
-      if (cSlot && cSlot.parentId > 0) {
-        return cSlot;
-      }
-    }
-  }
-
-  // Priority 4: Fallback ปลอดภัยกรณีไม่พบโคลน
+  // Priority 3: หากโหนดหลักและโคลนติดตัวของผู้แนะนำเต็มหมด ให้หาตำแหน่งว่างชั้นตื้นสุดแบบ BFS ภายใต้สายงานของโหนดหลักผู้แนะนำ (ตรงกับ Smart Contract _findPlacementSpot)
   return findShallowestLeftToRightSlotInRankNodes(rNodes, mainNode.id);
 }
 
@@ -8913,7 +8914,15 @@ async function startApp() {
       }
 
       const mainIdNum = userR1Node.id;
-      const rawR1SponsorId = userR1Node.directSponsorNodeId > 0 ? userR1Node.directSponsorNodeId : 1;
+      let rawR1SponsorId = userR1Node.directSponsorNodeId > 0 ? userR1Node.directSponsorNodeId : 0;
+      if (rawR1SponsorId <= 0 && userR1Node.directSponsor) {
+        const spKey = userR1Node.directSponsor.toLowerCase();
+        const spByAddr = r1Nodes.find(
+          (n) => !n.isClone && !n.isExtraId && (n.owner || '').toLowerCase() === spKey
+        );
+        rawR1SponsorId = spByAddr ? spByAddr.id : 1;
+      }
+      if (rawR1SponsorId <= 0) rawR1SponsorId = 1;
       const rawSpR1Node = r1Nodes.find((n) => n.id === rawR1SponsorId);
       const r1SponsorMainId =
         rawSpR1Node && rawSpR1Node.isClone && rawSpR1Node.originMainId > 0
@@ -9072,17 +9081,22 @@ async function startApp() {
           (n) => !n.isClone && !n.isExtraId && n.originMainId === mainIdNum
         );
         if (!existingNode) {
-          // ตรวจสอบว่าผู้แนะนำตรง (r1SponsorMainId) มีโหนดใน Rank r หรือยัง
-          // หากยังไม่ได้อัปเกรดขึ้นมาถึง Rank นั้น ให้หาตำแหน่งว่างชั้นตื้นลงมาจากซ้ายไปขวา (BFS จาก Root #1)
+          // ใช้เงื่อนไขการวางตำแหน่งเดียวกับการโคลนนิ่ง (Cloning Routing: รอบ 1 ติดสายผู้แนะนำ / รอบ 2 Global BFS จาก Root #1)
+          const existingAdminUpgradesCount = rList.filter(
+            (n) => !n.isClone && !n.isExtraId && n.isAdminFreeUpgrade
+          ).length;
+          const adminRoundIndex = existingAdminUpgradesCount % 2;
+
           const spNodeInR = rList.find(
             (n) =>
               !n.isClone &&
               !n.isExtraId &&
               (r1SponsorMainId === 1 ? n.id === 1 : n.originMainId === r1SponsorMainId)
           );
-          const placement = spNodeInR
-            ? findExtraIdPlacementInRankNodes(rList, spNodeInR.id)
-            : findShallowestLeftToRightSlotInRankNodes(rList, 1);
+          const placement =
+            adminRoundIndex === 0 && spNodeInR
+              ? findExtraIdPlacementInRankNodes(rList, spNodeInR.id)
+              : findShallowestLeftToRightSlotInRankNodes(rList, 1);
           const parentIdNum = Number(placement.parentId) || 1;
           const maxId = rList.reduce((m, n) => Math.max(m, n.id), 0);
           const nextIdInRank = maxId + 1;
@@ -9500,6 +9514,7 @@ async function startApp() {
         CONTRACT_ADDRESS,
         [
           ...MATRIX_READ_ABI,
+          'function owner() view returns (address)',
           'function adminUpgradeRank(address _user, uint8 _targetRank) external',
           'function adminUpgradeRankForMainId(uint256 _r1MainId, uint8 _targetRank) external',
           'function setSystemWallets(address _allSell, address _bot, address _familyPool) external',
@@ -9516,8 +9531,30 @@ async function startApp() {
         wallet
       );
 
+      const isOnlyOwnerAction = [
+        'adminUpgradeRankForMainId',
+        'adminUpgradeRank',
+        'setSystemWallets',
+        'emergencyWithdrawToken',
+        'emergencyWithdrawNative',
+        'transferOwnership',
+        'renounceOwnership',
+      ].includes(String(action || ''));
+
+      let onChainOwner = '';
+      if (isOnlyOwnerAction) {
+        onChainOwner = await contract.owner().catch(() => '');
+        if (onChainOwner && onChainOwner.toLowerCase() !== wallet.address.toLowerCase()) {
+          return res.status(403).json({
+            success: false,
+            error: `Private Key ของ Server (${wallet.address}) ไม่ใช่ Contract Owner (${onChainOwner}) กรุณากรอก Private Key ของ Owner หรือสลับไปใช้โหมด "กระเป๋า Web3 ที่เชื่อมต่อ"`,
+          });
+        }
+      }
+
       let tx: any;
       let actionDesc = String(action || '');
+      let transferredNewOwner = '';
 
       switch (action) {
         case 'adminUpgradeRankForMainId': {
@@ -9572,11 +9609,18 @@ async function startApp() {
           if (!ethers.isAddress(newOwner) || newOwner === ethers.ZeroAddress) {
             return res.status(400).json({ success: false, error: 'กรุณาระบุ Wallet Address ของ Owner ใหม่ให้ถูกต้อง' });
           }
-          tx = await contract.transferOwnership(newOwner);
-          actionDesc = `transferOwnership(${newOwner})`;
+          const checksumNewOwner = ethers.getAddress(newOwner);
+          if (onChainOwner && checksumNewOwner.toLowerCase() === onChainOwner.toLowerCase()) {
+            return res.status(400).json({ success: false, error: `กระเป๋า ${checksumNewOwner} เป็น Contract Owner ปัจจุบันอยู่แล้ว` });
+          }
+          await contract.transferOwnership.staticCall(checksumNewOwner);
+          tx = await contract.transferOwnership(checksumNewOwner);
+          transferredNewOwner = checksumNewOwner;
+          actionDesc = `transferOwnership(${checksumNewOwner})`;
           break;
         }
         case 'renounceOwnership': {
+          await contract.renounceOwnership.staticCall();
           tx = await contract.renounceOwnership();
           actionDesc = 'renounceOwnership()';
           break;
@@ -9693,6 +9737,7 @@ async function startApp() {
         action,
         txHash,
         signer: wallet.address,
+        newOwner: transferredNewOwner || undefined,
         message: `✅ รันคำสั่ง ${actionDesc} บนบล็อกเชนสำเร็จ! (Tx: ${txHash.substring(0, 10)}...)`,
       });
     } catch (err: any) {
