@@ -10780,13 +10780,81 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                             <>
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                 {pagedGroupItems.map((rep: any) => {
-                                  const nodeInActiveRank =
-                                    activeNodesMap.get(Number(rep.id)) ||
-                                    Array.from(activeNodesMap.values()).find(
-                                      (n) =>
-                                        !n.isClone &&
-                                        (n.r1MainId === Number(rep.id) || n.originMainId === Number(rep.id))
-                                    );
+                                  const repIdNum = Number(rep.id);
+                                  const repOwnerLower = String(rep.owner || '').toLowerCase();
+                                  const repRankNodeEntry = Array.isArray(rep.rankNodesList)
+                                    ? rep.rankNodesList.find(
+                                        (rn: any) => Number(rn.rank) === selectedRank
+                                      )
+                                    : undefined;
+                                  const nodeInActiveRank = rep.isClone
+                                    ? selectedRank === 1
+                                      ? (() => {
+                                          const cand = activeNodesMap.get(repIdNum);
+                                          return cand &&
+                                            cand.isClone &&
+                                            (!repOwnerLower ||
+                                              cand.owner.toLowerCase() === repOwnerLower)
+                                            ? cand
+                                            : undefined;
+                                        })()
+                                      : undefined
+                                    : rep.isExtraId
+                                    ? selectedRank === 1
+                                      ? (() => {
+                                          const cand = activeNodesMap.get(repIdNum);
+                                          return cand &&
+                                            cand.isExtraLineage &&
+                                            (!repOwnerLower ||
+                                              cand.owner.toLowerCase() === repOwnerLower)
+                                            ? cand
+                                            : undefined;
+                                        })()
+                                      : Array.from(activeNodesMap.values()).find(
+                                          (n) =>
+                                            n.isExtraLineage &&
+                                            n.rank === selectedRank &&
+                                            n.id === repIdNum &&
+                                            (!repOwnerLower ||
+                                              n.owner.toLowerCase() === repOwnerLower)
+                                        )
+                                    : (() => {
+                                        if (repRankNodeEntry) {
+                                          const cand = activeNodesMap.get(
+                                            Number(repRankNodeEntry.nodeId)
+                                          );
+                                          if (
+                                            cand &&
+                                            !cand.isClone &&
+                                            !cand.isExtraLineage &&
+                                            (!repOwnerLower ||
+                                              cand.owner.toLowerCase() === repOwnerLower)
+                                          ) {
+                                            return cand;
+                                          }
+                                        }
+                                        if (selectedRank === 1) {
+                                          const cand = activeNodesMap.get(repIdNum);
+                                          if (
+                                            cand &&
+                                            !cand.isClone &&
+                                            !cand.isExtraLineage &&
+                                            (!repOwnerLower ||
+                                              cand.owner.toLowerCase() === repOwnerLower)
+                                          ) {
+                                            return cand;
+                                          }
+                                        }
+                                        return Array.from(activeNodesMap.values()).find(
+                                          (n) =>
+                                            !n.isClone &&
+                                            !n.isExtraLineage &&
+                                            (n.r1MainId === repIdNum ||
+                                              n.originMainId === repIdNum) &&
+                                            (!repOwnerLower ||
+                                              n.owner.toLowerCase() === repOwnerLower)
+                                        );
+                                      })();
 
                                   const badgeClass = rep.isClone
                                     ? 'bg-[#DCFCE7] text-[#15803D] border-emerald-200 dark:bg-emerald-500/20 dark:text-emerald-300 dark:border-emerald-500/40'
@@ -10995,7 +11063,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                                       <div className="flex items-center gap-2 pt-1">
                                         <button
                                           type="button"
-                                          onClick={() => {
+                                          onClick={async () => {
                                             const targetNodeId = nodeInActiveRank
                                               ? nodeInActiveRank.id
                                               : Number(rep.id);
@@ -11004,11 +11072,13 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                                             setModalUpgradeMessage(null);
                                             setModalUpgradeError(null);
                                             setBenefitModalTab('all');
-                                            if (!activeNodesMap.has(targetNodeId)) {
-                                              setSelectedRank(1);
-                                              loadOnChainTree(1);
-                                            }
                                             setIsWalletIdsModalOpen(false);
+                                            if (!nodeInActiveRank) {
+                                              setSelectedRank(1);
+                                              if (viewMode === 'onchain') {
+                                                await loadOnChainTree(1);
+                                              }
+                                            }
                                             setExpandedBenefitNodeId(targetNodeId);
                                           }}
                                           className="flex-1 py-1.5 px-2.5 rounded-lg bg-[#2563EB] hover:bg-blue-700 dark:bg-gradient-to-r dark:from-indigo-600 dark:to-violet-600 dark:hover:from-indigo-500 dark:hover:to-violet-500 text-white font-bold text-[11px] transition cursor-pointer flex items-center justify-center gap-1 shadow-xs"
@@ -11023,16 +11093,22 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
 
                                         <button
                                           type="button"
-                                          onClick={() => {
+                                          onClick={async () => {
                                             const targetNodeId = nodeInActiveRank
                                               ? nodeInActiveRank.id
                                               : Number(rep.id);
-                                            if (!activeNodesMap.has(targetNodeId)) {
-                                              setSelectedRank(1);
-                                              loadOnChainTree(1);
-                                            }
-                                            navigateToNode(targetNodeId);
                                             setIsWalletIdsModalOpen(false);
+                                            if (!nodeInActiveRank) {
+                                              setSelectedRank(1);
+                                              if (viewMode === 'onchain') {
+                                                await loadOnChainTree(1);
+                                              }
+                                              setFocusRootId(targetNodeId);
+                                              setSearchInput(String(targetNodeId));
+                                              setNavigationHistory([targetNodeId]);
+                                            } else {
+                                              navigateToNode(targetNodeId);
+                                            }
                                           }}
                                           className="py-1.5 px-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-[#0F172A] border border-slate-200/80 dark:bg-slate-900 dark:hover:bg-slate-800 dark:text-amber-300 dark:border-slate-700 font-bold text-[11px] transition cursor-pointer"
                                         >
@@ -12722,13 +12798,19 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                                     <div className="flex items-center gap-1.5">
                                       <button
                                         type="button"
-                                        onClick={() => {
+                                        onClick={async () => {
                                           setIsAutoExtraAlertModalOpen(false);
                                           if (selectedRank !== 1) {
                                             setSelectedRank(1);
-                                            loadOnChainTree(1);
+                                            if (viewMode === 'onchain') {
+                                              await loadOnChainTree(1);
+                                            }
+                                            setFocusRootId(item.id);
+                                            setSearchInput(String(item.id));
+                                            setNavigationHistory([item.id]);
+                                          } else {
+                                            navigateToNode(item.id);
                                           }
-                                          navigateToNode(item.id);
                                         }}
                                         className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/35 border border-amber-400/50 text-amber-200 font-bold text-[10.5px] cursor-pointer transition"
                                       >
@@ -12736,11 +12818,13 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                                       </button>
                                       <button
                                         type="button"
-                                        onClick={() => {
+                                        onClick={async () => {
                                           setIsAutoExtraAlertModalOpen(false);
                                           if (selectedRank !== 1) {
                                             setSelectedRank(1);
-                                            loadOnChainTree(1);
+                                            if (viewMode === 'onchain') {
+                                              await loadOnChainTree(1);
+                                            }
                                           }
                                           setBenefitModalTab('all');
                                           setExpandedBenefitNodeId(item.id);
@@ -12870,13 +12954,19 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                                     <div className="flex items-center gap-1.5">
                                       <button
                                         type="button"
-                                        onClick={() => {
+                                        onClick={async () => {
                                           setIsAutoExtraAlertModalOpen(false);
                                           if (selectedRank !== item.rank) {
                                             setSelectedRank(item.rank);
-                                            loadOnChainTree(item.rank);
+                                            if (viewMode === 'onchain') {
+                                              await loadOnChainTree(item.rank);
+                                            }
+                                            setFocusRootId(item.id);
+                                            setSearchInput(String(item.id));
+                                            setNavigationHistory([item.id]);
+                                          } else {
+                                            navigateToNode(item.id);
                                           }
-                                          navigateToNode(item.id);
                                         }}
                                         className="px-2.5 py-1 rounded-lg bg-red-500/20 hover:bg-red-500/35 border border-red-400/50 text-red-200 font-bold text-[10.5px] cursor-pointer transition"
                                       >
@@ -13018,13 +13108,19 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                                 </span>
                                 <button
                                   type="button"
-                                  onClick={() => {
+                                  onClick={async () => {
                                     setIsAutoExtraAlertModalOpen(false);
                                     if (selectedRank !== 1) {
                                       setSelectedRank(1);
-                                      loadOnChainTree(1);
+                                      if (viewMode === 'onchain') {
+                                        await loadOnChainTree(1);
+                                      }
+                                      setFocusRootId(p.mainId);
+                                      setSearchInput(String(p.mainId));
+                                      setNavigationHistory([p.mainId]);
+                                    } else {
+                                      navigateToNode(p.mainId);
                                     }
-                                    navigateToNode(p.mainId);
                                   }}
                                   className="px-2.5 py-1 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/35 border border-cyan-400/40 text-cyan-200 font-bold text-[10px] cursor-pointer"
                                 >
