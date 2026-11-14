@@ -12,6 +12,7 @@ import { X, LogIn } from 'lucide-react';
 import { TransactionToast } from './components/TransactionToast';
 import { calculateMainIdVaultPools } from './utils/vaultPools';
 import { notifyMatrixNetworkError } from './hooks/useMatrixAutoReconnect';
+import { peekPostTxViewTarget } from './utils/postTxNotice';
 
 export default function App() {
   const [language, setLanguage] = useState<'th' | 'en'>('th');
@@ -25,7 +26,11 @@ export default function App() {
   const [isDeployModalOpen, setIsDeployModalOpen] = useState<boolean>(false);
   const [isContractSwitcherOpen, setIsContractSwitcherOpen] = useState<boolean>(false);
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState<boolean>(false);
-  const [selectedInspectRank, setSelectedInspectRank] = useState<number>(1);
+  const [selectedInspectRank, setSelectedInspectRank] = useState<number>(() => {
+    const t = peekPostTxViewTarget();
+    const r = Number(t?.selectedRank || 0);
+    return r >= 1 && r <= 18 ? r : 1;
+  });
   const [, setSelectedVaultBalance] = useState<string>('0.00 USDT');
   const [bypassGateToDashboard, setBypassGateToDashboard] = useState<boolean>(false);
   const [isAdminView, setIsAdminView] = useState<boolean>(false);
@@ -141,19 +146,40 @@ export default function App() {
   }, [profile?.vaults, selectedInspectRank]);
 
   // Scoped Main ID Selection and Vault Pools calculations
-  const [selectedMainId, setSelectedMainId] = useState<string>('1');
+  const [selectedMainId, setSelectedMainId] = useState<string>(() => {
+    const t = peekPostTxViewTarget();
+    if (t?.selectedMainId && Number(t.selectedMainId) > 0) {
+      return String(t.selectedMainId);
+    }
+    return '1';
+  });
   const prevAccountRef = React.useRef<string | null>(null);
+  const prevHadOwnedIdsRef = React.useRef<boolean>(false);
 
   useEffect(() => {
     const accountChanged = prevAccountRef.current !== account;
+    const ownedList = profile?.ownedMainIdsRank1 || [];
+    const hasOwnedIds =
+      ownedList.length > 0 ||
+      Boolean(profile?.mainNodeIdRank1 && profile.mainNodeIdRank1 !== '0');
+    const newlyRegisteredSameAccount = !prevHadOwnedIdsRef.current && hasOwnedIds;
+
     if (accountChanged) {
       prevAccountRef.current = account;
-      if (profile) {
-        if (profile.ownedMainIdsRank1 && profile.ownedMainIdsRank1.length > 0) {
-          setSelectedMainId(String(profile.ownedMainIdsRank1[0]));
-        } else if (profile.mainNodeIdRank1 && profile.mainNodeIdRank1 !== '0') {
-          setSelectedMainId(String(profile.mainNodeIdRank1));
-        }
+    }
+    prevHadOwnedIdsRef.current = hasOwnedIds;
+
+    if ((accountChanged || newlyRegisteredSameAccount) && profile) {
+      const postTarget = peekPostTxViewTarget();
+      if (
+        postTarget?.selectedMainId &&
+        ownedList.map(String).includes(String(postTarget.selectedMainId))
+      ) {
+        setSelectedMainId(String(postTarget.selectedMainId));
+      } else if (ownedList.length > 0) {
+        setSelectedMainId(String(ownedList[0]));
+      } else if (profile.mainNodeIdRank1 && profile.mainNodeIdRank1 !== '0') {
+        setSelectedMainId(String(profile.mainNodeIdRank1));
       }
     }
   }, [account, profile]);
@@ -565,7 +591,7 @@ export default function App() {
               onRegisterSuccess={() => {
                 setTimeout(() => {
                   setIsRegisterModalOpen(false);
-                }, 450);
+                }, 1050);
               }}
               language={language}
             />

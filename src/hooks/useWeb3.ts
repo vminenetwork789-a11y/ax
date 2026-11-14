@@ -23,6 +23,11 @@ import {
   ApplicantItem,
   PlacementMode,
 } from '../utils/offChainSimulator';
+import {
+  savePostTxNotice,
+  savePostTxViewTarget,
+  triggerAutoPageRefresh,
+} from '../utils/postTxNotice';
 
 declare global {
   interface Window {
@@ -68,7 +73,19 @@ export function useWeb3() {
     usdtAddressRef.current = usdtAddress;
   }, [usdtAddress]);
 
-  const [account, setAccount] = useState<string | null>(null);
+  const [account, setAccount] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = sessionStorage.getItem('f27_active_wallet');
+        if (saved && ethers.isAddress(saved)) {
+          return saved;
+        }
+      } catch {
+        // Ignore storage read error
+      }
+    }
+    return null;
+  });
   const [detectedBrowserWallet, setDetectedBrowserWallet] = useState<string | null>(null);
   const [chainId, setChainId] = useState<number | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
@@ -348,6 +365,11 @@ export function useWeb3() {
 
     const signer = await provider.getSigner();
     const userAddr = await signer.getAddress();
+    try {
+      sessionStorage.setItem('f27_active_wallet', userAddr);
+    } catch {
+      // Ignore storage error
+    }
     setAccount(userAddr);
     setChainId(BSC_TESTNET_CHAIN_ID);
 
@@ -952,21 +974,47 @@ export function useWeb3() {
       const parentText = firstPlacement?.parentId || autoOptions?.targetParentId || sponsorNodeId;
       const idsLabel = assignedIds.map((id) => `#${id}`).join(', ');
 
+      const ownerResolved = regData.owner || targetOwnerAddr;
+      try {
+        sessionStorage.setItem('f27_active_wallet', ownerResolved);
+      } catch {
+        // Ignore
+      }
+
+      const finalMsg =
+        regData.message ||
+        `🎉 สมัครสมาชิกสำเร็จ! ได้รับเลขไอดี ${idsLabel} วางที่ Parent #${parentText} (${sideText}) ภายใต้ผู้แนะนำ #${sponsorNodeId}`;
+      const stepLabel = idsLabel ? `สมัครสำเร็จ! ได้รับเลขไอดี ${idsLabel}` : 'สมัครสมาชิกสำเร็จ!';
+
       setTxState({
         isLoading: false,
-        step: idsLabel ? `สมัครสำเร็จ! ได้รับเลขไอดี ${idsLabel}` : 'สำเร็จ!',
+        step: stepLabel,
         txHash: regData.txHash || null,
         error: null,
         assignedNodeIds: assignedIds,
-        successMessage:
-          regData.message ||
-          `🎉 สมัครสมาชิกสำเร็จ! ได้รับเลขไอดี ${idsLabel} วางที่ Parent #${parentText} (${sideText}) ภายใต้ผู้แนะนำ #${sponsorNodeId}`,
+        successMessage: finalMsg,
       });
 
-      await refreshUserData(regData.owner || targetOwnerAddr);
+      savePostTxNotice({
+        type: 'register',
+        step: stepLabel,
+        message: finalMsg,
+        txHash: regData.txHash || null,
+        assignedNodeIds: assignedIds,
+      });
+      savePostTxViewTarget({
+        type: 'register',
+        selectedRank: 1,
+        selectedMainId: assignedIds[0] || undefined,
+        focusNodeId: assignedIds[0] || undefined,
+        assignedNodeIds: assignedIds,
+      });
+
+      await refreshUserData(ownerResolved);
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('matrix:tree:refresh'));
       }
+      triggerAutoPageRefresh(1300);
       return {
         ...regData,
         hash: regData.txHash || null,
@@ -1167,10 +1215,9 @@ export function useWeb3() {
       let assignedIds = parsedMainIds;
       if (assignedIds.length === 0) {
         try {
-          const profRes = await fetch(
-            `/api/matrix/profile/${userAddr}?contract=${currentContract}`,
-            { headers: { Accept: 'application/json' } }
-          );
+          const profRes = await fetch(`/api/user/${userAddr}`, {
+            headers: { Accept: 'application/json' },
+          });
           if (profRes.ok) {
             const profJson = await profRes.json();
             const ownedMainIds: number[] = Array.isArray(profJson?.profile?.ownedMainIdsRank1)
@@ -1182,6 +1229,30 @@ export function useWeb3() {
           }
         } catch {
           // Ignore lookup fallback error
+        }
+      }
+
+      if (assignedIds.length === 0) {
+        try {
+          const totalR1 = Number(await matrixContract.totalNodesInRank(1));
+          const lowerUser = userAddr.toLowerCase();
+          const startId = Math.max(1, totalR1 - Math.max(8, countToReg * 4));
+          const foundOnChain: number[] = [];
+          for (let nid = totalR1; nid >= startId && foundOnChain.length < countToReg; nid--) {
+            const n = await matrixContract.rankNodes(1, nid).catch(() => null);
+            if (!n) continue;
+            const nOwner = String(n.owner ?? n[1] ?? '').toLowerCase();
+            const nIsClone = Boolean(n.isClone ?? n[6]);
+            const nIsExtra = Boolean(n.isExtraId ?? n[7]);
+            if (nOwner === lowerUser && !nIsClone && !nIsExtra) {
+              foundOnChain.push(nid);
+            }
+          }
+          if (foundOnChain.length > 0) {
+            assignedIds = foundOnChain.sort((a, b) => a - b);
+          }
+        } catch {
+          // Ignore RPC scan fallback error
         }
       }
 
@@ -1206,16 +1277,34 @@ export function useWeb3() {
         details: `Sponsor #${sponsorNodeId}${idsLabel ? ` | ID ${idsLabel}` : ''}`,
       });
 
+      const stepLabel = idsLabel ? `สมัครสำเร็จ! ได้รับเลขไอดี ${idsLabel}` : 'สมัครสมาชิกสำเร็จ!';
+      const successMsg =
+        autoParentId > 0
+          ? `🎉 สมัครสมาชิกสำเร็จ!${idsLabel ? ` ได้รับเลขไอดี ${idsLabel}` : ''}${clonesLabel} • ลงตำแหน่งที่ Parent #${autoParentId} (${sideLabel}) ภายใต้ผู้แนะนำ #${sponsorNodeId}`
+          : `🎉 สมัครสมาชิกสำเร็จ!${idsLabel ? ` ได้รับเลขไอดี ${idsLabel}` : ''}${clonesLabel} (Rank 1 - ${countToReg * r1UnitPrice} USDT | Sponsor #${sponsorNodeId})`;
+
       setTxState({
         isLoading: false,
-        step: idsLabel ? `สมัครสำเร็จ! ได้รับเลขไอดี ${idsLabel}` : 'สมัครสมาชิกสำเร็จ!',
+        step: stepLabel,
         txHash: receipt.hash,
         error: null,
         assignedNodeIds: assignedIds,
-        successMessage:
-          autoParentId > 0
-            ? `🎉 สมัครสมาชิกสำเร็จ!${idsLabel ? ` ได้รับเลขไอดี ${idsLabel}` : ''}${clonesLabel} • ลงตำแหน่งที่ Parent #${autoParentId} (${sideLabel}) ภายใต้ผู้แนะนำ #${sponsorNodeId}`
-            : `🎉 สมัครสมาชิกสำเร็จ!${idsLabel ? ` ได้รับเลขไอดี ${idsLabel}` : ''}${clonesLabel} (Rank 1 - ${countToReg * r1UnitPrice} USDT | Sponsor #${sponsorNodeId})`,
+        successMessage: successMsg,
+      });
+
+      savePostTxNotice({
+        type: 'register',
+        step: stepLabel,
+        message: successMsg,
+        txHash: receipt.hash,
+        assignedNodeIds: assignedIds,
+      });
+      savePostTxViewTarget({
+        type: 'register',
+        selectedRank: 1,
+        selectedMainId: assignedIds[0] || undefined,
+        focusNodeId: assignedIds[0] || undefined,
+        assignedNodeIds: assignedIds,
       });
 
       await refreshUserData(userAddr);
@@ -1224,6 +1313,7 @@ export function useWeb3() {
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('matrix:tree:refresh'));
       }
+      triggerAutoPageRefresh(1300);
       return {
         success: true,
         hash: receipt.hash,
@@ -1348,14 +1438,32 @@ export function useWeb3() {
       }));
 
       const receipt = await batchTx.wait();
-      const { mainIds: batchMainIds, cloneIds: batchCloneIds } =
+      let { mainIds: batchMainIds, cloneIds: batchCloneIds } =
         extractCreatedRank1IdsFromReceipt(receipt);
-      const batchIdsLabel = batchMainIds.map((id) => `#${id}`).join(', ');
 
       await Promise.race([
         fetch('/api/db/sync?rank=1&fast=1', { method: 'POST' }).catch(() => {}),
         new Promise((resolve) => setTimeout(resolve, 3500)),
       ]);
+
+      if (batchMainIds.length === 0) {
+        try {
+          const profRes = await fetch(`/api/user/${userAddr}`);
+          if (profRes.ok) {
+            const profJson = await profRes.json();
+            const ownedMainIds: number[] = Array.isArray(profJson?.profile?.ownedMainIdsRank1)
+              ? profJson.profile.ownedMainIdsRank1.map(Number).filter((id: number) => id > 0)
+              : [];
+            if (ownedMainIds.length > 0) {
+              batchMainIds = ownedMainIds.slice(-count);
+            }
+          }
+        } catch {
+          // Ignore lookup fallback
+        }
+      }
+
+      const batchIdsLabel = batchMainIds.map((id) => `#${id}`).join(', ');
 
       reportTxToServer({
         txHash: receipt?.hash || batchTx.hash,
@@ -1369,13 +1477,31 @@ export function useWeb3() {
         details: `Sponsor #${sponsorNodeId}${batchIdsLabel ? ` | ID ${batchIdsLabel}` : ''}`,
       });
 
+      const stepLabel = batchIdsLabel ? `สมัครสำเร็จ! ได้รับเลขไอดี ${batchIdsLabel}` : 'สมัครสมาชิกสำเร็จ!';
+      const successMsg = `🎉 สมัครแบบกลุ่ม (${count} โหนด = ${count * r1UnitPrice} USDT) สำเร็จ!${batchIdsLabel ? ` ได้รับเลขไอดี ${batchIdsLabel}` : ''}`;
+
       setTxState({
         isLoading: false,
-        step: batchIdsLabel ? `สมัครสำเร็จ! ได้รับเลขไอดี ${batchIdsLabel}` : 'สำเร็จ!',
+        step: stepLabel,
         txHash: receipt.hash,
         error: null,
         assignedNodeIds: batchMainIds,
-        successMessage: `🎉 สมัครแบบกลุ่ม (${count} โหนด = ${count * r1UnitPrice} USDT) สำเร็จ!${batchIdsLabel ? ` ได้รับเลขไอดี ${batchIdsLabel}` : ''}`,
+        successMessage: successMsg,
+      });
+
+      savePostTxNotice({
+        type: 'register',
+        step: stepLabel,
+        message: successMsg,
+        txHash: receipt.hash,
+        assignedNodeIds: batchMainIds,
+      });
+      savePostTxViewTarget({
+        type: 'register',
+        selectedRank: 1,
+        selectedMainId: batchMainIds[0] || undefined,
+        focusNodeId: batchMainIds[0] || undefined,
+        assignedNodeIds: batchMainIds,
       });
 
       await refreshUserData(userAddr);
@@ -1384,6 +1510,7 @@ export function useWeb3() {
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('matrix:tree:refresh'));
       }
+      triggerAutoPageRefresh(1300);
       return {
         success: true,
         hash: receipt.hash,
@@ -1416,20 +1543,37 @@ export function useWeb3() {
                 ? regData.assignedNodeIds.map(Number).filter((id: number) => id > 0)
                 : [];
               const fallbackIdsLabel = fallbackIds.map((id) => `#${id}`).join(', ');
+              const stepLabel = fallbackIdsLabel ? `สมัครสำเร็จ! ได้รับเลขไอดี ${fallbackIdsLabel}` : 'สำเร็จ!';
+              const successMsg =
+                regData.message ||
+                `🎉 สมัครแบบกลุ่ม (${count} โหนด = ${count * r1UnitPrice} USDT) สำเร็จ!${fallbackIdsLabel ? ` ได้รับเลขไอดี ${fallbackIdsLabel}` : ''}`;
               setTxState({
                 isLoading: false,
-                step: fallbackIdsLabel ? `สมัครสำเร็จ! ได้รับเลขไอดี ${fallbackIdsLabel}` : 'สำเร็จ!',
+                step: stepLabel,
                 txHash: regData.txHash || null,
                 error: null,
                 assignedNodeIds: fallbackIds,
-                successMessage:
-                  regData.message ||
-                  `🎉 สมัครแบบกลุ่ม (${count} โหนด = ${count * r1UnitPrice} USDT) สำเร็จ!${fallbackIdsLabel ? ` ได้รับเลขไอดี ${fallbackIdsLabel}` : ''}`,
+                successMessage: successMsg,
+              });
+              savePostTxNotice({
+                type: 'register',
+                step: stepLabel,
+                message: successMsg,
+                txHash: regData.txHash || null,
+                assignedNodeIds: fallbackIds,
+              });
+              savePostTxViewTarget({
+                type: 'register',
+                selectedRank: 1,
+                selectedMainId: fallbackIds[0] || undefined,
+                focusNodeId: fallbackIds[0] || undefined,
+                assignedNodeIds: fallbackIds,
               });
               await refreshUserData(regData.owner || targetOwner);
               if (typeof window !== 'undefined') {
                 window.dispatchEvent(new CustomEvent('matrix:tree:refresh'));
               }
+              triggerAutoPageRefresh(1300);
               return { ...regData, assignedNodeIds: fallbackIds };
             }
           }
@@ -1475,14 +1619,15 @@ export function useWeb3() {
             dbUpgradeRankPool = info.upgradeRankPool;
           }
           if (typeof info.currentRank === 'number' && targetRank <= info.currentRank) {
+            const errMsg = `รหัสหลัก #${mIdNum} อยู่ใน Rank ${info.currentRank} เรียบร้อยแล้ว (ไม่สามารถกดย้อนหลังสู่ Rank ${targetRank} ได้)`;
             setTxState({
               isLoading: false,
               step: '',
               txHash: null,
-              error: `รหัสหลัก #${mIdNum} อยู่ใน Rank ${info.currentRank} เรียบร้อยแล้ว (ไม่สามารถกดย้อนหลังสู่ Rank ${targetRank} ได้)`,
+              error: errMsg,
               successMessage: null,
             });
-            return;
+            return { success: false, error: errMsg };
           }
         }
       } catch {
@@ -1539,25 +1684,27 @@ export function useWeb3() {
           }
 
           if (targetRank <= onChainCurrentRank) {
+            const errMsg = `รหัสหลัก #${mIdNum} อยู่ใน Rank ${onChainCurrentRank} บนบล็อกเชนเรียบร้อยแล้ว (ไม่สามารถอัปเกรดย้อนหลังได้)`;
             setTxState({
               isLoading: false,
               step: '',
               txHash: null,
-              error: `รหัสหลัก #${mIdNum} อยู่ใน Rank ${onChainCurrentRank} บนบล็อกเชนเรียบร้อยแล้ว (ไม่สามารถอัปเกรดย้อนหลังได้)`,
+              error: errMsg,
               successMessage: null,
             });
-            return;
+            return { success: false, error: errMsg };
           }
 
           if (targetRank !== onChainCurrentRank + 1) {
+            const errMsg = `เงื่อนไข Smart Contract กำหนดให้อัปเกรดทีละ 1 ขั้นตามลำดับ (ปัจจุบันอยู่ Rank ${onChainCurrentRank} ต้องอัปเกรดสู่ Rank ${onChainCurrentRank + 1} ก่อน)`;
             setTxState({
               isLoading: false,
               step: '',
               txHash: null,
-              error: `เงื่อนไข Smart Contract กำหนดให้อัปเกรดทีละ 1 ขั้นตามลำดับ (ปัจจุบันอยู่ Rank ${onChainCurrentRank} ต้องอัปเกรดสู่ Rank ${onChainCurrentRank + 1} ก่อน)`,
+              error: errMsg,
               successMessage: null,
             });
-            return;
+            return { success: false, error: errMsg };
           }
 
           // 2. Verify deployed contract rankPrice(targetRank) matches nominalPrice before sending on-chain tx
@@ -1673,20 +1820,58 @@ export function useWeb3() {
             blockNumber: receipt?.blockNumber,
           });
 
+          setTxState((prev) => ({
+            ...prev,
+            step: `ยืนยันการอัปเกรด Rank ${targetRank} สำเร็จ! กำลังอัปเดตข้อมูลและรีเฟรชหน้าเว็บ...`,
+            txHash: receipt.hash,
+          }));
+
+          // Sync targetRank + source vault ranks FIRST so all APIs have fresh data before UI & reload
+          await Promise.race([
+            fetch(`/api/db/sync?rank=${targetRank}&fast=1`, { method: 'POST' }).catch(() => {}),
+            new Promise((resolve) => setTimeout(resolve, 4000)),
+          ]);
+
+          const upgradeStepLabel = `อัปเกรด Rank ${targetRank} สำเร็จ!`;
+          const upgradeSuccessMsg = `🚀 อัปเกรด${mIdNum > 0 ? `รหัสหลัก #${mIdNum} ` : ''}สู่แรงค์ ${targetRank} (${nominalPrice} USDT) บนบล็อกเชนสำเร็จเรียบร้อย!`;
+
           setTxState({
             isLoading: false,
-            step: 'สำเร็จ!',
+            step: upgradeStepLabel,
             txHash: receipt.hash,
             error: null,
-            successMessage: `🚀 อัปเกรด${mIdNum > 0 ? `รหัสหลัก #${mIdNum} ` : ''}สู่แรงค์ ${targetRank} (${nominalPrice} USDT) บนบล็อกเชนสำเร็จเรียบร้อย!`,
+            successMessage: upgradeSuccessMsg,
           });
 
-          await fetch('/api/db/sync', { method: 'POST' }).catch(() => {});
+          savePostTxNotice({
+            type: 'upgrade',
+            step: upgradeStepLabel,
+            message: upgradeSuccessMsg,
+            txHash: receipt.hash,
+            targetRank,
+            mainId: mIdNum,
+          });
+          savePostTxViewTarget({
+            type: 'upgrade',
+            selectedRank: targetRank,
+            selectedMainId: mIdNum,
+            targetRank,
+            mainId: mIdNum,
+          });
+
           await refreshUserData(userAddr);
           if (typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent('matrix:tree:refresh'));
           }
-          return receipt;
+          triggerAutoPageRefresh(1300);
+          return {
+            success: true,
+            hash: receipt.hash,
+            txHash: receipt.hash,
+            targetRank,
+            mainId: mIdNum,
+            receipt,
+          };
         } catch (onChainErr: any) {
           const rawErrMsg = String(
             onChainErr?.reason || onChainErr?.shortMessage || onChainErr?.message || ''
@@ -1753,20 +1938,47 @@ export function useWeb3() {
         }
       }
 
+      const upgradeTxHash = json.txHash || `0xupg${Date.now().toString(16)}`;
+      const upgradeStepLabel = `อัปเกรด Rank ${targetRank} สำเร็จ!`;
+      const upgradeSuccessMsg =
+        json.message ||
+        `🚀 อัปเกรดรหัสหลัก #${mIdNum} สู่แรงค์ ${targetRank} (${nominalPrice} USDT) สำเร็จเรียบร้อย!`;
+
       setTxState({
         isLoading: false,
-        step: 'สำเร็จ!',
-        txHash: json.txHash || `0xupg${Date.now().toString(16)}`,
+        step: upgradeStepLabel,
+        txHash: upgradeTxHash,
         error: null,
-        successMessage:
-          json.message ||
-          `🚀 อัปเกรดรหัสหลัก #${mIdNum} สู่แรงค์ ${targetRank} (${nominalPrice} USDT) สำเร็จเรียบร้อย!`,
+        successMessage: upgradeSuccessMsg,
+      });
+
+      savePostTxNotice({
+        type: 'upgrade',
+        step: upgradeStepLabel,
+        message: upgradeSuccessMsg,
+        txHash: upgradeTxHash,
+        targetRank,
+        mainId: mIdNum,
+      });
+      savePostTxViewTarget({
+        type: 'upgrade',
+        selectedRank: targetRank,
+        selectedMainId: mIdNum,
+        targetRank,
+        mainId: mIdNum,
       });
 
       await refreshUserData(mainIdOwner || userAddr || account || '0x622E20082e63c7220c5AF0A77Cbc437a98505311');
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('matrix:tree:refresh'));
       }
+      triggerAutoPageRefresh(1300);
+      return {
+        success: true,
+        txHash: upgradeTxHash,
+        targetRank,
+        mainId: mIdNum,
+      };
     } catch (err: any) {
       console.error('Upgrade transaction error:', err);
       const errorMsg = err?.reason || err?.shortMessage || err?.message || 'การอัปเกรดแรงค์ล้มเหลว';
@@ -1777,6 +1989,10 @@ export function useWeb3() {
         error: errorMsg,
         successMessage: null,
       });
+      return {
+        success: false,
+        error: errorMsg,
+      };
     }
   };
 
@@ -2022,18 +2238,54 @@ export function useWeb3() {
         if (activeBatchTicket?.ticketId) {
           await confirmQueueTicket(activeBatchTicket.ticketId, result.txHash);
         }
-        await fetch('/api/db/sync', { method: 'POST' }).catch(() => {});
-        const assignedIds: number[] = Array.isArray(result.assignedNodeIds)
+        await Promise.race([
+          fetch('/api/db/sync?rank=1&fast=1', { method: 'POST' }).catch(() => {}),
+          new Promise((resolve) => setTimeout(resolve, 3500)),
+        ]);
+        let assignedIds: number[] = Array.isArray(result.assignedNodeIds)
           ? result.assignedNodeIds.map(Number).filter((id: number) => id > 0)
           : [];
+        if (assignedIds.length === 0) {
+          try {
+            const profRes = await fetch(`/api/user/${userAddr}`);
+            if (profRes.ok) {
+              const profJson = await profRes.json();
+              const ownedMainIds: number[] = Array.isArray(profJson?.profile?.ownedMainIdsRank1)
+                ? profJson.profile.ownedMainIdsRank1.map(Number).filter((id: number) => id > 0)
+                : [];
+              if (ownedMainIds.length > 0) {
+                assignedIds = ownedMainIds.slice(-applicantsQueue.length);
+              }
+            }
+          } catch {
+            // Ignore fallback error
+          }
+        }
         const idsLabel = assignedIds.map((id) => `#${id}`).join(', ');
+        const stepLabel = idsLabel ? `สมัครสำเร็จ! ได้รับเลขไอดี ${idsLabel}` : 'สมัครสมาชิกสำเร็จ!';
+        const successMsg = `🎉 สมัครแบบกลุ่ม (${applicantsQueue.length} โหนด) สำเร็จ!${idsLabel ? ` ได้รับเลขไอดี ${idsLabel}` : ''}`;
+
         setTxState({
           isLoading: false,
-          step: idsLabel ? `สมัครสำเร็จ! ได้รับเลขไอดี ${idsLabel}` : 'สำเร็จ!',
+          step: stepLabel,
           txHash: result.txHash || null,
           error: null,
           assignedNodeIds: assignedIds,
-          successMessage: `🎉 สมัครแบบกลุ่ม (${applicantsQueue.length} โหนด) สำเร็จ!${idsLabel ? ` ได้รับเลขไอดี ${idsLabel}` : ''}`,
+          successMessage: successMsg,
+        });
+        savePostTxNotice({
+          type: 'register',
+          step: stepLabel,
+          message: successMsg,
+          txHash: result.txHash || null,
+          assignedNodeIds: assignedIds,
+        });
+        savePostTxViewTarget({
+          type: 'register',
+          selectedRank: 1,
+          selectedMainId: assignedIds[0] || undefined,
+          focusNodeId: assignedIds[0] || undefined,
+          assignedNodeIds: assignedIds,
         });
         await refreshUserData(userAddr);
 
@@ -2041,6 +2293,8 @@ export function useWeb3() {
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('matrix:tree:refresh'));
         }
+        triggerAutoPageRefresh(1300);
+        result.assignedNodeIds = assignedIds;
       } else {
         if (activeBatchTicket?.ticketId) {
           await releaseQueueTicket(activeBatchTicket.ticketId);
@@ -2287,19 +2541,37 @@ export function useWeb3() {
       const finalMsg =
         data.message ||
         `✅ Admin Upgrade สำเร็จ! อัปเกรด ${targetLabel} เป็น Rank ${parsedTargetRank} ฟรี (ไม่จ่ายค่าคอมเมื่อวางซ้าย และระบบโคลนนิ่งทำงานปกติเมื่อวางขวา)`;
+      const stepLabel = `Admin อัพ Rank ${parsedTargetRank} ฟรี สำเร็จ!`;
 
       setTxState({
         isLoading: false,
-        step: 'สำเร็จ!',
+        step: stepLabel,
         txHash,
         error: null,
         successMessage: finalMsg,
+      });
+
+      savePostTxNotice({
+        type: 'admin_upgrade',
+        step: stepLabel,
+        message: finalMsg,
+        txHash,
+        targetRank: parsedTargetRank,
+        mainId: resolvedMainId || undefined,
+      });
+      savePostTxViewTarget({
+        type: 'admin_upgrade',
+        selectedRank: parsedTargetRank,
+        selectedMainId: resolvedMainId || undefined,
+        targetRank: parsedTargetRank,
+        mainId: resolvedMainId || undefined,
       });
 
       if (account) await refreshUserData(account);
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('matrix:tree:refresh'));
       }
+      triggerAutoPageRefresh(1300);
       return {
         success: true,
         txHash,

@@ -12,6 +12,7 @@ import {
   ShieldCheck,
   Sparkles,
 } from 'lucide-react';
+import { consumePostTxNotice } from '../utils/postTxNotice';
 export interface TxState {
   isLoading: boolean;
   step: string;
@@ -85,6 +86,24 @@ export const TransactionToast: React.FC<TransactionToastProps> = ({
   const [dismissedWeb3Key, setDismissedWeb3Key] = useState<string | null>(null);
 
   const isTh = language === 'th';
+
+  // Restore post-refresh confirmation toast (e.g. registration ID or rank upgrade success right after auto-reload)
+  useEffect(() => {
+    const notice = consumePostTxNotice();
+    if (!notice) return;
+    const restoredToast: ActiveToastItem = {
+      id: notice.id,
+      status: 'confirmed',
+      step: notice.step,
+      message: notice.message,
+      txHash: notice.txHash || null,
+      timestamp: notice.timestamp || new Date().toISOString(),
+      durationMs: 15000,
+      source: 'custom',
+      assignedNodeIds: notice.assignedNodeIds,
+    };
+    setCustomToasts((prev) => [restoredToast, ...prev].slice(0, 3));
+  }, []);
 
   const formatLatestTime = useCallback(
     (iso: string) => {

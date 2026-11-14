@@ -5796,6 +5796,20 @@ async function startApp() {
       if (fastMode || rankParam >= 1) {
         const targetRank = rankParam >= 1 && rankParam <= 18 ? rankParam : 1;
         await syncRankIntoDatabase(targetRank, CONTRACT_ADDRESS, false, true);
+        if (targetRank >= 2) {
+          const winStart = Math.max(1, targetRank - 5);
+          const vaultRanks: number[] = [];
+          for (let wr = winStart; wr < targetRank; wr++) {
+            vaultRanks.push(wr);
+          }
+          await Promise.all(
+            vaultRanks.map((wr) => syncRankIntoDatabase(wr, CONTRACT_ADDRESS, false, true).catch(() => []))
+          );
+          reconcileAutoExtraIdsAcrossRanks();
+          rebuildDatabaseRewardLogsFromNodes();
+          rebuildDatabaseUpgradeLogsFromNodes();
+          saveMatrixDBToDisk(true);
+        }
         return res.json({
           success: true,
           source: 'DATABASE_FAST_DELTA_SYNCED',

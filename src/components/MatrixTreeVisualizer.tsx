@@ -67,6 +67,13 @@ import {
   setActiveReferralSponsorId,
   buildReferralLink,
 } from '../utils/referralLink';
+import {
+  consumePostTxViewTarget,
+  savePostTxNotice,
+  savePostTxViewTarget,
+  triggerAutoPageRefresh,
+  PostTxViewTarget,
+} from '../utils/postTxNotice';
 
 export interface EnrichedBinaryNode {
   id: number;
@@ -639,7 +646,29 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
   contractAddress,
   currentUserRank = 1,
 }) => {
-  const [selectedRank, setSelectedRank] = useState<number>(1);
+  const initialPostTxTargetRef = useRef<PostTxViewTarget | null | undefined>(undefined);
+  if (initialPostTxTargetRef.current === undefined) {
+    initialPostTxTargetRef.current = consumePostTxViewTarget();
+  }
+  const initialPostTxTarget = initialPostTxTargetRef.current;
+
+  const [selectedRank, setSelectedRank] = useState<number>(() => {
+    const r = Number(initialPostTxTarget?.selectedRank || 0);
+    return r >= 1 && r <= 18 ? r : 1;
+  });
+  const [postTxBanner, setPostTxBanner] = useState<PostTxViewTarget | null>(() => {
+    if (!initialPostTxTarget) return null;
+    if (
+      (initialPostTxTarget.assignedNodeIds && initialPostTxTarget.assignedNodeIds.length > 0) ||
+      initialPostTxTarget.type === 'upgrade' ||
+      initialPostTxTarget.type === 'admin_upgrade'
+    ) {
+      return initialPostTxTarget;
+    }
+    return null;
+  });
+  const hasAppliedPostTxHighlightRef = useRef<boolean>(false);
+
   const {
     isConnected: isWsConnected,
     retryCount: wsRetryCount,
@@ -676,7 +705,12 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
 
   // Track newly arrived nodes to highlight & auto-extend in the Binary Tree
   const knownNodeIdsByRankRef = useRef<Map<number, Set<number>>>(new Map());
-  const [newlyAddedNodeIds, setNewlyAddedNodeIds] = useState<Set<number>>(new Set());
+  const [newlyAddedNodeIds, setNewlyAddedNodeIds] = useState<Set<number>>(() => {
+    const ids = Array.isArray(initialPostTxTarget?.assignedNodeIds)
+      ? initialPostTxTarget!.assignedNodeIds.map(Number).filter((id) => id > 0)
+      : [];
+    return new Set(ids);
+  });
   const [autoFollowNewNodes, setAutoFollowNewNodes] = useState<boolean>(true);
   const [latestNewNodeAlert, setLatestNewNodeAlert] = useState<{
     id: number;
@@ -854,6 +888,21 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         ? 'สมัครสมาชิกสำเร็จเรียบร้อยแล้ว!'
         : 'Registration confirmed!';
       setRegTxMessage(okMsg);
+      if (assignedIds.length > 0) {
+        setNewlyAddedNodeIds((prev) => {
+          const next = new Set(prev);
+          assignedIds.forEach((id) => next.add(id));
+          return next;
+        });
+        setPostTxBanner({
+          type: 'register',
+          selectedRank: 1,
+          selectedMainId: assignedIds[0],
+          focusNodeId: assignedIds[0],
+          assignedNodeIds: assignedIds,
+          createdAtMs: Date.now(),
+        });
+      }
       emitTransactionToast({
         id: toastId,
         status: 'confirmed',
@@ -871,7 +920,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
       });
       setTimeout(() => {
         setIsRegisterModalOpen(false);
-      }, 650);
+      }, 1050);
     } catch (err: any) {
       const errMsg = err?.message || 'Registration failed';
       setRegTxError(errMsg);
@@ -893,6 +942,10 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
   >('all');
   const [modalSectionPages, setModalSectionPages] = useState<Record<string, number>>({});
   const [perIdReportsMap, setPerIdReportsMap] = useState<Map<number, any>>(new Map());
+  const perIdReportsMapRef = useRef<Map<number, any>>(perIdReportsMap);
+  useEffect(() => {
+    perIdReportsMapRef.current = perIdReportsMap;
+  }, [perIdReportsMap]);
   const [systemPoolsData, setSystemPoolsData] = useState<any>(null);
   const [isSystemPoolsModalOpen, setIsSystemPoolsModalOpen] = useState<boolean>(false);
   const [systemPoolsModalTab, setSystemPoolsModalTab] = useState<'all' | 'allsell' | 'family'>('all');
@@ -1068,6 +1121,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             for (const rep of data.reports) {
               map.set(Number(rep.id), rep);
             }
+            perIdReportsMapRef.current = map;
             setPerIdReportsMap(map);
           }
           if (data.systemPools) {
@@ -2929,14 +2983,14 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
               taggedAutoCountForMain++;
             }
           }
-          const repForR1 = perIdReportsMap.get(r1Id);
+          const repForR1 = perIdReportsMapRef.current.get(r1Id);
           const repAutoCount = Array.isArray(repForR1?.autoIdsSpawned)
             ? repForR1.autoIdsSpawned.length
             : Number(repForR1?.totalAutoIdCount || 0);
           let spawnedCount = 0;
           if (r1Id === 1) {
             spawnedCount = Math.max(maxPossibleSpawns, taggedAutoCountForMain, repAutoCount);
-          } else if (perIdReportsMap.has(r1Id) || taggedAutoCountForMain > 0) {
+          } else if (perIdReportsMapRef.current.has(r1Id) || taggedAutoCountForMain > 0) {
             spawnedCount = Math.max(repAutoCount, taggedAutoCountForMain);
           } else if (maxPossibleSpawns > 0) {
             // สำหรับ Main ID > 1 ที่ไม่ได้ใช้ยอดอัปเกรด
@@ -3016,7 +3070,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
 
           const extraLeftVaultBonusGross = crossRankExtraLeftVaultGrossMap.get(r1Id) || 0;
           const totalExtraCostForMain = crossRankExtraCostMap.get(r1Id) || 0;
-          const repExtraBonus = perIdReportsMap.get(r1Id)?.extraLeftVaultBonus;
+          const repExtraBonus = perIdReportsMapRef.current.get(r1Id)?.extraLeftVaultBonus;
 
           let remainingExtraLeftBonus = 0;
           if (typeof repExtraBonus === 'number') {
@@ -3760,7 +3814,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           const extraLeftDirect = crossRankExtraLeftDirectBonusMap.get(id1) || 0;
           const extraLeftLevel = crossRankExtraLeftLevelBonusMap.get(id1) || 0;
           const extraLeftVault = crossRankExtraLeftVaultGrossMap.get(id1) || 0;
-          const repForMain = perIdReportsMap.get(id1);
+          const repForMain = perIdReportsMapRef.current.get(id1);
 
           unifiedSummaryByR1Main.set(id1, {
             directRewardAllNodes:
@@ -3932,7 +3986,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             (s1AutoIdSourceMap.has(effectiveR1MainId) ||
               onChainOriginTypeMap.get(effectiveR1MainId) === 'AUTO_NEW_MAIN' ||
               snap1?.get(effectiveR1MainId)?.originType === 'AUTO_NEW_MAIN' ||
-              perIdReportsMap.get(effectiveR1MainId)?.nodeType === 'AUTO_ID' ||
+              perIdReportsMapRef.current.get(effectiveR1MainId)?.nodeType === 'AUTO_ID' ||
               (activeRank === 1 && autoMainNodeIds.has(n.id))),
           originMainId,
           r1MainId,
@@ -4065,7 +4119,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           extraLeftVaultForSponsor
         );
 
-        const repSummary = isExtraLineage ? undefined : perIdReportsMap.get(targetMainId);
+        const repSummary = isExtraLineage ? undefined : perIdReportsMapRef.current.get(targetMainId);
         node.upgradeRankPool = isExtraLineage
           ? 0
           : repSummary?.upgradeRankPool !== undefined
@@ -4302,9 +4356,9 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
 
   // 2. Global event listener dispatched whenever user registers, upgrades, or activates nodes
   useEffect(() => {
-    const handleGlobalTreeRefresh = () => {
-      loadOnChainTree(selectedRank, { silent: true, forceSync: true });
-      fetchPerIdHistoryForModal();
+    const handleGlobalTreeRefresh = async () => {
+      await fetchPerIdHistoryForModal();
+      await loadOnChainTree(selectedRank, { silent: true, forceSync: true });
       setViewMode('onchain');
       setJustUpdatedBadge(true);
       setTimeout(() => setJustUpdatedBadge(false), 6000);
@@ -4862,6 +4916,34 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
       setSearchInput('1');
     }
   }, [latestNewNodeAlert, autoFollowNewNodes, viewMode, activeNodesMap, focusRootId]);
+
+  // Apply post-refresh target node highlight once the on-chain tree nodes have loaded
+  useEffect(() => {
+    if (hasAppliedPostTxHighlightRef.current) return;
+    if (!postTxBanner || onChainNodesMap.size === 0 || viewMode !== 'onchain') return;
+    const focusCandidate =
+      (postTxBanner.assignedNodeIds && postTxBanner.assignedNodeIds[0]) ||
+      postTxBanner.focusNodeId ||
+      postTxBanner.mainId;
+    if (!focusCandidate || focusCandidate <= 0) {
+      hasAppliedPostTxHighlightRef.current = true;
+      return;
+    }
+    const foundNode =
+      onChainNodesMap.get(focusCandidate) ||
+      Array.from(onChainNodesMap.values()).find(
+        (n) => (!n.isExtraLineage && n.r1MainId === focusCandidate) || n.originMainId === focusCandidate
+      );
+    if (foundNode) {
+      hasAppliedPostTxHighlightRef.current = true;
+      setSelectedTreeNodeId(foundNode.id);
+      setSearchInput(String(foundNode.id));
+      if (foundNode.level > 4 && foundNode.parentId > 0) {
+        setFocusRootId(foundNode.parentId);
+        setNavigationHistory([1, foundNode.parentId]);
+      }
+    }
+  }, [postTxBanner, onChainNodesMap, viewMode]);
 
   // Recalculate exact SVG connector lines between every Parent and its Left/Right children
   const recalculateTreeConnectors = useCallback(() => {
@@ -6153,6 +6235,61 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
 
   return (
     <div className="w-full max-w-full min-w-0 overflow-x-hidden min-h-[calc(100vh-56px)] h-full flex flex-col bg-white dark:bg-[#0b1020] border border-slate-200/80 dark:border-slate-800 rounded-xl sm:rounded-2xl p-2 sm:p-4 shadow-[0_4px_20px_-2px_rgba(15,23,42,0.04)] dark:shadow-2xl space-y-2.5 sm:space-y-3 transition-colors duration-200">
+      {/* Post-Transaction Confirmation Banner (persists cleanly across auto-refresh) */}
+      {postTxBanner && (
+        <div
+          className={`flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 px-3.5 py-2.5 rounded-xl border shadow-sm ${
+            postTxBanner.type === 'register'
+              ? 'bg-emerald-50 border-emerald-300 text-emerald-900 dark:bg-emerald-950/60 dark:border-emerald-500/60 dark:text-emerald-100'
+              : 'bg-indigo-50 border-indigo-300 text-indigo-900 dark:bg-indigo-950/60 dark:border-indigo-500/60 dark:text-indigo-100'
+          }`}
+        >
+          <div className="flex items-center gap-2.5 min-w-0 flex-wrap">
+            <CheckCircle2 className="w-5 h-5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+            {postTxBanner.type === 'register' &&
+            postTxBanner.assignedNodeIds &&
+            postTxBanner.assignedNodeIds.length > 0 ? (
+              <div className="flex items-center gap-2 flex-wrap text-xs sm:text-sm font-bold">
+                <span>
+                  {language === 'th'
+                    ? '🎉 สมัครสมาชิกสำเร็จ! เลขไอดีที่ได้เข้าผังคือ:'
+                    : '🎉 Registration Confirmed! Assigned Node ID(s):'}
+                </span>
+                <div className="inline-flex items-center gap-1.5 flex-wrap">
+                  {postTxBanner.assignedNodeIds.map((nid) => (
+                    <button
+                      key={`post-reg-id-${nid}`}
+                      type="button"
+                      onClick={() => {
+                        setSelectedTreeNodeId(nid);
+                        navigateToNode(nid);
+                      }}
+                      className="px-2.5 py-0.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-mono font-black text-xs sm:text-sm shadow-2xs transition cursor-pointer"
+                    >
+                      #{nid} 🎯
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="text-xs sm:text-sm font-bold">
+                {language === 'th'
+                  ? `🚀 อัปเกรด Main ID #${postTxBanner.mainId || 1} สู่ Rank ${postTxBanner.targetRank || selectedRank} สำเร็จ และรีเฟรชข้อมูลล่าสุดแล้ว!`
+                  : `🚀 Upgraded Main ID #${postTxBanner.mainId || 1} to Rank ${postTxBanner.targetRank || selectedRank} & refreshed!`}
+              </div>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => setPostTxBanner(null)}
+            className="self-end sm:self-center p-1 rounded-lg hover:bg-black/10 dark:hover:bg-white/10 transition cursor-pointer shrink-0"
+            title={language === 'th' ? 'ปิดแถบแจ้งเตือน' : 'Dismiss'}
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* Top Header & Controls Block with Subtle Pastel Hero Gradient in Light Mode */}
       <div className="flex flex-col gap-2.5 p-2.5 sm:p-3.5 -m-2 sm:-m-4 mb-0 sm:mb-0 rounded-t-xl sm:rounded-t-2xl bg-gradient-to-b from-indigo-50/75 via-sky-50/35 to-white dark:from-transparent dark:via-transparent dark:to-transparent border-b border-slate-200/80 dark:border-slate-800/90">
 
@@ -7628,7 +7765,11 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           try {
             let confirmedTxHash: string | null = null;
             if (onUpgradeToRank) {
-              await onUpgradeToRank(rankToUpgrade, targetMainId);
+              const upgRes = await onUpgradeToRank(rankToUpgrade, targetMainId);
+              if (upgRes && upgRes.success === false) {
+                throw new Error(upgRes.error || 'การอัปเกรดแรงค์ล้มเหลว');
+              }
+              confirmedTxHash = upgRes?.txHash || null;
             } else {
               const res = await fetch('/api/matrix/upgrade', {
                 method: 'POST',
@@ -7644,6 +7785,24 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                 throw new Error(data?.error || 'ไม่สามารถอัปเกรดแรงค์ได้');
               }
               confirmedTxHash = data?.txHash || null;
+              await fetch(`/api/db/sync?rank=${rankToUpgrade}&fast=1`, { method: 'POST' }).catch(() => null);
+              savePostTxNotice({
+                type: 'upgrade',
+                step: `อัปเกรดสู่ Rank ${rankToUpgrade} สำเร็จ!`,
+                message: `🚀 อัปเกรด Main ID #${targetMainId} สู่ Rank ${rankToUpgrade} สำเร็จเรียบร้อยแล้ว!`,
+                txHash: confirmedTxHash,
+                targetRank: rankToUpgrade,
+                mainId: targetMainId,
+              });
+              savePostTxViewTarget({
+                type: 'upgrade',
+                selectedRank: rankToUpgrade,
+                selectedMainId: targetMainId,
+                focusNodeId: targetMainId,
+                targetRank: rankToUpgrade,
+                mainId: targetMainId,
+              });
+              triggerAutoPageRefresh(1300);
             }
             const okMsg = `🚀 อัปเกรด Main ID #${targetMainId} สู่ Rank ${rankToUpgrade} สำเร็จเรียบร้อยแล้ว!`;
             setModalUpgradeMessage(okMsg);
@@ -7655,8 +7814,9 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
               txHash: confirmedTxHash,
             });
             setModalUpgradeTargetRank(Math.min(18, rankToUpgrade + 1));
+            setSelectedRank(rankToUpgrade);
             await fetchPerIdHistoryForModal();
-            await loadOnChainTree(selectedRank, { silent: true, forceSync: true });
+            await loadOnChainTree(rankToUpgrade, { silent: true, forceSync: true });
           } catch (err: any) {
             const errMsg = err?.message || 'การอัปเกรดแรงค์ล้มเหลว';
             setModalUpgradeMessage(null);
@@ -7711,6 +7871,24 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
               }
               if (data?.message) okMsg = data.message;
               confirmedTxHash = data?.txHash || null;
+              await fetch(`/api/db/sync?rank=${rankToUpgrade}&fast=1`, { method: 'POST' }).catch(() => null);
+              savePostTxNotice({
+                type: 'admin_upgrade',
+                step: `Admin อัพ Rank ${rankToUpgrade} ฟรี สำเร็จ!`,
+                message: okMsg,
+                txHash: confirmedTxHash,
+                targetRank: rankToUpgrade,
+                mainId: targetMainId,
+              });
+              savePostTxViewTarget({
+                type: 'admin_upgrade',
+                selectedRank: rankToUpgrade,
+                selectedMainId: targetMainId,
+                focusNodeId: targetMainId,
+                targetRank: rankToUpgrade,
+                mainId: targetMainId,
+              });
+              triggerAutoPageRefresh(1300);
             }
             setModalUpgradeMessage(okMsg);
             emitTransactionToast({
@@ -7721,8 +7899,9 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
               txHash: confirmedTxHash,
             });
             setModalUpgradeTargetRank(Math.min(18, rankToUpgrade + 1));
+            setSelectedRank(rankToUpgrade);
             await fetchPerIdHistoryForModal();
-            await loadOnChainTree(selectedRank, { silent: true, forceSync: false });
+            await loadOnChainTree(rankToUpgrade, { silent: true, forceSync: false });
           } catch (err: any) {
             const errMsg = err?.message || 'Admin อัพ Rank ฟรี ล้มเหลว';
             setModalUpgradeMessage(null);
