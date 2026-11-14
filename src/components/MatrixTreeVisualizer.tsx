@@ -59,6 +59,7 @@ import {
   Zap,
   Crown,
   Activity,
+  ExternalLink,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { emitTransactionToast } from './TransactionToast';
@@ -981,7 +982,27 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
   }, [perIdReportsMap]);
   const [systemPoolsData, setSystemPoolsData] = useState<any>(null);
   const [isSystemPoolsModalOpen, setIsSystemPoolsModalOpen] = useState<boolean>(false);
-  const [systemPoolsModalTab, setSystemPoolsModalTab] = useState<'all' | 'allsell' | 'family'>('all');
+  const [systemPoolsModalTab, setSystemPoolsModalTab] = useState<'all' | 'allsell' | 'family' | 'bot'>('all');
+  const [botWalletLiveData, setBotWalletLiveData] = useState<any>(null);
+  const [isLoadingBotWallet, setIsLoadingBotWallet] = useState<boolean>(false);
+  const fetchBotWalletHistory = useCallback(async (forceSync = false) => {
+    setIsLoadingBotWallet(true);
+    try {
+      const res = await fetch(
+        forceSync ? '/api/matrix/bot-wallet-history?forceSync=1' : '/api/matrix/bot-wallet-history'
+      );
+      if (res.ok) {
+        const json = await res.json();
+        if (json?.success) {
+          setBotWalletLiveData(json);
+        }
+      }
+    } catch {
+      // Fallback gracefully to systemPoolsData
+    } finally {
+      setIsLoadingBotWallet(false);
+    }
+  }, []);
   const [isRunningAllSellAuto, setIsRunningAllSellAuto] = useState<boolean>(false);
   const [allSellAutoMsg, setAllSellAutoMsg] = useState<string | null>(null);
   const [isAutoExtraAlertModalOpen, setIsAutoExtraAlertModalOpen] = useState<boolean>(false);
@@ -4719,13 +4740,16 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
   const activeRankPoolsSummary = useMemo(() => {
     const unitPrice = RANK_PRICES_USDT[selectedRank - 1] || 5;
     const allSellUnit = Number((unitPrice * 0.04).toFixed(4));
+    const botUnit = Number((unitPrice * 0.01).toFixed(4));
     const directUnit = Number((unitPrice * 0.3).toFixed(4));
     const levelUnit = Number((unitPrice * 0.02).toFixed(4));
 
     let rankAllSell = 0;
+    let rankBot = 0;
     let rankFamilyUnpaidLevel = 0;
     let rankFamilyRootCloneDirect = 0;
     const rankAllSellHistory: any[] = [];
+    const rankBotHistory: any[] = [];
     const rankFamilyHistory: any[] = [];
 
     const sortedNodes = Array.from(activeNodesMap.values()).sort((a, b) => a.id - b.id);
@@ -4753,6 +4777,17 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         parentId: parent.id,
         amountUsdt: Number(allSellUnit.toFixed(2)),
         note: `4% AllSell จาก ${childLabel} (วางซ้ายใต้ R${selectedRank}-#${parent.id})`,
+      });
+
+      rankBot = Number((rankBot + botUnit).toFixed(4));
+      rankBotHistory.push({
+        rank: selectedRank,
+        fromNodeId: child.id,
+        fromMainId: mainLabel,
+        fromNodeType: childLabel,
+        parentId: parent.id,
+        amountUsdt: Number(botUnit.toFixed(2)),
+        note: `1% Bot จาก ${childLabel} (วางซ้ายใต้ R${selectedRank}-#${parent.id})`,
       });
 
       const isId1Clone = child.isClone && (mainLabel === 1 || parent.id === 1);
@@ -4804,10 +4839,12 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
 
     return {
       rankAllSellUsdt: Number(rankAllSell.toFixed(2)),
+      rankBotUsdt: Number(rankBot.toFixed(2)),
       rankFamilyTotalUsdt: Number((rankFamilyUnpaidLevel + rankFamilyRootCloneDirect).toFixed(2)),
       rankFamilyUnpaidLevelUsdt: Number(rankFamilyUnpaidLevel.toFixed(2)),
       rankFamilyRootCloneDirectUsdt: Number(rankFamilyRootCloneDirect.toFixed(2)),
       rankAllSellHistory,
+      rankBotHistory,
       rankFamilyHistory,
     };
   }, [activeNodesMap, selectedRank]);
@@ -6908,9 +6945,9 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                       : 'text-[#334155] dark:text-slate-300 hover:text-[#2563EB]'
                   }`}
                 >
-                  <span>💰 พูล AllSell / Family</span>
+                  <span>💰 พูล AllSell / Family / บอท</span>
                   <span className="text-[10px] opacity-90 font-mono">
-                    (+{(activeRankPoolsSummary.rankAllSellUsdt + activeRankPoolsSummary.rankFamilyTotalUsdt).toFixed(1)}U)
+                    (+{(activeRankPoolsSummary.rankAllSellUsdt + activeRankPoolsSummary.rankFamilyTotalUsdt + activeRankPoolsSummary.rankBotUsdt).toFixed(1)}U)
                   </span>
                 </button>
 
@@ -6975,12 +7012,13 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             <div className="pt-1">
               {/* TAB 1: Pools */}
               {secondaryWidgetsTab === 'pools' && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                   {/* Card 1: รายได้ AllSell (4%) */}
                   <div
                     onClick={() => {
                       setSystemPoolsModalTab('allsell');
                       fetchPerIdHistoryForModal();
+                      fetchBotWalletHistory();
                       setIsSystemPoolsModalOpen(true);
                     }}
                     className="rounded-xl bg-white dark:bg-[#0f172a] border border-slate-200/80 dark:border-cyan-500/40 hover:border-[#2563EB] dark:hover:border-cyan-400 p-2.5 flex items-center justify-between gap-2 cursor-pointer transition shadow-2xs"
@@ -7027,6 +7065,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                     onClick={() => {
                       setSystemPoolsModalTab('family');
                       fetchPerIdHistoryForModal();
+                      fetchBotWalletHistory();
                       setIsSystemPoolsModalOpen(true);
                     }}
                     className="rounded-xl bg-white dark:bg-[#0f172a] border border-slate-200/80 dark:border-fuchsia-500/40 hover:border-purple-500 dark:hover:border-fuchsia-400 p-2.5 flex items-center justify-between gap-2 cursor-pointer transition shadow-2xs"
@@ -7065,6 +7104,48 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                       className="px-2 py-1 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-700 dark:bg-fuchsia-500/20 dark:text-fuchsia-200 font-bold text-[10.5px] shrink-0 cursor-pointer"
                     >
                       ประวัติ ↗
+                    </button>
+                  </div>
+
+                  {/* Card 3: กระเป๋าบอท (Bot Wallet 1%) */}
+                  <div
+                    onClick={() => {
+                      setSystemPoolsModalTab('bot');
+                      fetchPerIdHistoryForModal();
+                      fetchBotWalletHistory();
+                      setIsSystemPoolsModalOpen(true);
+                    }}
+                    className="rounded-xl bg-white dark:bg-[#0f172a] border border-slate-200/80 dark:border-amber-500/40 hover:border-amber-500 dark:hover:border-amber-400 p-2.5 flex items-center justify-between gap-2 cursor-pointer transition shadow-2xs"
+                  >
+                    <div className="space-y-0.5 min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="px-2 py-0.5 rounded-md bg-amber-100/80 border border-amber-200 text-amber-800 dark:bg-amber-500/20 dark:border-amber-400/40 dark:text-amber-300 font-extrabold text-[11px]">
+                          🤖 กระเป๋าบอท (1%)
+                        </span>
+                        <span className="text-[10px] font-mono text-[#64748B] dark:text-slate-400">
+                          {(botWalletLiveData?.botWallet || systemPoolsData?.botWallet || '0xbFD03d4D69221085a63Dd372A5d59f952C084a56').slice(0, 6)}...
+                          {(botWalletLiveData?.botWallet || systemPoolsData?.botWallet || '0xbFD03d4D69221085a63Dd372A5d59f952C084a56').slice(-4)}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 flex-wrap font-mono text-xs text-[#334155] dark:text-slate-200">
+                        <span>
+                          ผัง R{selectedRank}:{' '}
+                          <strong className="text-amber-700 dark:text-amber-300 font-extrabold">
+                            +{activeRankPoolsSummary.rankBotUsdt.toFixed(2)} USDT
+                          </strong>
+                        </span>
+                        {viewMode === 'onchain' && (
+                          <span className="text-[#15803D] dark:text-emerald-400 font-bold">
+                            (รวมทุกแรงค์ +{Number(botWalletLiveData?.botTotalUsdt ?? systemPoolsData?.botTotalUsdt ?? activeRankPoolsSummary.rankBotUsdt).toFixed(2)} U)
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="px-2 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-200 font-bold text-[10.5px] shrink-0 cursor-pointer"
+                    >
+                      ประวัติบอท ↗
                     </button>
                   </div>
                 </div>
@@ -10945,11 +11026,22 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           systemPoolsData?.allSellWallet || '0xBeFEB9871a20656aeF7E8d218f751e9C23FAF710';
         const familyPoolWallet =
           systemPoolsData?.familyPoolWallet || '0x225DF4b5961f757f54728138F289Eaf49D4F275A';
+        const botWallet =
+          botWalletLiveData?.botWallet ||
+          systemPoolsData?.botWallet ||
+          '0xbFD03d4D69221085a63Dd372A5d59f952C084a56';
 
         const isOnChainMode = viewMode === 'onchain';
         const totalAllSellUsdt = isOnChainMode
           ? Number(systemPoolsData?.allSellTotalUsdt ?? activeRankPoolsSummary.rankAllSellUsdt)
           : activeRankPoolsSummary.rankAllSellUsdt;
+        const totalBotUsdt = isOnChainMode
+          ? Number(
+              botWalletLiveData?.botTotalUsdt ??
+                systemPoolsData?.botTotalUsdt ??
+                activeRankPoolsSummary.rankBotUsdt
+            )
+          : activeRankPoolsSummary.rankBotUsdt;
         const totalFamilyUsdt = isOnChainMode
           ? Number(systemPoolsData?.familyPoolTotalUsdt ?? activeRankPoolsSummary.rankFamilyTotalUsdt)
           : activeRankPoolsSummary.rankFamilyTotalUsdt;
@@ -10988,6 +11080,19 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             : activeRankPoolsSummary.rankFamilyHistory;
         const familyHistoryList: any[] = sortPoolHistByLatest(rawFamilyHistoryList);
 
+        const rawBotHistoryList: any[] =
+          isOnChainMode && Array.isArray(botWalletLiveData?.botHistory) && botWalletLiveData.botHistory.length > 0
+            ? botWalletLiveData.botHistory
+            : isOnChainMode && Array.isArray(systemPoolsData?.botHistory) && systemPoolsData.botHistory.length > 0
+            ? systemPoolsData.botHistory
+            : activeRankPoolsSummary.rankBotHistory;
+        const botHistoryList: any[] = sortPoolHistByLatest(rawBotHistoryList);
+        const botActionLogsList: any[] = Array.isArray(botWalletLiveData?.botActionLogs)
+          ? botWalletLiveData.botActionLogs
+          : Array.isArray(systemPoolsData?.botActionLogs)
+          ? systemPoolsData.botActionLogs
+          : [];
+
         const SYS_PAGE_SIZE = 10;
         const allSellTotalPages = Math.max(1, Math.ceil(allSellHistoryList.length / SYS_PAGE_SIZE));
         const allSellPage = Math.min(Math.max(1, modalSectionPages['sys_allsell'] || 1), allSellTotalPages);
@@ -11003,8 +11108,21 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           familyPage * SYS_PAGE_SIZE
         );
 
+        const botTotalPages = Math.max(1, Math.ceil(botHistoryList.length / SYS_PAGE_SIZE));
+        const botPage = Math.min(Math.max(1, modalSectionPages['sys_bot'] || 1), botTotalPages);
+        const pagedBotHistory = botHistoryList.slice(
+          (botPage - 1) * SYS_PAGE_SIZE,
+          botPage * SYS_PAGE_SIZE
+        );
+
         const onChainAllSellBal = Number(systemPoolsData?.onChainBalances?.allSellWalletUsdt || 0);
         const onChainFamilyBal = Number(systemPoolsData?.onChainBalances?.familyPoolWalletUsdt || 0);
+        const onChainBotBal = Number(
+          botWalletLiveData?.onChainUsdtBalance ??
+            systemPoolsData?.onChainBalances?.botWalletUsdt ??
+            totalBotUsdt
+        );
+        const onChainBotBnb = Number(botWalletLiveData?.onChainBnbBalance || 0);
 
         return (
           <div
@@ -11012,7 +11130,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             onClick={() => setIsSystemPoolsModalOpen(false)}
           >
             <div
-              className="w-full max-w-4xl max-h-[90vh] overflow-y-auto bg-[#0b1022] border-2 border-cyan-500/50 rounded-2xl shadow-[0_25px_70px_rgba(0,0,0,0.9)] p-4 sm:p-6 space-y-4 text-xs"
+              className="w-full max-w-5xl max-h-[90vh] overflow-y-auto bg-[#0b1022] border-2 border-cyan-500/50 rounded-2xl shadow-[0_25px_70px_rgba(0,0,0,0.9)] p-4 sm:p-6 space-y-4 text-xs"
               onClick={(e) => e.stopPropagation()}
             >
               {/* Header */}
@@ -11023,7 +11141,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                       <Coins className="w-5 h-5" />
                     </div>
                     <h3 className="text-base sm:text-lg font-extrabold text-white">
-                      📊 รายงานรายได้ AllSell (4%) และ Family Pool
+                      📊 รายงานรายได้ AllSell (4%), Family Pool และกระเป๋าบอท (1%)
                     </h3>
                     <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-mono font-bold text-[11px]">
                       {isOnChainMode ? 'ข้อมูลจริงบนบล็อกเชน (On-Chain)' : `โหมดดูตัวอย่างผัง Rank ${selectedRank}`}
@@ -11034,25 +11152,40 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                     </span>
                   </div>
                   <p className="text-[11px] text-slate-400">
-                    ดึงข้อมูลการจ่ายรายได้ AllSell 4% และ Family Pool (ค่าชั้นส่วนที่เหลือจาก 15 ชั้น + ค่าแนะนำ 30% จากโคลนรหัส #1) เรียงตามเวลาล่าสุด
+                    ดึงข้อมูลการจ่ายรายได้ AllSell 4%, Family Pool และกระเป๋าบอท 1% (ค่าธรรมเนียม Bot Wallet จากทุกเม็ดซ้าย + ธุรกรรมบอทบนเชน) เรียงตามเวลาล่าสุด
                   </p>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => setIsSystemPoolsModalOpen(false)}
-                  className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-700 transition cursor-pointer shrink-0"
-                >
-                  <X className="w-5 h-5" />
-                </button>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      fetchPerIdHistoryForModal();
+                      fetchBotWalletHistory(true);
+                    }}
+                    disabled={isLoadingBotWallet}
+                    className="px-2.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-amber-300 border border-slate-700 font-bold text-[11px] flex items-center gap-1 transition cursor-pointer disabled:opacity-50"
+                    title="ดึงยอดและประวัติกระเป๋าบอทจากเชนล่าสุด"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isLoadingBotWallet ? 'animate-spin' : ''}`} />
+                    <span className="hidden sm:inline">รีเฟรชบอท</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsSystemPoolsModalOpen(false)}
+                    className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-700 transition cursor-pointer"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
               </div>
 
-              {/* 2 Summary Cards: AllSell vs Family Pool */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 font-mono">
+              {/* 3 Summary Cards: AllSell vs Family Pool vs Bot Wallet */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 font-mono">
                 {/* AllSell Box */}
                 <div className="rounded-xl bg-[#0b1c2c] border border-cyan-500/45 p-3.5 space-y-2">
                   <div className="flex items-center justify-between border-b border-cyan-500/20 pb-1.5">
-                    <span className="font-bold text-cyan-300 text-sm">🌐 รายได้ AllSell (4% ทุกเม็ดซ้าย)</span>
+                    <span className="font-bold text-cyan-300 text-sm">🌐 รายได้ AllSell (4%)</span>
                     <span className="px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-200 text-[10px] font-bold">
                       4% / เม็ดซ้าย
                     </span>
@@ -11065,18 +11198,18 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                       </span>
                     </div>
                     <div className="flex items-center justify-between">
-                      <span className="text-slate-300">ยอดสะสมรวมทุกแรงค์ (สัญญาปัจจุบัน):</span>
+                      <span className="text-slate-300">รวมทุกแรงค์ (สัญญาปัจจุบัน):</span>
                       <span className="font-extrabold text-emerald-400 text-sm">
                         +{totalAllSellUsdt.toFixed(2)} USDT
                       </span>
                     </div>
                     <div className="flex items-center justify-between pt-1.5 border-t border-cyan-500/20">
-                      <span className="text-slate-300">ยอดคงเหลือจริงในกระเป๋า AllSell บนเชน:</span>
+                      <span className="text-slate-300">ยอดในกระเป๋า AllSell:</span>
                       <span className="font-extrabold text-amber-300 text-sm">
                         {onChainAllSellBal.toFixed(2)} USDT
                       </span>
                     </div>
-                    <div className="text-[10px] text-slate-400 flex items-center justify-between pt-1">
+                    <div className="text-[10px] text-slate-400 flex items-center justify-between gap-1 pt-1">
                       <span className="truncate">กระเป๋า: {allSellWallet}</span>
                       <button
                         type="button"
@@ -11094,35 +11227,35 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                   <div className="flex items-center justify-between border-b border-fuchsia-500/20 pb-1.5">
                     <span className="font-bold text-fuchsia-300 text-sm">🏛️ รายได้ Family Pool</span>
                     <span className="px-2 py-0.5 rounded bg-fuchsia-500/20 text-fuchsia-200 text-[10px] font-bold">
-                      Unpaid 15 ชั้น + 30% โคลน #1
+                      Unpaid 15 ชั้น + โคลน #1
                     </span>
                   </div>
                   <div className="space-y-1.5 text-xs">
                     <div className="flex items-center justify-between">
-                      <span className="text-slate-300">1) ค่าชั้นส่วนที่เหลือจาก 15 ชั้น (2%/ชั้น):</span>
+                      <span className="text-slate-300">1) ค่าชั้นเหลือ 15 ชั้น:</span>
                       <span className="font-extrabold text-fuchsia-300">
                         +{familyUnpaidLevelUsdt.toFixed(2)} USDT
                       </span>
                     </div>
                     <div className="flex items-center justify-between">
-                      <span className="text-slate-300">2) 30% ค่าแนะนำจากโคลนรหัส #1:</span>
+                      <span className="text-slate-300">2) 30% โคลนรหัส #1:</span>
                       <span className="font-extrabold text-purple-300">
                         +{familyRootCloneDirectUsdt.toFixed(2)} USDT
                       </span>
                     </div>
                     <div className="flex items-center justify-between">
-                      <span className="text-slate-300">รวมสะสมทุกแรงค์ (สัญญาปัจจุบัน):</span>
+                      <span className="text-slate-300">รวมสะสมทุกแรงค์:</span>
                       <span className="font-extrabold text-amber-300 text-sm">
                         +{totalFamilyUsdt.toFixed(2)} USDT
                       </span>
                     </div>
                     <div className="flex items-center justify-between pt-1.5 border-t border-fuchsia-500/20">
-                      <span className="text-slate-300">ยอดคงเหลือจริงในกระเป๋า FamilyPool บนเชน:</span>
+                      <span className="text-slate-300">ยอดในกระเป๋า FamilyPool:</span>
                       <span className="font-extrabold text-emerald-400 text-sm">
                         {onChainFamilyBal.toFixed(2)} USDT
                       </span>
                     </div>
-                    <div className="text-[10px] text-slate-400 flex items-center justify-between pt-1">
+                    <div className="text-[10px] text-slate-400 flex items-center justify-between gap-1 pt-1">
                       <span className="truncate">กระเป๋า: {familyPoolWallet}</span>
                       <button
                         type="button"
@@ -11131,6 +11264,57 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                       >
                         {copiedText === familyPoolWallet ? 'คัดลอกแล้ว' : 'คัดลอก'}
                       </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Bot Wallet Box */}
+                <div className="rounded-xl bg-[#261a08] border border-amber-500/45 p-3.5 space-y-2">
+                  <div className="flex items-center justify-between border-b border-amber-500/20 pb-1.5">
+                    <span className="font-bold text-amber-300 text-sm">🤖 กระเป๋าบอท (Bot Wallet)</span>
+                    <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-200 text-[10px] font-bold">
+                      1% / เม็ดซ้าย
+                    </span>
+                  </div>
+                  <div className="space-y-1.5 text-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-300">ยอดสะสมในผัง Rank {selectedRank}:</span>
+                      <span className="font-extrabold text-amber-300">
+                        +{activeRankPoolsSummary.rankBotUsdt.toFixed(2)} USDT
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-300">รวมทุกแรงค์ (1% Bot):</span>
+                      <span className="font-extrabold text-emerald-400 text-sm">
+                        +{totalBotUsdt.toFixed(2)} USDT
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between pt-1.5 border-t border-amber-500/20">
+                      <span className="text-slate-300">ยอดจริงบนเชน (USDT / BNB):</span>
+                      <span className="font-extrabold text-cyan-300 text-xs">
+                        {onChainBotBal.toFixed(2)} U {onChainBotBnb > 0 ? `· ${onChainBotBnb.toFixed(4)} BNB` : ''}
+                      </span>
+                    </div>
+                    <div className="text-[10px] text-slate-400 flex items-center justify-between gap-1 pt-1">
+                      <span className="truncate">กระเป๋า: {botWallet}</span>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => copyAddress(botWallet)}
+                          className="px-2 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-amber-300 border border-slate-700 cursor-pointer"
+                        >
+                          {copiedText === botWallet ? 'คัดลอกแล้ว' : 'คัดลอก'}
+                        </button>
+                        <a
+                          href={`https://testnet.bscscan.com/address/${botWallet}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="p-1 rounded bg-slate-900 hover:bg-slate-800 text-cyan-300 border border-slate-700"
+                          title="ดูบน BscScan"
+                        >
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -11449,14 +11633,18 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
               {/* Filter Tabs */}
               <div className="flex flex-wrap items-center gap-1.5 bg-slate-950 p-1.5 rounded-xl border border-slate-800">
                 {[
-                  { key: 'all', label: '📋 ดูทั้งหมด (AllSell + Family Pool)' },
+                  { key: 'all', label: '📋 ดูทั้งหมด (AllSell + Family + บอท)' },
                   { key: 'allsell', label: `🌐 ประวัติ AllSell 4% (${allSellHistoryList.length} รายการ)` },
                   { key: 'family', label: `🏛️ ประวัติ Family Pool (${familyHistoryList.length} รายการ)` },
+                  { key: 'bot', label: `🤖 ประวัติกระเป๋าบอท 1% (${botHistoryList.length} รายการ)` },
                 ].map((t) => (
                   <button
                     key={t.key}
                     type="button"
-                    onClick={() => setSystemPoolsModalTab(t.key as any)}
+                    onClick={() => {
+                      setSystemPoolsModalTab(t.key as any);
+                      if (t.key === 'bot') fetchBotWalletHistory();
+                    }}
                     className={`px-3 py-1.5 rounded-lg font-bold text-[11px] transition cursor-pointer ${
                       systemPoolsModalTab === t.key
                         ? 'bg-indigo-600 text-white shadow'
@@ -11606,6 +11794,127 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                           </div>
                         )}
                       </>
+                    )}
+                  </div>
+                )}
+
+                {(systemPoolsModalTab === 'all' || systemPoolsModalTab === 'bot') && (
+                  <div className="bg-slate-950/90 border border-amber-500/35 rounded-xl p-3 space-y-2.5 lg:col-span-2">
+                    <div className="font-bold text-amber-300 flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-1.5">
+                      <span>🤖 ประวัติกระเป๋าบอท 1% (Bot Wallet History · {botHistoryList.length} รายการ)</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-emerald-400 font-extrabold">+{totalBotUsdt.toFixed(2)} USDT</span>
+                        <span className="text-[10px] text-cyan-300">
+                          (On-Chain: {onChainBotBal.toFixed(2)} U)
+                        </span>
+                      </div>
+                    </div>
+
+                    {botHistoryList.length === 0 ? (
+                      <div className="text-slate-500 py-4 text-center">
+                        ยังไม่มีรายการเม็ดซ้ายในผังนี้ (เมื่อมีโหนดวางฝั่งซ้าย ระบบจะหัก 1% เข้ากระเป๋าบอท {botWallet.slice(0, 6)}...{botWallet.slice(-4)} ทันที)
+                      </div>
+                    ) : (
+                      <>
+                        <div className="space-y-1.5">
+                          {pagedBotHistory.map((item: any, idx: number) => (
+                            <div
+                              key={`bot-hist-${botPage}-${idx}`}
+                              className="bg-slate-900/90 p-2 rounded-lg border border-slate-800 flex items-start justify-between gap-2"
+                            >
+                              <div className="space-y-0.5 min-w-0">
+                                <div>
+                                  <span className="text-amber-300 font-bold">[Rank {item.rank}]</span>{' '}
+                                  <span className="text-slate-200">{item.note}</span>
+                                </div>
+                                <div className="text-[10px] text-cyan-400/90 flex items-center gap-2 flex-wrap">
+                                  <span className="inline-flex items-center gap-1">
+                                    <Clock className="w-2.5 h-2.5" />
+                                    <span>เวลาอ้างอิงล่าสุด: {formatModalRowTime(item.timestamp)}</span>
+                                  </span>
+                                  {item.txHash && /^0x[a-fA-F0-9]{64}$/.test(String(item.txHash)) && (
+                                    <a
+                                      href={`https://testnet.bscscan.com/tx/${item.txHash}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="inline-flex items-center gap-0.5 text-amber-300 hover:underline font-bold"
+                                    >
+                                      <span>Tx: {String(item.txHash).slice(0, 8)}...{String(item.txHash).slice(-4)}</span>
+                                      <ExternalLink className="w-2.5 h-2.5" />
+                                    </a>
+                                  )}
+                                </div>
+                              </div>
+                              <span className="text-amber-300 font-extrabold shrink-0">
+                                +{Number(item.amountUsdt).toFixed(2)} U
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                        {botHistoryList.length > SYS_PAGE_SIZE && (
+                          <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-800 text-[10.5px]">
+                            <button
+                              type="button"
+                              disabled={botPage <= 1}
+                              onClick={() =>
+                                setModalSectionPages((prev) => ({ ...prev, sys_bot: botPage - 1 }))
+                              }
+                              className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700 disabled:opacity-40 cursor-pointer"
+                            >
+                              ◀ ก่อนหน้า
+                            </button>
+                            <span className="text-slate-400">
+                              หน้า <strong className="text-amber-300">{botPage}</strong> / {botTotalPages} (10 รายการ/หน้า)
+                            </span>
+                            <button
+                              type="button"
+                              disabled={botPage >= botTotalPages}
+                              onClick={() =>
+                                setModalSectionPages((prev) => ({ ...prev, sys_bot: botPage + 1 }))
+                              }
+                              className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700 disabled:opacity-40 cursor-pointer"
+                            >
+                              ถัดไป ▶
+                            </button>
+                          </div>
+                        )}
+                      </>
+                    )}
+
+                    {/* Optional Bot Executor Actions Log (WS_BOT / CLONE_BOT) */}
+                    {botActionLogsList.length > 0 && (
+                      <div className="pt-2 border-t border-slate-800 space-y-1.5">
+                        <div className="text-[11px] font-bold text-cyan-300">
+                          ⚡ ประวัติธุรกรรมที่บอทส่งขึ้นเชน ({botActionLogsList.length} รายการ)
+                        </div>
+                        <div className="space-y-1 max-h-40 overflow-y-auto">
+                          {botActionLogsList.slice(0, 15).map((act: any, idx: number) => (
+                            <div
+                              key={`bot-act-${idx}`}
+                              className="bg-slate-900/70 px-2 py-1.5 rounded border border-slate-800 flex items-center justify-between gap-2 text-[10px]"
+                            >
+                              <div className="min-w-0 truncate text-slate-300">
+                                <span className="text-emerald-400 font-bold">[{act.actionType || 'BOT'}]</span>{' '}
+                                <span>{act.title || act.details || `Rank ${act.rank || 1} Node #${act.nodeId || act.mainNodeId || '-'}`}</span>
+                              </div>
+                              <div className="flex items-center gap-2 shrink-0 text-slate-400">
+                                <span>{formatModalRowTime(act.timestamp)}</span>
+                                {act.txHash && /^0x[a-fA-F0-9]{64}$/.test(String(act.txHash)) && (
+                                  <a
+                                    href={`https://testnet.bscscan.com/tx/${act.txHash}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-cyan-300 hover:underline inline-flex items-center gap-0.5"
+                                  >
+                                    <span>Tx</span>
+                                    <ExternalLink className="w-2.5 h-2.5" />
+                                  </a>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
                     )}
                   </div>
                 )}

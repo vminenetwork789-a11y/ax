@@ -6485,6 +6485,7 @@ async function startApp() {
 
       const allSellByRank: Record<number, number> = {};
       const familyPoolByRank: Record<number, number> = {};
+      const botByRank: Record<number, number> = {};
       const allSellHistory: Array<{
         rank: number;
         fromNodeId: number;
@@ -6495,6 +6496,19 @@ async function startApp() {
         recipient: string;
         note: string;
         timestamp: string;
+      }> = [];
+      const botHistory: Array<{
+        rank: number;
+        fromNodeId: number;
+        fromMainId: number;
+        fromNodeType: string;
+        parentId: number;
+        amountUsdt: number;
+        recipient: string;
+        note: string;
+        timestamp: string;
+        txHash?: string;
+        blockNumber?: number;
       }> = [];
       const familyPoolHistory: Array<{
         rank: number;
@@ -6550,6 +6564,39 @@ async function startApp() {
           allSellTotalUsdt = Number((allSellTotalUsdt + allSellAmt).toFixed(4));
           allSellByRank[rankNum] = Number(((allSellByRank[rankNum] || 0) + allSellAmt).toFixed(4));
           botTotalUsdt = Number((botTotalUsdt + botAmt).toFixed(4));
+          botByRank[rankNum] = Number(((botByRank[rankNum] || 0) + botAmt).toFixed(4));
+
+          const matchingBotRew = (matrixDB.rewardLogs || []).find(
+            (rw) =>
+              String(rw.rewardType || '').toUpperCase() === 'BOT' &&
+              Number(rw.rank || 1) === rankNum &&
+              Number(rw.fromNodeId || 0) === id
+          );
+          const matchingNodeTx = !isRealTxHash(matchingBotRew?.txHash)
+            ? (matrixDB.transactionLogs || []).find(
+                (t) =>
+                  Number(t.rank || 1) === rankNum &&
+                  (Number(t.nodeId || 0) === id || Number(t.mainNodeId || 0) === childCanonMainId) &&
+                  isRealTxHash(t.txHash)
+              )
+            : undefined;
+
+          botHistory.push({
+            rank: rankNum,
+            fromNodeId: id,
+            fromMainId: childCanonMainId,
+            fromNodeType: childTypeLabel,
+            parentId: parent.id,
+            amountUsdt: botAmt,
+            recipient: botWalletAddr,
+            note: `1% Bot จาก ${childTypeLabel} (วางเม็ดซ้ายใต้ R${rankNum}-#${parent.id})`,
+            timestamp: matchingBotRew?.createdAt || matchingNodeTx?.timestamp || rowEventTime,
+            txHash: isRealTxHash(matchingBotRew?.txHash)
+              ? matchingBotRew?.txHash
+              : matchingNodeTx?.txHash,
+            blockNumber: matchingBotRew?.blockNumber || matchingNodeTx?.blockNumber,
+          });
+
           allSellHistory.push({
             rank: rankNum,
             fromNodeId: id,
@@ -6882,6 +6929,7 @@ async function startApp() {
 
       sortByLatestTimeDesc(allSellHistory);
       sortByLatestTimeDesc(familyPoolHistory);
+      sortByLatestTimeDesc(botHistory);
       for (const rep of reportsMap.values()) {
         sortByLatestTimeDesc(rep.direct30History);
         sortByLatestTimeDesc(rep.level30History);
@@ -7330,6 +7378,17 @@ async function startApp() {
           familyPoolByRank,
           familyPoolHistory,
           botTotalUsdt: Number(botTotalUsdt.toFixed(2)),
+          botByRank,
+          botHistory,
+          botActionLogs: (matrixDB.transactionLogs || [])
+            .filter(
+              (t) =>
+                t.source === 'WS_BOT' ||
+                t.actionType === 'CLONE_BOT' ||
+                (t.userAddress && t.userAddress.toLowerCase() === botWalletAddr.toLowerCase())
+            )
+            .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+            .slice(0, 100),
           onChainBalances: {
             allSellWalletUsdt: onChainAllSellBal,
             familyPoolWalletUsdt: onChainFamilyBal,
@@ -7340,6 +7399,169 @@ async function startApp() {
       });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.get('/api/matrix/bot-wallet-history', async (req: Request, res: Response) => {
+    try {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      const forceSync = req.query.forceSync === '1';
+      if (forceSync || !matrixDB.nodesByRank[1] || matrixDB.nodesByRank[1].length <= 1) {
+        await syncAllMatrixDatabase(CONTRACT_ADDRESS, forceSync);
+      }
+
+      const provider = getProvider();
+      const contract = new ethers.Contract(
+        CONTRACT_ADDRESS,
+        ['function botWallet() view returns (address)'],
+        provider
+      );
+      const usdtContract = new ethers.Contract(
+        USDT_ADDRESS,
+        ['function balanceOf(address) view returns (uint256)'],
+        provider
+      );
+
+      let botWalletAddr =
+        matrixDB.systemWallets?.botWallet || '0xbFD03d4D69221085a63Dd372A5d59f952C084a56';
+      try {
+        const onChainBotAddr = await contract.botWallet();
+        if (onChainBotAddr && ethers.isAddress(onChainBotAddr) && onChainBotAddr !== ethers.ZeroAddress) {
+          botWalletAddr = String(onChainBotAddr);
+          matrixDB.systemWallets.botWallet = botWalletAddr;
+        }
+      } catch {
+        // Use cached botWalletAddr
+      }
+
+      let liveUsdtBalance = '0.00';
+      let liveBnbBalance = '0.0000';
+      try {
+        const [uBn, bBn] = await Promise.all([
+          usdtContract.balanceOf(botWalletAddr).catch(() => 0n),
+          provider.getBalance(botWalletAddr).catch(() => 0n),
+        ]);
+        liveUsdtBalance = Number(ethers.formatUnits(uBn, activeUsdtDecimals || 18)).toFixed(2);
+        liveBnbBalance = Number(ethers.formatEther(bBn)).toFixed(4);
+      } catch {
+        // Fallback below
+      }
+
+      const autoMainSourceMap = reconcileRank1AutoMainIds();
+      ensurePersistentNodeTimestamps();
+
+      let botTotalUsdt = 0;
+      const botByRank: Record<number, number> = {};
+      const botHistory: Array<{
+        rank: number;
+        fromNodeId: number;
+        fromMainId: number;
+        fromNodeType: string;
+        parentId: number;
+        amountUsdt: number;
+        recipient: string;
+        note: string;
+        timestamp: string;
+        txHash?: string;
+        blockNumber?: number;
+      }> = [];
+
+      for (let rankNum = 1; rankNum <= 18; rankNum++) {
+        const rNodes = matrixDB.nodesByRank[rankNum] || [];
+        if (rNodes.length <= 1) continue;
+        const unitPrice = RANK_PRICES_USDT[rankNum - 1] || 5;
+        const botAmt = Number((unitPrice * 0.01).toFixed(2));
+        const nodesMap = new Map<number, IndexedTreeNode>();
+        for (const n of rNodes) nodesMap.set(n.id, n);
+
+        for (const child of rNodes) {
+          if (child.id <= 1 || child.isAdminFreeUpgrade) continue;
+          const parent = nodesMap.get(child.parentId);
+          if (!parent || parent.leftChild !== child.id) continue;
+
+          const childCanonMainId = child.originMainId && child.originMainId > 0 ? child.originMainId : child.id;
+          const childTypeLabel = child.isExtraId
+            ? `Extra R${rankNum}-#${child.id}`
+            : child.isClone
+            ? `โคลน R${rankNum}-#${child.id} (ของ Main #${childCanonMainId})`
+            : autoMainSourceMap.has(childCanonMainId)
+            ? `Auto ID #${childCanonMainId} (R${rankNum}-#${child.id})`
+            : `Main #${childCanonMainId} (R${rankNum}-#${child.id})`;
+
+          botTotalUsdt = Number((botTotalUsdt + botAmt).toFixed(4));
+          botByRank[rankNum] = Number(((botByRank[rankNum] || 0) + botAmt).toFixed(4));
+
+          const matchingBotRew = (matrixDB.rewardLogs || []).find(
+            (rw) =>
+              String(rw.rewardType || '').toUpperCase() === 'BOT' &&
+              Number(rw.rank || 1) === rankNum &&
+              Number(rw.fromNodeId || 0) === child.id
+          );
+          const matchingNodeTx = !isRealTxHash(matchingBotRew?.txHash)
+            ? (matrixDB.transactionLogs || []).find(
+                (t) =>
+                  Number(t.rank || 1) === rankNum &&
+                  (Number(t.nodeId || 0) === child.id || Number(t.mainNodeId || 0) === childCanonMainId) &&
+                  isRealTxHash(t.txHash)
+              )
+            : undefined;
+
+          botHistory.push({
+            rank: rankNum,
+            fromNodeId: child.id,
+            fromMainId: childCanonMainId,
+            fromNodeType: childTypeLabel,
+            parentId: parent.id,
+            amountUsdt: botAmt,
+            recipient: botWalletAddr,
+            note: `1% Bot จาก ${childTypeLabel} (วางเม็ดซ้ายใต้ R${rankNum}-#${parent.id})`,
+            timestamp:
+              matchingBotRew?.createdAt ||
+              matchingNodeTx?.timestamp ||
+              child.createdAt ||
+              matrixDB.lastSyncedAt ||
+              new Date().toISOString(),
+            txHash: isRealTxHash(matchingBotRew?.txHash)
+              ? matchingBotRew?.txHash
+              : matchingNodeTx?.txHash,
+            blockNumber: matchingBotRew?.blockNumber || matchingNodeTx?.blockNumber,
+          });
+        }
+      }
+
+      botHistory.sort((a, b) => {
+        const tA = new Date(a.timestamp).getTime() || 0;
+        const tB = new Date(b.timestamp).getTime() || 0;
+        if (tB !== tA) return tB - tA;
+        return b.rank - a.rank || b.fromNodeId - a.fromNodeId;
+      });
+
+      const botActionLogs = (matrixDB.transactionLogs || [])
+        .filter(
+          (t) =>
+            t.source === 'WS_BOT' ||
+            t.actionType === 'CLONE_BOT' ||
+            (t.userAddress && t.userAddress.toLowerCase() === botWalletAddr.toLowerCase())
+        )
+        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+        .slice(0, 100);
+
+      res.json({
+        success: true,
+        contractAddress: matrixDB.contractAddress,
+        botWallet: botWalletAddr,
+        botTotalUsdt: Number(botTotalUsdt.toFixed(2)),
+        onChainUsdtBalance: Number(liveUsdtBalance),
+        onChainBnbBalance: Number(liveBnbBalance),
+        botByRank,
+        count: botHistory.length,
+        botHistory,
+        botActionLogs,
+        lastSyncedAt: matrixDB.lastSyncedAt,
+      });
+    } catch (err: any) {
+      console.error('[API /api/matrix/bot-wallet-history error]', err);
+      res.status(500).json({ success: false, error: err?.message || 'Database error' });
     }
   });
 
