@@ -359,10 +359,160 @@ const SERVER_LEGACY_USDT = new Set([
 // ==========================================
 const PG_DATABASE_URL = process.env.DATABASE_URL || '';
 
+function parsePostgresEndpoint(connStr: string): { host: string; port: number; database: string } {
+  if (!connStr) {
+    return { host: 'local-json-fallback', port: 0, database: 'matrix-db.json' };
+  }
+  try {
+    const parsed = new URL(connStr);
+    return {
+      host: parsed.hostname || 'configured',
+      port: parsed.port ? Number(parsed.port) : 5432,
+      database: parsed.pathname.replace(/^\/+/, '') || 'postgres',
+    };
+  } catch {
+    return { host: 'configured', port: 5432, database: 'postgresql' };
+  }
+}
+
+const PG_ENDPOINT_INFO = parsePostgresEndpoint(PG_DATABASE_URL);
+
 let pgPool: pg.Pool | null = null;
 let pgConnected = false;
+let pgSchemaReady = false;
 let pgLastError: string | null = null;
 let pgTablesCount: Record<string, number> = {};
+let pgSyncTimer: NodeJS.Timeout | null = null;
+let pgSyncInFlight: Promise<void> | null = null;
+
+async function ensurePostgresSchema() {
+  if (!pgPool) return;
+  await pgPool.query(`
+    CREATE TABLE IF NOT EXISTS accounts (
+      id TEXT PRIMARY KEY,
+      owner TEXT NOT NULL,
+      main_node_id INTEGER,
+      current_max_rank INTEGER DEFAULT 1,
+      sponsor_address TEXT,
+      sponsor_main_node_id INTEGER,
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS wallets (
+      address TEXT PRIMARY KEY,
+      total_nodes INTEGER DEFAULT 0,
+      max_rank INTEGER DEFAULT 1,
+      total_rewards_usdt NUMERIC(20, 6) DEFAULT 0,
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS matrix_levels (
+      rank INTEGER PRIMARY KEY,
+      price_usdt NUMERIC(20, 6) NOT NULL,
+      total_nodes INTEGER DEFAULT 1,
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS matrix_nodes (
+      id TEXT PRIMARY KEY,
+      rank INTEGER NOT NULL DEFAULT 1,
+      node_id INTEGER NOT NULL DEFAULT 0,
+      label TEXT NOT NULL,
+      category TEXT NOT NULL,
+      level INTEGER NOT NULL DEFAULT 1,
+      parent_id TEXT NOT NULL,
+      sponsor_id TEXT NOT NULL,
+      owner TEXT,
+      left_child INTEGER DEFAULT 0,
+      right_child INTEGER DEFAULT 0,
+      is_clone BOOLEAN DEFAULT FALSE,
+      is_extra_id BOOLEAN DEFAULT FALSE,
+      is_admin_free_upgrade BOOLEAN DEFAULT FALSE,
+      personal_volume_usdt NUMERIC(20, 6) DEFAULT 0,
+      direct_referrals INTEGER DEFAULT 0,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS income_channels (
+      id TEXT PRIMARY KEY,
+      rank INTEGER NOT NULL,
+      reward_type TEXT NOT NULL,
+      from_node_id INTEGER NOT NULL,
+      to_node_id INTEGER NOT NULL,
+      recipient TEXT NOT NULL,
+      amount_usdt NUMERIC(20, 6) NOT NULL,
+      tx_hash TEXT,
+      block_number BIGINT,
+      is_admin_free_upgrade BOOLEAN DEFAULT FALSE,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS activities (
+      id TEXT PRIMARY KEY,
+      date_time TEXT NOT NULL,
+      type TEXT NOT NULL,
+      title TEXT NOT NULL,
+      detail TEXT NOT NULL,
+      amount_usdt TEXT NOT NULL,
+      amount_display TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'สำเร็จ',
+      tx_hash TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS matrix_db_snapshots (
+      contract_address TEXT PRIMARY KEY,
+      payload JSONB NOT NULL,
+      last_synced_block BIGINT DEFAULT 0,
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    ALTER TABLE matrix_nodes ADD COLUMN IF NOT EXISTS rank INTEGER NOT NULL DEFAULT 1;
+    ALTER TABLE matrix_nodes ADD COLUMN IF NOT EXISTS node_id INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE matrix_nodes ADD COLUMN IF NOT EXISTS owner TEXT;
+    ALTER TABLE matrix_nodes ADD COLUMN IF NOT EXISTS left_child INTEGER DEFAULT 0;
+    ALTER TABLE matrix_nodes ADD COLUMN IF NOT EXISTS right_child INTEGER DEFAULT 0;
+    ALTER TABLE matrix_nodes ADD COLUMN IF NOT EXISTS is_clone BOOLEAN DEFAULT FALSE;
+    ALTER TABLE matrix_nodes ADD COLUMN IF NOT EXISTS is_extra_id BOOLEAN DEFAULT FALSE;
+    ALTER TABLE matrix_nodes ADD COLUMN IF NOT EXISTS is_admin_free_upgrade BOOLEAN DEFAULT FALSE;
+  `);
+  pgSchemaReady = true;
+}
+
+async function hydrateMatrixDBFromPostgres() {
+  if (!pgPool || !pgConnected || !pgSchemaReady) return;
+  try {
+    const res = await pgPool.query(
+      `SELECT payload FROM matrix_db_snapshots WHERE LOWER(contract_address) = LOWER($1) LIMIT 1`,
+      [CONTRACT_ADDRESS]
+    );
+    const snap = res.rows[0]?.payload as PersistentMatrixDatabase | undefined;
+    if (snap && snap.contractAddress && snap.contractAddress.toLowerCase() === CONTRACT_ADDRESS.toLowerCase()) {
+      for (let r = 1; r <= 18; r++) {
+        for (const n of snap.nodesByRank?.[r] || []) {
+          if (n?.isAdminFreeUpgrade) {
+            markNodeAsAdminFreeUpgrade(r, n.id);
+          }
+        }
+      }
+      const diskR1Count = (matrixDB.nodesByRank?.[1] || []).length;
+      const pgR1Count = (snap.nodesByRank?.[1] || []).length;
+      if (pgR1Count > diskR1Count) {
+        matrixDB = {
+          ...matrixDB,
+          ...snap,
+          nodesByRank: snap.nodesByRank || matrixDB.nodesByRank,
+          rankCounts: snap.rankCounts || matrixDB.rankCounts,
+          transactionLogs: Array.isArray(snap.transactionLogs) && snap.transactionLogs.length >= (matrixDB.transactionLogs || []).length
+            ? snap.transactionLogs
+            : matrixDB.transactionLogs,
+          upgradeLogs: Array.isArray(snap.upgradeLogs) && snap.upgradeLogs.length >= (matrixDB.upgradeLogs || []).length
+            ? snap.upgradeLogs
+            : matrixDB.upgradeLogs,
+        };
+        reconcileAutoExtraIdsAcrossRanks();
+        rebuildDatabaseRewardLogsFromNodes();
+        rebuildDatabaseUpgradeLogsFromNodes();
+        saveMatrixDBToDisk(true);
+      }
+    }
+  } catch (e: any) {
+    console.warn('⚠️ [PostgreSQL] hydrateMatrixDBFromPostgres notice:', e?.message);
+  }
+}
 
 function initPostgresPool() {
   if (!PG_DATABASE_URL) {
@@ -384,17 +534,24 @@ function initPostgresPool() {
       pgLastError = err.message;
     });
 
-    pgPool.query('SELECT current_database(), current_user, version()', (err, res) => {
+    pgPool.query('SELECT current_database(), current_user, version()', async (err, res) => {
       if (err) {
         pgConnected = false;
         pgLastError = err.message;
       } else {
         pgConnected = true;
         pgLastError = null;
-        const dbName = res.rows[0]?.current_database || 'Aunza';
+        const dbName = res.rows[0]?.current_database || PG_ENDPOINT_INFO.database;
         const user = res.rows[0]?.current_user || 'user';
         console.log(`🐘 [PostgreSQL] Connected successfully to database: ${dbName} as ${user}`);
-        refreshPgTableCounts();
+        try {
+          await ensurePostgresSchema();
+          await hydrateMatrixDBFromPostgres();
+          await syncAllMatrixDBToPostgres();
+        } catch (schemaErr: any) {
+          pgLastError = schemaErr?.message || String(schemaErr);
+          console.warn('⚠️ [PostgreSQL] Schema/initial sync notice:', pgLastError);
+        }
       }
     });
   } catch (err: any) {
@@ -404,7 +561,7 @@ function initPostgresPool() {
 }
 
 async function refreshPgTableCounts() {
-  if (!pgPool) return;
+  if (!pgPool || !pgConnected) return;
   try {
     const tables = ['accounts', 'matrix_levels', 'income_channels', 'activities', 'wallets', 'matrix_nodes'];
     const counts: Record<string, number> = {};
@@ -432,10 +589,11 @@ async function syncNodeToPostgres(node: {
   rightChild?: number;
   isClone?: boolean;
   isExtraId?: boolean;
+  isAdminFreeUpgrade?: boolean;
   nodeVault?: number;
   directSponsorNodeId?: number;
 }) {
-  if (!pgPool || !pgConnected) return;
+  if (!pgPool || !pgConnected || !pgSchemaReady) return;
   try {
     const nodeIdStr = `R${node.rank}-#${node.id}`;
     const parentIdStr = node.parentId === 0 ? 'ROOT' : `R${node.rank}-#${node.parentId}`;
@@ -445,17 +603,48 @@ async function syncNodeToPostgres(node: {
       : `Main ID #${node.id} (Rank ${node.rank})`;
     const category = node.isClone ? 'Cloning' : node.isExtraId ? 'Extra' : 'Original';
     const volume = (node.nodeVault || (RANK_PRICES_USDT[node.rank - 1] * 0.35)).toFixed(2);
+    const directRefs = (node.leftChild ? 1 : 0) + (node.rightChild ? 1 : 0);
 
     await pgPool.query(
-      `INSERT INTO matrix_nodes (id, label, category, level, parent_id, sponsor_id, personal_volume_usdt, direct_referrals, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+      `INSERT INTO matrix_nodes (
+         id, rank, node_id, label, category, level, parent_id, sponsor_id, owner,
+         left_child, right_child, is_clone, is_extra_id, is_admin_free_upgrade,
+         personal_volume_usdt, direct_referrals, created_at
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW())
        ON CONFLICT (id) DO UPDATE SET
+         rank = EXCLUDED.rank,
+         node_id = EXCLUDED.node_id,
          label = EXCLUDED.label,
          category = EXCLUDED.category,
          parent_id = EXCLUDED.parent_id,
          sponsor_id = EXCLUDED.sponsor_id,
-         personal_volume_usdt = EXCLUDED.personal_volume_usdt;`,
-      [nodeIdStr, label, category, node.rank, parentIdStr, sponsorIdStr, volume, 0]
+         owner = EXCLUDED.owner,
+         left_child = EXCLUDED.left_child,
+         right_child = EXCLUDED.right_child,
+         is_clone = EXCLUDED.is_clone,
+         is_extra_id = EXCLUDED.is_extra_id,
+         is_admin_free_upgrade = EXCLUDED.is_admin_free_upgrade,
+         personal_volume_usdt = EXCLUDED.personal_volume_usdt,
+         direct_referrals = EXCLUDED.direct_referrals;`,
+      [
+        nodeIdStr,
+        node.rank,
+        node.id,
+        label,
+        category,
+        node.rank,
+        parentIdStr,
+        sponsorIdStr,
+        node.owner || '',
+        Number(node.leftChild || 0),
+        Number(node.rightChild || 0),
+        Boolean(node.isClone),
+        Boolean(node.isExtraId),
+        Boolean(node.isAdminFreeUpgrade),
+        volume,
+        directRefs,
+      ]
     );
   } catch {
     // Non-blocking
@@ -463,21 +652,31 @@ async function syncNodeToPostgres(node: {
 }
 
 async function recordPostgresActivity(activity: {
+  id?: string;
   type: string;
   title: string;
   detail: string;
   amountUsdt: string;
   amountDisplay: string;
   status?: string;
+  txHash?: string;
+  dateTime?: string;
 }) {
-  if (!pgPool || !pgConnected) return;
+  if (!pgPool || !pgConnected || !pgSchemaReady) return;
   try {
-    const actId = `act_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-    const nowStr = new Date().toISOString().replace('T', ' ').substring(0, 16);
+    const actId = activity.id || `act_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const nowStr = (activity.dateTime || new Date().toISOString()).replace('T', ' ').substring(0, 19);
     await pgPool.query(
-      `INSERT INTO activities (id, date_time, type, title, detail, amount_usdt, amount_display, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       ON CONFLICT (id) DO NOTHING`,
+      `INSERT INTO activities (id, date_time, type, title, detail, amount_usdt, amount_display, status, tx_hash)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       ON CONFLICT (id) DO UPDATE SET
+         type = EXCLUDED.type,
+         title = EXCLUDED.title,
+         detail = EXCLUDED.detail,
+         amount_usdt = EXCLUDED.amount_usdt,
+         amount_display = EXCLUDED.amount_display,
+         status = EXCLUDED.status,
+         tx_hash = COALESCE(EXCLUDED.tx_hash, activities.tx_hash)`,
       [
         actId,
         nowStr,
@@ -487,6 +686,7 @@ async function recordPostgresActivity(activity: {
         activity.amountUsdt,
         activity.amountDisplay,
         activity.status || 'สำเร็จ',
+        activity.txHash || null,
       ]
     );
   } catch {
@@ -494,20 +694,269 @@ async function recordPostgresActivity(activity: {
   }
 }
 
+function schedulePostgresSync(immediate = false) {
+  if (!pgPool || !pgConnected || !pgSchemaReady) return;
+  if (immediate) {
+    if (pgSyncTimer) clearTimeout(pgSyncTimer);
+    pgSyncTimer = null;
+    syncAllMatrixDBToPostgres().catch(() => {});
+    return;
+  }
+  if (pgSyncTimer) return;
+  pgSyncTimer = setTimeout(() => {
+    pgSyncTimer = null;
+    syncAllMatrixDBToPostgres().catch(() => {});
+  }, 1500);
+}
+
 async function syncAllMatrixDBToPostgres() {
   if (!pgPool || !pgConnected) return;
-  try {
-    for (let r = 1; r <= 18; r++) {
-      const rNodes = matrixDB.nodesByRank[r] || [];
-      if (rNodes.length <= 1 && r > 1) continue;
-      for (const n of rNodes) {
-        await syncNodeToPostgres(n);
+  if (pgSyncInFlight) return pgSyncInFlight;
+  pgSyncInFlight = (async () => {
+    try {
+      if (!pgSchemaReady) {
+        await ensurePostgresSchema();
       }
+      const client = await pgPool!.connect();
+      try {
+        await client.query('BEGIN');
+
+        // 1. Sync matrix_levels (Ranks 1..18)
+        for (let r = 1; r <= 18; r++) {
+          const price = Number(RANK_PRICES_USDT[r - 1] || 0);
+          const count = Math.max(1, (matrixDB.nodesByRank[r] || []).length);
+          await client.query(
+            `INSERT INTO matrix_levels (rank, price_usdt, total_nodes, updated_at)
+             VALUES ($1, $2, $3, NOW())
+             ON CONFLICT (rank) DO UPDATE SET
+               price_usdt = EXCLUDED.price_usdt,
+               total_nodes = EXCLUDED.total_nodes,
+               updated_at = NOW()`,
+            [r, price.toFixed(6), count]
+          );
+        }
+
+        // 2. Sync matrix_nodes & aggregate wallet/account stats
+        const walletStats = new Map<string, { totalNodes: number; maxRank: number; totalRewards: number }>();
+        const adminFreeKeys = getAdminFreeNodeKeySet();
+
+        for (let r = 1; r <= 18; r++) {
+          const rNodes = matrixDB.nodesByRank[r] || [];
+          for (const n of rNodes) {
+            const ownerLower = String(n.owner || '').toLowerCase();
+            if (ownerLower && ownerLower !== ethers.ZeroAddress) {
+              const cur = walletStats.get(ownerLower) || { totalNodes: 0, maxRank: 1, totalRewards: 0 };
+              cur.totalNodes += 1;
+              if (r > cur.maxRank) cur.maxRank = r;
+              walletStats.set(ownerLower, cur);
+            }
+
+            if (r > 1 && rNodes.length <= 1 && n.id === 1 && !n.owner) continue;
+
+            const nodeIdStr = `R${n.rank}-#${n.id}`;
+            const parentIdStr = n.parentId === 0 ? 'ROOT' : `R${n.rank}-#${n.parentId}`;
+            const sponsorIdStr = n.directSponsorNodeId ? `R1-#${n.directSponsorNodeId}` : 'R1-#1';
+            const label = n.isClone
+              ? `Clone R${n.rank}-#${n.id}`
+              : n.isExtraId
+              ? `Extra R${n.rank}-#${n.id}`
+              : `Main ID #${n.id} (Rank ${n.rank})`;
+            const category = n.isClone ? 'Cloning' : n.isExtraId ? 'Extra' : 'Original';
+            const isFree = Boolean(n.isAdminFreeUpgrade || adminFreeKeys.has(`${n.rank}:${n.id}`));
+            const volume = Number(n.nodeVault || 0).toFixed(6);
+            const directRefs = (n.leftChild ? 1 : 0) + (n.rightChild ? 1 : 0);
+
+            await client.query(
+              `INSERT INTO matrix_nodes (
+                 id, rank, node_id, label, category, level, parent_id, sponsor_id, owner,
+                 left_child, right_child, is_clone, is_extra_id, is_admin_free_upgrade,
+                 personal_volume_usdt, direct_referrals, created_at
+               )
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW())
+               ON CONFLICT (id) DO UPDATE SET
+                 rank = EXCLUDED.rank,
+                 node_id = EXCLUDED.node_id,
+                 label = EXCLUDED.label,
+                 category = EXCLUDED.category,
+                 parent_id = EXCLUDED.parent_id,
+                 sponsor_id = EXCLUDED.sponsor_id,
+                 owner = EXCLUDED.owner,
+                 left_child = EXCLUDED.left_child,
+                 right_child = EXCLUDED.right_child,
+                 is_clone = EXCLUDED.is_clone,
+                 is_extra_id = EXCLUDED.is_extra_id,
+                 is_admin_free_upgrade = EXCLUDED.is_admin_free_upgrade,
+                 personal_volume_usdt = EXCLUDED.personal_volume_usdt,
+                 direct_referrals = EXCLUDED.direct_referrals`,
+              [
+                nodeIdStr,
+                n.rank,
+                n.id,
+                label,
+                category,
+                n.rank,
+                parentIdStr,
+                sponsorIdStr,
+                n.owner || '',
+                Number(n.leftChild || 0),
+                Number(n.rightChild || 0),
+                Boolean(n.isClone),
+                Boolean(n.isExtraId),
+                isFree,
+                volume,
+                directRefs,
+              ]
+            );
+          }
+        }
+
+        // 3. Sync accounts (Rank 1 nodes)
+        const r1Nodes = matrixDB.nodesByRank[1] || [];
+        const maxRankByMain = new Map<number, number>();
+        for (let r = 1; r <= 18; r++) {
+          for (const n of matrixDB.nodesByRank[r] || []) {
+            const mId = Number(n.originMainId || 0);
+            if (mId > 0) {
+              maxRankByMain.set(mId, Math.max(maxRankByMain.get(mId) || 1, r));
+            }
+          }
+        }
+        for (const n of r1Nodes) {
+          await client.query(
+            `INSERT INTO accounts (id, owner, main_node_id, current_max_rank, sponsor_address, sponsor_main_node_id, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, NOW())
+             ON CONFLICT (id) DO UPDATE SET
+               owner = EXCLUDED.owner,
+               main_node_id = EXCLUDED.main_node_id,
+               current_max_rank = EXCLUDED.current_max_rank,
+               sponsor_address = EXCLUDED.sponsor_address,
+               sponsor_main_node_id = EXCLUDED.sponsor_main_node_id,
+               updated_at = NOW()`,
+            [
+              `main-${n.id}`,
+              n.owner || '',
+              n.id,
+              maxRankByMain.get(n.id) || 1,
+              n.directSponsor || '',
+              Number(n.directSponsorNodeId || 0),
+            ]
+          );
+        }
+
+        // 4. Sync income_channels (rewardLogs) & accumulate wallet rewards
+        for (const r of matrixDB.rewardLogs || []) {
+          const amt = Number(parseFloat(String(r.amount || '0')) || 0);
+          const isFree = Boolean(r.isAdminFreeUpgrade || adminFreeKeys.has(`${r.rank}:${r.fromNodeId}`));
+          if (isFree || amt <= 0) continue;
+
+          const recipLower = String(r.recipient || '').toLowerCase();
+          if (recipLower && recipLower !== ethers.ZeroAddress) {
+            const cur = walletStats.get(recipLower) || { totalNodes: 0, maxRank: 1, totalRewards: 0 };
+            if (!String(r.rewardType || '').toUpperCase().includes('VAULT')) {
+              cur.totalRewards += amt;
+            }
+            walletStats.set(recipLower, cur);
+          }
+
+          await client.query(
+            `INSERT INTO income_channels (
+               id, rank, reward_type, from_node_id, to_node_id, recipient, amount_usdt,
+               tx_hash, block_number, is_admin_free_upgrade
+             )
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+             ON CONFLICT (id) DO UPDATE SET
+               amount_usdt = EXCLUDED.amount_usdt,
+               tx_hash = COALESCE(EXCLUDED.tx_hash, income_channels.tx_hash),
+               block_number = COALESCE(EXCLUDED.block_number, income_channels.block_number)`,
+            [
+              String(r.id),
+              Number(r.rank || 1),
+              String(r.rewardType || 'DIRECT'),
+              Number(r.fromNodeId || 0),
+              Number(r.toNodeId || 0),
+              String(r.recipient || ''),
+              amt.toFixed(6),
+              r.txHash || null,
+              r.blockNumber ? Number(r.blockNumber) : null,
+              false,
+            ]
+          );
+        }
+
+        // 5. Sync wallets
+        for (const [addr, st] of walletStats.entries()) {
+          await client.query(
+            `INSERT INTO wallets (address, total_nodes, max_rank, total_rewards_usdt, updated_at)
+             VALUES ($1, $2, $3, $4, NOW())
+             ON CONFLICT (address) DO UPDATE SET
+               total_nodes = EXCLUDED.total_nodes,
+               max_rank = EXCLUDED.max_rank,
+               total_rewards_usdt = EXCLUDED.total_rewards_usdt,
+               updated_at = NOW()`,
+            [addr, st.totalNodes, st.maxRank, st.totalRewards.toFixed(6)]
+          );
+        }
+
+        // 6. Sync activities (transactionLogs + upgradeLogs)
+        for (const tx of matrixDB.transactionLogs || []) {
+          const amtStr = tx.amountUsdt !== undefined ? Number(tx.amountUsdt).toFixed(2) : '0.00';
+          const dt = String(tx.timestamp || new Date().toISOString()).replace('T', ' ').substring(0, 19);
+          await client.query(
+            `INSERT INTO activities (id, date_time, type, title, detail, amount_usdt, amount_display, status, tx_hash)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             ON CONFLICT (id) DO UPDATE SET
+               type = EXCLUDED.type,
+               title = EXCLUDED.title,
+               detail = EXCLUDED.detail,
+               amount_usdt = EXCLUDED.amount_usdt,
+               amount_display = EXCLUDED.amount_display,
+               tx_hash = COALESCE(EXCLUDED.tx_hash, activities.tx_hash)`,
+            [
+              String(tx.id),
+              dt,
+              String(tx.actionType || 'TX'),
+              String(tx.title || tx.actionType),
+              String(tx.details || `Rank ${tx.rank || 1} Main #${tx.mainNodeId || 0}`),
+              amtStr,
+              `${amtStr} USDT`,
+              'สำเร็จ',
+              tx.txHash || null,
+            ]
+          );
+        }
+
+        // 7. Persist full JSONB snapshot
+        await client.query(
+          `INSERT INTO matrix_db_snapshots (contract_address, payload, last_synced_block, updated_at)
+           VALUES ($1, $2::jsonb, $3, NOW())
+           ON CONFLICT (contract_address) DO UPDATE SET
+             payload = EXCLUDED.payload,
+             last_synced_block = EXCLUDED.last_synced_block,
+             updated_at = NOW()`,
+          [
+            CONTRACT_ADDRESS.toLowerCase(),
+            JSON.stringify(matrixDB),
+            Number(matrixDB.lastSyncedBlock || 0),
+          ]
+        );
+
+        await client.query('COMMIT');
+        pgLastError = null;
+      } catch (txErr) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw txErr;
+      } finally {
+        client.release();
+      }
+      await refreshPgTableCounts();
+    } catch (e: any) {
+      pgLastError = e?.message || String(e);
+      console.warn('⚠️ [PostgreSQL] syncAllMatrixDBToPostgres notice:', pgLastError);
+    } finally {
+      pgSyncInFlight = null;
     }
-    await refreshPgTableCounts();
-  } catch (e: any) {
-    console.warn('⚠️ [PostgreSQL] syncAllMatrixDBToPostgres notice:', e?.message);
-  }
+  })();
+  return pgSyncInFlight;
 }
 
 // Start PostgreSQL connection
@@ -731,6 +1180,7 @@ interface RewardLogModel {
   amount: string;
   txHash: string;
   blockNumber?: number;
+  isAdminFreeUpgrade?: boolean;
   createdAt: string;
 }
 
@@ -1071,6 +1521,7 @@ async function inspectAndTagAdminUpgradeTx(
 
 function saveMatrixDBToDisk(immediate = false) {
   broadcastAllMatrixUpdates();
+  schedulePostgresSync(immediate);
   const writeNow = () => {
     try {
       const dir = path.dirname(MATRIX_DB_FILE_PATH);
@@ -4983,8 +5434,9 @@ async function startApp() {
       source: 'DATABASE_FIRST',
       postgres: {
         connected: pgConnected,
-        host: PG_DATABASE_URL ? 'configured' : 'local-json-fallback',
-        database: PG_DATABASE_URL ? 'postgresql' : 'matrix-db.json',
+        host: PG_ENDPOINT_INFO.host,
+        port: PG_ENDPOINT_INFO.port,
+        database: PG_ENDPOINT_INFO.database,
         tableCounts: pgTablesCount,
         lastError: pgLastError,
       },
@@ -5074,9 +5526,9 @@ async function startApp() {
     res.json({
       success: true,
       connected: pgConnected,
-      host: '187.124.138.252',
-      port: 32772,
-      database: 'Aunza',
+      host: PG_ENDPOINT_INFO.host,
+      port: PG_ENDPOINT_INFO.port,
+      database: PG_ENDPOINT_INFO.database,
       contractAddress: CONTRACT_ADDRESS,
       tableCounts: pgTablesCount,
       lastError: pgLastError,
@@ -6264,7 +6716,7 @@ async function startApp() {
       source: 'DATABASE',
       postgres: {
         connected: pgConnected,
-        database: 'Aunza',
+        database: PG_ENDPOINT_INFO.database,
         tableCounts: pgTablesCount,
       },
       contractAddress: matrixDB.contractAddress,
