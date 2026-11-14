@@ -3853,7 +3853,7 @@ const reservationsMap = new Map<string, PositionReservation>();
 const reservationHistory: PositionReservation[] = [];
 let totalCompletedJobs = 0;
 let totalFailedJobs = 0;
-const RESERVATION_LEASE_MS = 90 * 1000;
+const RESERVATION_LEASE_MS = 45 * 1000;
 
 setInterval(() => {
   const now = Date.now();
@@ -3876,63 +3876,90 @@ async function fetchTreeWithVirtualLocks(rank: number = 1): Promise<{
   const ownerLatestNodeMap = new Map<string, string>();
   let totalNodes = 0;
 
-  try {
-    const provider = getProvider();
-    const contract = new ethers.Contract(CONTRACT_ADDRESS, MATRIX_READ_ABI, provider);
-
-    const onChainCount = Number(await contract.totalNodesInRank(rank));
-    totalNodes = Math.max(0, onChainCount);
-
-    if (totalNodes > 0) {
-      const batchPromises = [];
-      for (let i = 1; i <= Math.min(totalNodes, 500); i++) {
-        batchPromises.push(
-          contract.rankNodes(rank, i).then((node: any) => ({
-            id: node[0].toString(),
-            owner: (node[1] || '').toLowerCase(),
-            directSponsor: (node[2] || '').toLowerCase(),
-            parentId: node[3].toString(),
-            leftChild: node[4].toString(),
-            rightChild: node[5].toString(),
-            isClone: Boolean(node[6]),
-            isExtraId: Boolean(node[7]),
-          })).catch(() => null)
-        );
+  // Fast Path: Read synced nodes directly from in-memory matrixDB (0ms, zero RPC storm)
+  const dbRankNodes = (matrixDB.nodesByRank[rank] || []).filter((n) => !n.isSyntheticExtra);
+  if (dbRankNodes.length > 0) {
+    const sorted = [...dbRankNodes].sort((a, b) => a.id - b.id);
+    for (const n of sorted) {
+      const idStr = String(n.id);
+      const ownerKey = (n.owner || '').toLowerCase();
+      nodesMap.set(idStr, {
+        id: idStr,
+        owner: ownerKey,
+        directSponsor: (n.directSponsor || '').toLowerCase(),
+        parentId: String(n.parentId || 0),
+        leftChild: String(n.leftChild || 0),
+        rightChild: String(n.rightChild || 0),
+        isClone: Boolean(n.isClone),
+        isExtraId: Boolean(n.isExtraId),
+      });
+      if (ownerKey) {
+        if (!ownerFirstNodeMap.has(ownerKey)) {
+          ownerFirstNodeMap.set(ownerKey, idStr);
+        }
+        ownerLatestNodeMap.set(ownerKey, idStr);
       }
+      totalNodes = Math.max(totalNodes, n.id);
+    }
+  } else {
+    try {
+      const provider = getProvider();
+      const contract = new ethers.Contract(CONTRACT_ADDRESS, MATRIX_READ_ABI, provider);
 
-      const results = await Promise.all(batchPromises);
-      if (rank === 1 && results.some((r) => r && r.id !== '0')) {
-        inMemoryDB.nodes.clear();
-      }
-      for (const res of results) {
-        if (res && res.id !== '0') {
-          nodesMap.set(res.id, res);
-          const ownerKey = res.owner.toLowerCase();
-          if (!ownerFirstNodeMap.has(ownerKey)) {
-            ownerFirstNodeMap.set(ownerKey, res.id);
-          }
-          ownerLatestNodeMap.set(ownerKey, res.id);
+      const onChainCount = Number(await contract.totalNodesInRank(rank));
+      totalNodes = Math.max(0, onChainCount);
 
-          if (rank === 1) {
-            inMemoryDB.nodes.set(res.id, {
-              id: res.id,
-              rank: 1,
-              owner: res.owner,
-              sponsor: res.directSponsor,
-              parentId: res.parentId,
-              leftChild: res.leftChild,
-              rightChild: res.rightChild,
-              isClone: res.isClone,
-              isExtraId: res.isExtraId,
-              origin: res.isClone ? 'CLONE' : 'REGISTRATION',
-              createdAt: new Date().toISOString(),
-            });
+      if (totalNodes > 0) {
+        const batchPromises = [];
+        for (let i = 1; i <= Math.min(totalNodes, 500); i++) {
+          batchPromises.push(
+            contract.rankNodes(rank, i).then((node: any) => ({
+              id: node[0].toString(),
+              owner: (node[1] || '').toLowerCase(),
+              directSponsor: (node[2] || '').toLowerCase(),
+              parentId: node[3].toString(),
+              leftChild: node[4].toString(),
+              rightChild: node[5].toString(),
+              isClone: Boolean(node[6]),
+              isExtraId: Boolean(node[7]),
+            })).catch(() => null)
+          );
+        }
+
+        const results = await Promise.all(batchPromises);
+        if (rank === 1 && results.some((r) => r && r.id !== '0')) {
+          inMemoryDB.nodes.clear();
+        }
+        for (const res of results) {
+          if (res && res.id !== '0') {
+            nodesMap.set(res.id, res);
+            const ownerKey = res.owner.toLowerCase();
+            if (!ownerFirstNodeMap.has(ownerKey)) {
+              ownerFirstNodeMap.set(ownerKey, res.id);
+            }
+            ownerLatestNodeMap.set(ownerKey, res.id);
+
+            if (rank === 1) {
+              inMemoryDB.nodes.set(res.id, {
+                id: res.id,
+                rank: 1,
+                owner: res.owner,
+                sponsor: res.directSponsor,
+                parentId: res.parentId,
+                leftChild: res.leftChild,
+                rightChild: res.rightChild,
+                isClone: res.isClone,
+                isExtraId: res.isExtraId,
+                origin: res.isClone ? 'CLONE' : 'REGISTRATION',
+                createdAt: new Date().toISOString(),
+              });
+            }
           }
         }
       }
+    } catch (err) {
+      console.warn('[Queue Engine] Notice fetching on-chain nodes for simulation:', err);
     }
-  } catch (err) {
-    console.warn('[Queue Engine] Notice fetching on-chain nodes for simulation:', err);
   }
 
   if (!nodesMap.has('1')) {
@@ -4376,40 +4403,12 @@ class InMemoryFifoMutexQueue {
     let activeTicketId = '';
 
     try {
-      // 1. คำนวณตำแหน่งและออกตั๋วคิว
+      // 1. คำนวณตำแหน่งและออกตั๋วคิว (Virtual lock in reservationsMap prevents collisions without blocking subsequent requests for 90s)
       const reservation = await processPlacementJob(item.data);
       activeTicketId = reservation.ticketId;
       this.currentActiveTicketId = activeTicketId;
 
-      console.log(`⏳ [FIFO Queue 1-by-1] Ticket ${activeTicketId} issued to ${reservation.owner}. Waiting for on-chain tx completion...`);
-
-      // 2. ส่งตั๋วกลับไปยังการตอบรับ HTTP เพื่อให้หน้าเว็บส่งคำสั่งเข้า MetaMask
       item.resolve(reservation);
-
-      // 3. STRICT 1-BY-1 BLOCKING WAIT: ถือสิทธิ์ประมวลผลไว้จนกว่าธุรกรรมของคิวนี้จะสำเร็จสมบูรณ์ (หรือถูกยกเลิก/หมดเวลา) บนบล็อกเชน
-      await new Promise<void>((resolveWait) => {
-        let settled = false;
-
-        const onSettled = (status: string) => {
-          if (settled) return;
-          settled = true;
-          queueEventsEmitter.removeListener(`ticket:${activeTicketId}:settled`, onSettled);
-          clearTimeout(timeoutTimer);
-          console.log(`🟢 [FIFO Queue 1-by-1] Ticket ${activeTicketId} settled with status '${status}'. Unlocking queue for next item...`);
-          resolveWait();
-        };
-
-        queueEventsEmitter.once(`ticket:${activeTicketId}:settled`, onSettled);
-
-        // ระยะเวลารอสูงสุดต่อธุรกรรม (90 วินาที)
-        const timeoutTimer = setTimeout(() => {
-          if (!settled) {
-            console.warn(`⚠️ [FIFO Queue 1-by-1] Ticket ${activeTicketId} 90s timeout reached without on-chain confirmation. Proceeding to next queue item...`);
-            onSettled('TIMEOUT');
-          }
-        }, 90000);
-      });
-
       totalCompletedJobs++;
     } catch (err) {
       totalFailedJobs++;
@@ -4417,7 +4416,6 @@ class InMemoryFifoMutexQueue {
     } finally {
       this.currentActiveTicketId = null;
       this.isProcessing = false;
-      // ประมวลผลคิวถัดไปแบบ 1 ต่อ 1 เข้มงวด
       setImmediate(() => this.processNext());
     }
   }
@@ -4892,7 +4890,8 @@ async function startApp() {
   async function syncRankIntoDatabase(
     rank: number,
     targetContract: string = CONTRACT_ADDRESS,
-    forceRefresh = false
+    forceRefresh = false,
+    bypassCooldown = false
   ): Promise<IndexedTreeNode[]> {
     const rankNum = Math.min(Math.max(Number(rank) || 1, 1), 18);
     const cacheKey = `${targetContract.toLowerCase()}:${rankNum}`;
@@ -4902,6 +4901,7 @@ async function startApp() {
     const existingNodes = matrixDB.nodesByRank[rankNum] || [];
     if (
       !forceRefresh &&
+      !bypassCooldown &&
       existingNodes.length > 0 &&
       targetContract.toLowerCase() === matrixDB.contractAddress.toLowerCase() &&
       now - lastTs < 12000
@@ -5789,8 +5789,26 @@ async function startApp() {
     });
   });
 
-  app.post('/api/db/sync', async (_req: Request, res: Response) => {
+  app.post('/api/db/sync', async (req: Request, res: Response) => {
     try {
+      const fastMode = req.query.fast === '1' || req.body?.fast === true;
+      const rankParam = Number(req.query.rank || req.body?.rank || 0);
+      if (fastMode || rankParam >= 1) {
+        const targetRank = rankParam >= 1 && rankParam <= 18 ? rankParam : 1;
+        await syncRankIntoDatabase(targetRank, CONTRACT_ADDRESS, false, true);
+        return res.json({
+          success: true,
+          source: 'DATABASE_FAST_DELTA_SYNCED',
+          rank: targetRank,
+          lastSyncedBlock: matrixDB.lastSyncedBlock,
+          lastSyncedAt: matrixDB.lastSyncedAt,
+          rankCounts: matrixDB.rankCounts,
+          totalNodesRank1: matrixDB.rankCounts[1] || 1,
+          totalRewards: matrixDB.rewardLogs.length,
+          totalUpgrades: (matrixDB.upgradeLogs || []).length,
+        });
+      }
+
       await syncAllMatrixDatabase(CONTRACT_ADDRESS, true);
       res.json({
         success: true,
@@ -9850,8 +9868,8 @@ async function startApp() {
         details: `Queue Ticket: ${ticketId}`,
       });
     }
-    // Immediately sync the database with the newly confirmed on-chain transaction
-    syncAllMatrixDatabase(CONTRACT_ADDRESS, true).catch(() => {});
+    // Fast delta sync for Rank 1 instead of forcing a full 18-rank RPC rescan
+    syncRankIntoDatabase(1, CONTRACT_ADDRESS, false, true).catch(() => {});
     res.json({ success: true, confirmed });
   });
 
@@ -10245,7 +10263,10 @@ async function startApp() {
       let bnbBalance = cachedBal?.bnbBalance || '0.0000';
 
       if (!cachedBal) {
-        await refreshWalletBalancesInBackground(address);
+        await Promise.race([
+          refreshWalletBalancesInBackground(address),
+          new Promise<void>((resolve) => setTimeout(resolve, 1500)),
+        ]);
         const fresh = walletBalancesCache.get(lower);
         if (fresh) {
           usdtBalance = fresh.usdtBalance;

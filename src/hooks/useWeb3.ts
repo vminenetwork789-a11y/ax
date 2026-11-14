@@ -198,28 +198,37 @@ export function useWeb3() {
         console.warn('Database API notice, falling back to RPC:', dbErr);
       }
 
-      // If browser wallet is present, update chainId and live wallet balances without hammering contract storage
+      // Refresh browser wallet live balances in background so database-first UI updates immediately
       if (window.ethereum) {
-        try {
-          const browserProvider = new ethers.BrowserProvider(window.ethereum);
-          const net = await browserProvider.getNetwork();
-          setChainId(Number(net.chainId));
-          if (Number(net.chainId) === BSC_TESTNET_CHAIN_ID) {
-            const usdtContract = new ethers.Contract(targetUsdt, USDT_ABI, browserProvider);
-            const [bnbWei, uBal, uAllow, dec] = await Promise.all([
-              browserProvider.getBalance(userAddr).catch(() => null),
-              usdtContract.balanceOf(userAddr).catch(() => null),
-              usdtContract.allowance(userAddr, targetContract).catch(() => null),
-              usdtContract.decimals().catch(() => 18),
-            ]);
-            const tokenDec = Number(dec) || 18;
-            if (bnbWei !== null) setBnbBalance(Number(ethers.formatEther(bnbWei)).toFixed(4));
-            if (uBal !== null) setUsdtBalance(Number(ethers.formatUnits(uBal, tokenDec)).toFixed(2));
-            if (uAllow !== null) setAllowance(ethers.formatUnits(uAllow, tokenDec));
+        const syncBrowserBalances = async () => {
+          try {
+            const browserProvider = new ethers.BrowserProvider(window.ethereum);
+            const chainHex = await window.ethereum.request({ method: 'eth_chainId' }).catch(() => null);
+            const parsedChainId = chainHex ? parseInt(String(chainHex), 16) : Number((await browserProvider.getNetwork()).chainId);
+            setChainId(parsedChainId);
+            if (parsedChainId === BSC_TESTNET_CHAIN_ID) {
+              const usdtContract = new ethers.Contract(targetUsdt, USDT_ABI, browserProvider);
+              const [bnbWei, uBal, uAllow, dec] = await Promise.all([
+                browserProvider.getBalance(userAddr).catch(() => null),
+                usdtContract.balanceOf(userAddr).catch(() => null),
+                usdtContract.allowance(userAddr, targetContract).catch(() => null),
+                usdtContract.decimals().catch(() => 18),
+              ]);
+              const tokenDec = Number(dec) || 18;
+              if (bnbWei !== null) setBnbBalance(Number(ethers.formatEther(bnbWei)).toFixed(4));
+              if (uBal !== null) setUsdtBalance(Number(ethers.formatUnits(uBal, tokenDec)).toFixed(2));
+              if (uAllow !== null) setAllowance(ethers.formatUnits(uAllow, tokenDec));
+            }
+          } catch {
+            // Ignore browser provider read notice
           }
-        } catch {
-          // Ignore browser provider read notice
+        };
+
+        if (loadedFromDatabase) {
+          syncBrowserBalances().catch(() => {});
+          return;
         }
+        await syncBrowserBalances();
       }
 
       if (loadedFromDatabase) {
@@ -314,13 +323,17 @@ export function useWeb3() {
     }
 
     let provider = new ethers.BrowserProvider(window.ethereum);
-    const accounts = await provider.send('eth_requestAccounts', []);
+    let accounts: string[] = await window.ethereum.request({ method: 'eth_accounts' }).catch(() => []);
+    if (!accounts || accounts.length === 0) {
+      accounts = await provider.send('eth_requestAccounts', []);
+    }
     if (!accounts || accounts.length === 0) {
       throw new Error('กรุณาอนุญาตการเชื่อมต่อบัญชีในกระเป๋า MetaMask');
     }
 
-    const net = await provider.getNetwork();
-    if (Number(net.chainId) !== BSC_TESTNET_CHAIN_ID) {
+    const chainHex = await window.ethereum.request({ method: 'eth_chainId' }).catch(() => null);
+    const currentChainId = chainHex ? parseInt(String(chainHex), 16) : Number((await provider.getNetwork()).chainId);
+    if (currentChainId !== BSC_TESTNET_CHAIN_ID) {
       setTxState((prev) => ({
         ...prev,
         isLoading: true,
@@ -816,16 +829,23 @@ export function useWeb3() {
     mode?: PlacementMode;
     applicants?: Array<{ owner: string }>;
   }) => {
-    const res = await fetch('/api/queue/reserve', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(params),
-    });
-    const data = await res.json();
-    if (!res.ok || !data.success) {
-      throw new Error(data.error || 'ไม่สามารถขอตั๋วคิวจัดสรรตำแหน่งได้');
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2500);
+    try {
+      const res = await fetch('/api/queue/reserve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+        signal: controller.signal,
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'ไม่สามารถขอตั๋วคิวจัดสรรตำแหน่งได้');
+      }
+      return data.reservation;
+    } finally {
+      clearTimeout(timeoutId);
     }
-    return data.reservation;
   };
 
   const confirmQueueTicket = async (ticketId: string, txHash?: string) => {
@@ -971,33 +991,67 @@ export function useWeb3() {
 
       const matrixContract = new ethers.Contract(currentContract, MATRIX_ABI, signer);
       const usdtContract = new ethers.Contract(currentUsdt, USDT_ABI, signer);
-
-      let usdtDecimals = 18;
-      try {
-        usdtDecimals = Number(await usdtContract.decimals());
-      } catch {
-        usdtDecimals = 18;
-      }
-
-      // 1. Check valid sponsor ID on contract (1 wallet can register unlimited times)
-      const [isValid, reason, sponsorAddress] = await matrixContract.checkValidSponsorId(sponsorNodeId);
-      if (!isValid) {
-        throw new Error(`Sponsor Node ID #${sponsorNodeId} ไม่ถูกต้อง: ${reason}`);
-      }
-
-      // 2. Get Rank 1 price (5 USDT) and verify deployed contract price matches
       const r1UnitPrice = RANK_PRICES_USDT[0] || 5;
-      try {
-        const onChainR1Raw: bigint = await matrixContract.rankPrice(1);
+      const modeToUse: PlacementMode = autoOptions?.mode || 'contract_round';
+      const hasManualParent = Boolean(autoOptions?.targetParentId && Number(autoOptions.targetParentId) > 0);
+      const needsExplicitPlacement = hasManualParent || countToReg > 1 || modeToUse !== 'contract_round';
+
+      setTxState((prev) => ({
+        ...prev,
+        step: 'กำลังตรวจสอบข้อมูลผู้แนะนำ ยอด USDT และสิทธิ์อนุมัติเหรียญพร้อมกัน...',
+      }));
+
+      // Run all pre-transaction checks in parallel in 1 roundtrip instead of 6 sequential awaits
+      const [
+        decimalsResult,
+        dbSponsorCheck,
+        onChainR1Raw,
+        currentUsdtBal,
+        currentAllowanceRes,
+        queueTicketRes,
+      ] = await Promise.all([
+        usdtContract.decimals().then((d: any) => Number(d)).catch(() => 18),
+        fetch(`/api/matrix/sponsor-check?nodeId=${sponsorNodeId}&contract=${currentContract}`, {
+          headers: { Accept: 'application/json' },
+        })
+          .then((r) => (r.ok ? r.json() : null))
+          .catch(() => null),
+        matrixContract.rankPrice(1).catch(() => null),
+        usdtContract.balanceOf(userAddr).catch(() => null),
+        usdtContract.allowance(userAddr, currentContract).catch(() => BigInt(0)),
+        needsExplicitPlacement && !hasManualParent
+          ? requestQueuePlacementReservation({
+              owner: userAddr,
+              sponsorNodeId,
+              sponsorAddress: currentContract,
+              count: countToReg,
+              rank: 1,
+              mode: modeToUse,
+            }).catch(() => null)
+          : Promise.resolve(null),
+      ]);
+
+      const usdtDecimals = decimalsResult || 18;
+
+      // 1. Validate sponsor ID (Database-first, fallback to RPC only if DB didn't confirm)
+      let sponsorAddress = String(dbSponsorCheck?.sponsorAddress || currentContract);
+      if (dbSponsorCheck?.success && dbSponsorCheck.isValid) {
+        // Fast DB check passed
+      } else {
+        const [isValid, reason, onChainSponsorAddr] = await matrixContract.checkValidSponsorId(sponsorNodeId);
+        if (!isValid) {
+          throw new Error(`Sponsor Node ID #${sponsorNodeId} ไม่ถูกต้อง: ${reason}`);
+        }
+        sponsorAddress = onChainSponsorAddr;
+      }
+
+      // 2. Verify Rank 1 price (5 USDT)
+      if (onChainR1Raw !== null && onChainR1Raw !== undefined) {
         const onChainR1Usdt = Number(ethers.formatUnits(onChainR1Raw, usdtDecimals));
         if (Math.abs(onChainR1Usdt - r1UnitPrice) > 0.01) {
           throw new Error(
             `ONCHAIN_PRICE_MISMATCH: สัญญาบนเชนตั้งราคา Rank 1 ไว้ที่ ${onChainR1Usdt} USDT ไม่ตรงกับราคาปัจจุบัน (${r1UnitPrice} USDT) — ใช้ระบบสมัครราคา ${r1UnitPrice} USDT`
           );
-        }
-      } catch (priceCheckErr: any) {
-        if (String(priceCheckErr?.message || '').includes('ONCHAIN_PRICE_MISMATCH')) {
-          throw priceCheckErr;
         }
       }
 
@@ -1005,99 +1059,22 @@ export function useWeb3() {
       const totalCost = price * BigInt(countToReg);
 
       // 3. Verify USDT Balance
-      try {
-        const currentUsdtBal: bigint = await usdtContract.balanceOf(userAddr);
-        if (currentUsdtBal < totalCost) {
-          const formattedHave = Number(ethers.formatUnits(currentUsdtBal, usdtDecimals)).toFixed(2);
-          const formattedNeed = Number(ethers.formatUnits(totalCost, usdtDecimals)).toFixed(2);
-          throw new Error(
-            `ยอดเหรียญ USDT ในกระเป๋าไม่เพียงพอ! คุณมี ${formattedHave} USDT แต่ต้องใช้ ${formattedNeed} USDT (Token: ${currentUsdt})`
-          );
-        }
-      } catch (balErr: any) {
-        if (balErr?.message?.includes('ไม่เพียงพอ')) throw balErr;
+      if (currentUsdtBal !== null && currentUsdtBal !== undefined && currentUsdtBal < totalCost) {
+        const formattedHave = Number(ethers.formatUnits(currentUsdtBal, usdtDecimals)).toFixed(2);
+        const formattedNeed = Number(ethers.formatUnits(totalCost, usdtDecimals)).toFixed(2);
+        throw new Error(
+          `ยอดเหรียญ USDT ในกระเป๋าไม่เพียงพอ! คุณมี ${formattedHave} USDT แต่ต้องใช้ ${formattedNeed} USDT (Token: ${currentUsdt})`
+        );
       }
 
-      // 4. Auto-Find exact next available Binary Slot with FIFO Queue Lock (BullMQ + Redis)
+      // 4. Resolve placement target if needed
       let autoParentId = autoOptions?.targetParentId ? Number(autoOptions.targetParentId) : 0;
       let autoIsLeft = autoOptions?.isLeft ?? true;
-      const modeToUse: PlacementMode = autoOptions?.mode || 'contract_round';
-
-      try {
-        setTxState((prev) => ({
-          ...prev,
-          step: 'กำลังส่งคำขอเข้าคิว FIFO Worker (ป้องกัน Race Condition การแย่งตำแหน่ง)...',
-        }));
-
-        activeTicket = await requestQueuePlacementReservation({
-          owner: userAddr,
-          sponsorNodeId,
-          sponsorAddress,
-          count: countToReg,
-          rank: 1,
-          mode: modeToUse,
-        });
-
-        if (activeTicket) {
-          autoParentId = Number(activeTicket.targetParentId);
-          autoIsLeft = Boolean(activeTicket.isLeft);
-          const sideName = autoIsLeft ? 'ซ้าย' : 'ขวา';
-          setTxState((prev) => ({
-            ...prev,
-            step: `จองตำแหน่งสำเร็จ! ตั๋วคิว: ${activeTicket.ticketId} (ล็อค Parent #${autoParentId} ฝั่ง${sideName} ไว้ 90 วินาที)...`,
-          }));
-        }
-      } catch (queueErr) {
-        console.warn('FIFO Queue reservation notice:', queueErr);
-        // Fallback to client simulation if queue request fails
-        if (!autoParentId) {
-          const sim = await previewOffChainSimulation(
-            signer,
-            currentContract,
-            sponsorNodeId,
-            [{ owner: userAddr }],
-            undefined,
-            modeToUse
-          );
-          if (sim.targetParentIds.length > 0) {
-            autoParentId = Number(sim.targetParentIds[0]);
-            autoIsLeft = Boolean(sim.isLefts[0]);
-          }
-        }
-      }
-
-      setTxState((prev) => ({
-        ...prev,
-        step: `กำลังตรวจสอบการอนุมัติเหรียญ (USDT Allowance ${countToReg * r1UnitPrice} USDT)...`,
-      }));
-
-      let currentAllowance: bigint = BigInt(0);
-      try {
-        currentAllowance = await usdtContract.allowance(userAddr, currentContract);
-      } catch (err) {
-        console.warn('Could not read allowance directly:', err);
-      }
-
-      if (currentAllowance < totalCost) {
-        setTxState((prev) => ({
-          ...prev,
-          step: 'ขั้นตอนที่ 1/2: กรุณากดยืนยันการอนุมัติวงเงินไม่จำกัด (Approve Unlimited USDT) ในกระเป๋า MetaMask...',
-        }));
-
-        const approveTx = await usdtContract.approve(currentContract, ethers.MaxUint256, {
-          gasLimit: 100000n,
-        });
-        setTxState((prev) => ({
-          ...prev,
-          step: 'กำลังรอการบันทึก Approve USDT ลงบล็อกเชน...',
-          txHash: approveTx.hash,
-        }));
-        await approveTx.wait();
-      }
-
-      // เงื่อนไขสมัครสมาชิก: จะต้องไปต่อติดตัวของผู้แนะนำตรง Direct Sponsor ซ้ายก่อนขวา
-      // แต่ถ้าผู้แนะนำตรง Direct Sponsor ไม่มีช่องว่าง ก็ให้ไปวางต่อติดตัวโคลนนิ่ง Direct Sponsor เท่านั้น
-      if (!autoParentId || autoParentId === 0) {
+      activeTicket = queueTicketRes;
+      if (activeTicket) {
+        autoParentId = Number(activeTicket.targetParentId);
+        autoIsLeft = Boolean(activeTicket.isLeft);
+      } else if (needsExplicitPlacement && (!autoParentId || autoParentId === 0)) {
         try {
           const sim = await previewOffChainSimulation(
             signer,
@@ -1116,18 +1093,37 @@ export function useWeb3() {
         }
       }
 
+      // 5. Approve USDT only if allowance < totalCost
+      const currentAllowance: bigint = currentAllowanceRes ?? BigInt(0);
+      if (currentAllowance < totalCost) {
+        setTxState((prev) => ({
+          ...prev,
+          step: 'ขั้นตอนที่ 1/2: กรุณากดยืนยันการอนุมัติวงเงินไม่จำกัด (Approve Unlimited USDT) ในกระเป๋า MetaMask...',
+        }));
+
+        const approveTx = await usdtContract.approve(currentContract, ethers.MaxUint256, {
+          gasLimit: 100000n,
+        });
+        setTxState((prev) => ({
+          ...prev,
+          step: 'กำลังรอการบันทึก Approve USDT ลงบล็อกเชน...',
+          txHash: approveTx.hash,
+        }));
+        await approveTx.wait();
+      }
+
       const sideLabel = autoIsLeft ? 'LEFT ลูกซ้าย' : 'RIGHT ลูกขวา';
 
       setTxState((prev) => ({
         ...prev,
         step:
-          autoParentId > 0
-            ? `ขั้นตอนที่ 2/2: ส่งลงตำแหน่ง (ต่อติดตัวผู้แนะนำตรง/โคลนนิ่ง) Parent #${autoParentId} (${sideLabel})... กรุณายืนยันใน MetaMask`
-            : `ขั้นตอนที่ 2/2: ส่งคำสั่งสมัครใต้ผู้แนะนำ #${sponsorNodeId} ค่าสมัคร ${countToReg * r1UnitPrice} USDT... กรุณายืนยันใน MetaMask`,
+          needsExplicitPlacement && autoParentId > 0
+            ? `ส่งคำสั่งลงตำแหน่ง Parent #${autoParentId} (${sideLabel})... กรุณายืนยันใน MetaMask`
+            : `ส่งคำสั่งสมัครสมาชิกใต้ผู้แนะนำ #${sponsorNodeId} (${countToReg * r1UnitPrice} USDT)... กรุณายืนยันใน MetaMask`,
       }));
 
       let regTx;
-      if (autoParentId > 0) {
+      if (needsExplicitPlacement && autoParentId > 0) {
         try {
           regTx = await matrixContract.registerBatch(
             BigInt(sponsorNodeId),
@@ -1136,7 +1132,12 @@ export function useWeb3() {
             [Boolean(autoIsLeft)],
             [false]
           );
-        } catch {
+        } catch (batchErr: any) {
+          const rejected =
+            batchErr?.code === 'ACTION_REJECTED' ||
+            batchErr?.code === 4001 ||
+            String(batchErr?.message || '').toLowerCase().includes('user rejected');
+          if (rejected || countToReg > 1) throw batchErr;
           regTx = await matrixContract.register(BigInt(sponsorNodeId));
         }
       } else {
@@ -1153,12 +1154,15 @@ export function useWeb3() {
       const { mainIds: parsedMainIds, cloneIds: parsedCloneIds } =
         extractCreatedRank1IdsFromReceipt(receipt);
 
-      // Confirm ticket reservation in Queue
       if (activeTicket?.ticketId) {
-        await confirmQueueTicket(activeTicket.ticketId, receipt.hash);
+        confirmQueueTicket(activeTicket.ticketId, receipt.hash).catch(() => {});
       }
 
-      await fetch('/api/db/sync', { method: 'POST' }).catch(() => {});
+      // Fast Rank 1 delta sync (only fetches new node(s) in Rank 1 instead of scanning all 18 ranks)
+      await Promise.race([
+        fetch('/api/db/sync?rank=1&fast=1', { method: 'POST' }).catch(() => {}),
+        new Promise((resolve) => setTimeout(resolve, 3500)),
+      ]);
 
       let assignedIds = parsedMainIds;
       if (assignedIds.length === 0) {
@@ -1284,39 +1288,28 @@ export function useWeb3() {
 
       const matrixContract = new ethers.Contract(currentContract, MATRIX_ABI, signer);
       const usdtContract = new ethers.Contract(currentUsdt, USDT_ABI, signer);
-
-      let usdtDecimals = 18;
-      try {
-        usdtDecimals = Number(await usdtContract.decimals());
-      } catch {
-        usdtDecimals = 18;
-      }
-
       const r1UnitPrice = RANK_PRICES_USDT[0] || 5;
-      try {
-        const onChainR1Raw: bigint = await matrixContract.rankPrice(1);
+
+      const [usdtDecimalsRes, onChainR1Raw, currentAllowanceRes] = await Promise.all([
+        usdtContract.decimals().then((d: any) => Number(d)).catch(() => 18),
+        matrixContract.rankPrice(1).catch(() => null),
+        usdtContract.allowance(userAddr, currentContract).catch(() => BigInt(0)),
+      ]);
+      const usdtDecimals = usdtDecimalsRes || 18;
+
+      if (onChainR1Raw !== null && onChainR1Raw !== undefined) {
         const onChainR1Usdt = Number(ethers.formatUnits(onChainR1Raw, usdtDecimals));
         if (Math.abs(onChainR1Usdt - r1UnitPrice) > 0.01) {
           throw new Error(
             `ONCHAIN_PRICE_MISMATCH: สัญญาบนเชนตั้งราคา Rank 1 ไว้ที่ ${onChainR1Usdt} USDT ไม่ตรงกับราคาปัจจุบัน (${r1UnitPrice} USDT)`
           );
         }
-      } catch (priceCheckErr: any) {
-        if (String(priceCheckErr?.message || '').includes('ONCHAIN_PRICE_MISMATCH')) {
-          throw priceCheckErr;
-        }
       }
 
       const unitPrice: bigint = ethers.parseUnits(String(r1UnitPrice), usdtDecimals);
-
       const totalCost = unitPrice * BigInt(count);
 
-      setTxState((prev) => ({
-        ...prev,
-        step: `ตรวจสอบสิทธิ์ USDT Allowance สำหรับ ${count} โหนด (รวม ${count * r1UnitPrice} USDT)...`,
-      }));
-
-      const currentAllowance = await usdtContract.allowance(userAddr, currentContract);
+      const currentAllowance = currentAllowanceRes ?? BigInt(0);
       if (currentAllowance < totalCost) {
         setTxState((prev) => ({
           ...prev,
@@ -1359,6 +1352,11 @@ export function useWeb3() {
         extractCreatedRank1IdsFromReceipt(receipt);
       const batchIdsLabel = batchMainIds.map((id) => `#${id}`).join(', ');
 
+      await Promise.race([
+        fetch('/api/db/sync?rank=1&fast=1', { method: 'POST' }).catch(() => {}),
+        new Promise((resolve) => setTimeout(resolve, 3500)),
+      ]);
+
       reportTxToServer({
         txHash: receipt?.hash || batchTx.hash,
         actionType: 'BATCH_REGISTER',
@@ -1380,7 +1378,6 @@ export function useWeb3() {
         successMessage: `🎉 สมัครแบบกลุ่ม (${count} โหนด = ${count * r1UnitPrice} USDT) สำเร็จ!${batchIdsLabel ? ` ได้รับเลขไอดี ${batchIdsLabel}` : ''}`,
       });
 
-      await fetch('/api/db/sync', { method: 'POST' }).catch(() => {});
       await refreshUserData(userAddr);
 
       // อัปเดตผังต้นไม้ไบนารี่ทันทีเมื่อสมัครสำเร็จ
