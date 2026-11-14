@@ -247,6 +247,10 @@ process.on('uncaughtException', (err: any) => {
   ) {
     return;
   }
+  if (err?.code === 'EADDRINUSE') {
+    console.error(`[Process Guard] Port ${PORT} is already in use:`, err);
+    process.exit(1);
+  }
   console.warn('[Process Guard] Uncaught Exception:', err);
 });
 
@@ -257,7 +261,9 @@ const { Pool } = pg;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PORT = 3000;
+const portArgIdx = process.argv.indexOf('--port');
+const cliPort = portArgIdx !== -1 ? Number(process.argv[portArgIdx + 1]) : NaN;
+const PORT = Number.isFinite(cliPort) && cliPort > 0 ? cliPort : Number(process.env.PORT || 3000);
 
 // Persistent Database / Store File for Contract Address & Settings
 const CONFIG_FILE_PATH = path.resolve(__dirname, 'prisma/contract-config.json');
@@ -542,7 +548,6 @@ async function resolveUsdtDecimals(): Promise<number> {
   }
   return activeUsdtDecimals;
 }
-resolveUsdtDecimals().catch(() => {});
 
 function updateContractConfigInDB(newConfig: Partial<typeof DEFAULT_SYSTEM_CONFIG>) {
   activeSystemConfig = {
@@ -1829,12 +1834,21 @@ function reconcileRankTreeLinks(nodes: IndexedTreeNode[]): IndexedTreeNode[] {
             n.directSponsor = canonSpNode?.owner || origR1.directSponsor || n.directSponsor;
           }
         } else if (n.isClone) {
-          const localOrigMain = nodes.find(
-            (m) =>
-              !m.isClone &&
-              !m.isExtraId &&
-              (m.originMainId === n.originMainId || m.id === n.originMainId)
-          );
+          const nOwner = (n.owner || '').toLowerCase();
+          const localOrigMain =
+            nodes.find(
+              (m) =>
+                !m.isClone &&
+                !m.isExtraId &&
+                (m.originMainId === n.originMainId || m.id === n.originMainId) &&
+                (!nOwner || (m.owner || '').toLowerCase() === nOwner)
+            ) ||
+            nodes.find(
+              (m) =>
+                !m.isClone &&
+                (m.originMainId === n.originMainId || m.id === n.originMainId) &&
+                (!nOwner || (m.owner || '').toLowerCase() === nOwner)
+            );
           const r1OriginId = localOrigMain ? localOrigMain.originMainId : n.originMainId;
           if (r1OriginId > 0) {
             n.originMainId = r1OriginId;
@@ -2136,9 +2150,19 @@ function findClonePlacementInRankNodes(
   const roundIndex = existingClonesCount % 2;
   const cloneRound = roundIndex + 1;
 
+  const trigOwner = (triggerParent.owner || '').toLowerCase();
   const originNode =
     rNodes.find(
-      (n) => !n.isClone && !n.isExtraId && (n.id === cloneOriginMainId || n.originMainId === cloneOriginMainId)
+      (n) =>
+        !n.isClone &&
+        !n.isExtraId &&
+        (n.id === cloneOriginMainId || n.originMainId === cloneOriginMainId)
+    ) ||
+    rNodes.find(
+      (n) =>
+        !n.isClone &&
+        (n.id === cloneOriginMainId || n.originMainId === cloneOriginMainId) &&
+        (!trigOwner || (n.owner || '').toLowerCase() === trigOwner)
     ) ||
     byId.get(cloneOriginMainId) ||
     triggerParent;
@@ -2637,22 +2661,56 @@ function reconcileAutoExtraIdsAcrossRanks(): Array<{
         .filter((n) => !n.isSyntheticExtra && !n.isLocalUpgrade && !n.isClone && !n.isExtraId)
         .map((n) => n.originMainId || n.id)
     );
-    const hasUnmergedLocalMains = rList.some(
+    const hasUnmergedLocalNonClones = rList.some(
       (n) =>
         !n.isSyntheticExtra &&
         n.isLocalUpgrade &&
         !n.isClone &&
-        !n.isExtraId &&
-        !onChainMainOrigins.has(n.originMainId || n.id)
+        (n.isExtraId || !onChainMainOrigins.has(n.originMainId || n.id))
     );
+    const onChainClones = rList.filter((n) => !n.isSyntheticExtra && !n.isLocalUpgrade && n.isClone);
     const realNodes = rList.filter((n) => {
       if (n.isSyntheticExtra) return false;
       if (n.isLocalUpgrade) {
         if (!n.isClone && !n.isExtraId && onChainMainOrigins.has(n.originMainId || n.id)) {
           return false;
         }
-        if (n.isClone && !hasUnmergedLocalMains) {
-          return false;
+        if (n.isClone) {
+          const nParent = rList.find((p) => p.id === n.parentId);
+          const nIsLeft =
+            n.isLeft !== undefined
+              ? n.isLeft
+              : nParent
+              ? nParent.leftChild === n.id
+                ? true
+                : nParent.rightChild === n.id
+                ? false
+                : undefined
+              : undefined;
+          const alreadyOnChain = onChainClones.some((c) => {
+            if (c.id === n.id) return true;
+            if (c.parentId !== n.parentId) return false;
+            if ((c.originMainId || c.id) !== (n.originMainId || n.id)) return false;
+            const cParent = rList.find((p) => p.id === c.parentId);
+            const cIsLeft =
+              c.isLeft !== undefined
+                ? c.isLeft
+                : cParent
+                ? cParent.leftChild === c.id
+                  ? true
+                  : cParent.rightChild === c.id
+                  ? false
+                  : undefined
+                : undefined;
+            return nIsLeft !== undefined && cIsLeft !== undefined && nIsLeft === cIsLeft;
+          });
+          if (alreadyOnChain) return false;
+          const parentIsLocal = rList.some(
+            (p) => p.id === n.parentId && p.isLocalUpgrade && !p.isSyntheticExtra
+          );
+          if (!hasUnmergedLocalNonClones && !parentIsLocal) {
+            return false;
+          }
         }
       }
       return true;
@@ -4694,8 +4752,8 @@ async function startApp() {
       source: 'DATABASE_FIRST',
       postgres: {
         connected: pgConnected,
-        host: '187.124.138.252:32772',
-        database: 'Aunza',
+        host: PG_DATABASE_URL ? 'configured' : 'local-json-fallback',
+        database: PG_DATABASE_URL ? 'postgresql' : 'matrix-db.json',
         tableCounts: pgTablesCount,
         lastError: pgLastError,
       },
@@ -4973,6 +5031,181 @@ async function startApp() {
           }
         }
 
+        const reattachLocalUpgradesIntoMergedMap = (
+          targetMap: Map<number, IndexedTreeNode>,
+          locals: IndexedTreeNode[]
+        ) => {
+          if (!locals || locals.length === 0) return;
+          const sortedLocals = [...locals].sort((a, b) => a.id - b.id);
+          const idRemap = new Map<number, number>();
+          const syncedNonCloneOrigins = new Set<number>();
+
+          // Pass 1: Non-clone local upgrades / extra IDs
+          for (const loc of sortedLocals) {
+            if (loc.isClone) continue;
+            const matchingChainNode = Array.from(targetMap.values()).find((n) => {
+              if (n.isLocalUpgrade || n.isClone) return false;
+              if (loc.isExtraId) {
+                return (
+                  n.isExtraId &&
+                  n.id === loc.id &&
+                  (n.owner || '').toLowerCase() === (loc.owner || '').toLowerCase()
+                );
+              }
+              return !n.isExtraId && n.originMainId === loc.originMainId;
+            });
+            if (matchingChainNode) {
+              syncedNonCloneOrigins.add(loc.originMainId || loc.id);
+              if (loc.isAdminFreeUpgrade) {
+                matchingChainNode.isAdminFreeUpgrade = true;
+                let scanId = matchingChainNode.id + 1;
+                while (true) {
+                  const trigClone = targetMap.get(scanId);
+                  if (!trigClone || !trigClone.isClone) break;
+                  trigClone.isAdminFreeUpgrade = true;
+                  scanId++;
+                }
+              }
+              continue;
+            }
+            if (!loc.isLocalUpgrade) continue;
+
+            const locCopy = { ...loc };
+            if (locCopy.parentId > 0 && idRemap.has(locCopy.parentId)) {
+              locCopy.parentId = idRemap.get(locCopy.parentId)!;
+            }
+            if (targetMap.has(locCopy.id)) {
+              const maxCurrentId = Array.from(targetMap.keys()).reduce((m, k) => Math.max(m, k), 0);
+              const newAssignedId = maxCurrentId + 1;
+              idRemap.set(loc.id, newAssignedId);
+              locCopy.id = newAssignedId;
+            }
+            const parentInMerged = targetMap.get(locCopy.parentId);
+            if (parentInMerged) {
+              if (locCopy.isLeft === true) {
+                if (parentInMerged.leftChild === 0 || parentInMerged.leftChild === loc.id) {
+                  parentInMerged.leftChild = locCopy.id;
+                } else if (parentInMerged.rightChild === 0 || parentInMerged.rightChild === loc.id) {
+                  parentInMerged.rightChild = locCopy.id;
+                  locCopy.isLeft = false;
+                }
+              } else if (locCopy.isLeft === false) {
+                if (parentInMerged.rightChild === 0 || parentInMerged.rightChild === loc.id) {
+                  parentInMerged.rightChild = locCopy.id;
+                } else if (parentInMerged.leftChild === 0 || parentInMerged.leftChild === loc.id) {
+                  parentInMerged.leftChild = locCopy.id;
+                  locCopy.isLeft = true;
+                }
+              } else if (parentInMerged.leftChild === 0 || parentInMerged.leftChild === loc.id) {
+                parentInMerged.leftChild = locCopy.id;
+                locCopy.isLeft = true;
+              } else if (parentInMerged.rightChild === 0 || parentInMerged.rightChild === loc.id) {
+                parentInMerged.rightChild = locCopy.id;
+                locCopy.isLeft = false;
+              }
+            }
+            targetMap.set(locCopy.id, locCopy);
+          }
+
+          // Pass 2: Clone nodes spawned by local upgrades (keep unmerged local clones intact!)
+          const hasAnyUnmergedLocalNonClone = sortedLocals.some(
+            (l) => !l.isClone && l.isLocalUpgrade && !syncedNonCloneOrigins.has(l.originMainId || l.id)
+          );
+          for (const loc of sortedLocals) {
+            if (!loc.isClone) continue;
+
+            const remappedParentId =
+              loc.parentId > 0 && idRemap.has(loc.parentId)
+                ? idRemap.get(loc.parentId)!
+                : loc.parentId;
+
+            const existingChainClone =
+              (targetMap.has(loc.id) &&
+              !targetMap.get(loc.id)!.isLocalUpgrade &&
+              targetMap.get(loc.id)!.isClone
+                ? targetMap.get(loc.id)
+                : undefined) ||
+              Array.from(targetMap.values()).find((n) => {
+                if (n.isLocalUpgrade || !n.isClone) return false;
+                if (n.parentId !== remappedParentId) return false;
+                if ((n.originMainId || n.id) !== (loc.originMainId || loc.id)) return false;
+                const np = targetMap.get(n.parentId);
+                const nIsLeft =
+                  n.isLeft !== undefined
+                    ? n.isLeft
+                    : np
+                    ? np.leftChild === n.id
+                      ? true
+                      : np.rightChild === n.id
+                      ? false
+                      : undefined
+                    : undefined;
+                if (loc.isLeft !== undefined && nIsLeft !== undefined) {
+                  return nIsLeft === loc.isLeft;
+                }
+                return n.id === loc.id;
+              });
+
+            if (existingChainClone) {
+              if (loc.isAdminFreeUpgrade) {
+                existingChainClone.isAdminFreeUpgrade = true;
+              }
+              continue;
+            }
+            if (!loc.isLocalUpgrade) continue;
+
+            const parentInMerged = targetMap.get(remappedParentId);
+            if (!parentInMerged) continue;
+
+            // If this clone's parent slot on-chain was already filled by a real on-chain clone
+            // and no unmerged local non-clone upgrade remains, don't duplicate
+            const slotOccupiedOnChain =
+              (loc.isLeft === true &&
+                parentInMerged.leftChild > 0 &&
+                !targetMap.get(parentInMerged.leftChild)?.isLocalUpgrade) ||
+              (loc.isLeft === false &&
+                parentInMerged.rightChild > 0 &&
+                !targetMap.get(parentInMerged.rightChild)?.isLocalUpgrade);
+            if (slotOccupiedOnChain && !hasAnyUnmergedLocalNonClone) continue;
+
+            const cloneCopy: IndexedTreeNode = {
+              ...loc,
+              parentId: remappedParentId,
+              originType: loc.originType || 'CLONE',
+            };
+            if (targetMap.has(cloneCopy.id)) {
+              const maxCurrentId = Array.from(targetMap.keys()).reduce((m, k) => Math.max(m, k), 0);
+              const newAssignedId = maxCurrentId + 1;
+              idRemap.set(loc.id, newAssignedId);
+              cloneCopy.id = newAssignedId;
+            }
+
+            if (cloneCopy.isLeft === true) {
+              if (parentInMerged.leftChild === 0 || parentInMerged.leftChild === loc.id) {
+                parentInMerged.leftChild = cloneCopy.id;
+              } else if (parentInMerged.rightChild === 0 || parentInMerged.rightChild === loc.id) {
+                parentInMerged.rightChild = cloneCopy.id;
+                cloneCopy.isLeft = false;
+              }
+            } else if (cloneCopy.isLeft === false) {
+              if (parentInMerged.rightChild === 0 || parentInMerged.rightChild === loc.id) {
+                parentInMerged.rightChild = cloneCopy.id;
+              } else if (parentInMerged.leftChild === 0 || parentInMerged.leftChild === loc.id) {
+                parentInMerged.leftChild = cloneCopy.id;
+                cloneCopy.isLeft = true;
+              }
+            } else if (parentInMerged.leftChild === 0 || parentInMerged.leftChild === loc.id) {
+              parentInMerged.leftChild = cloneCopy.id;
+              cloneCopy.isLeft = true;
+            } else if (parentInMerged.rightChild === 0 || parentInMerged.rightChild === loc.id) {
+              parentInMerged.rightChild = cloneCopy.id;
+              cloneCopy.isLeft = false;
+            }
+
+            targetMap.set(cloneCopy.id, cloneCopy);
+          }
+        };
+
         // If no new nodes and not forceRefresh, still refresh nodeUpgradeVault for existing Main IDs
         // because upgrades in higher ranks or auto-spawns can deduct nodeUpgradeVault without adding nodes here
         if (idsToFetch.length === 0 && maxExistingChainId >= maxFetch) {
@@ -4996,23 +5229,7 @@ async function startApp() {
               })
             );
           }
-          for (const loc of localUpgradedNodes) {
-            if (loc.isClone) continue;
-            const chainMatch = Array.from(mergedMap.values()).find(
-              (n) =>
-                !n.isLocalUpgrade &&
-                !n.isClone &&
-                !n.isExtraId &&
-                n.originMainId === loc.originMainId
-            );
-            if (chainMatch) {
-              if (loc.isAdminFreeUpgrade) chainMatch.isAdminFreeUpgrade = true;
-              continue;
-            }
-            if (loc.isLocalUpgrade) {
-              mergedMap.set(loc.id, { ...loc });
-            }
-          }
+          reattachLocalUpgradesIntoMergedMap(mergedMap, localUpgradedNodes);
           const fastList = reconcileRankTreeLinks(Array.from(mergedMap.values()));
           matrixDB.nodesByRank[rankNum] = fastList;
           matrixDB.rankCounts[rankNum] = Math.max(1, fastList.length);
@@ -5071,54 +5288,8 @@ async function startApp() {
           }
         }
 
-        // Re-attach any un-synced local database-upgraded Main IDs & preserve isAdminFreeUpgrade flags across clones
-        for (const loc of localUpgradedNodes) {
-          if (loc.isClone) {
-            if (loc.isAdminFreeUpgrade && mergedMap.has(loc.id)) {
-              const existingClone = mergedMap.get(loc.id)!;
-              if (existingClone.isClone) {
-                existingClone.isAdminFreeUpgrade = true;
-              }
-            }
-            continue;
-          }
-          const matchingChainNode = Array.from(mergedMap.values()).find(
-            (n) =>
-              !n.isLocalUpgrade &&
-              !n.isClone &&
-              !n.isExtraId &&
-              n.originMainId === loc.originMainId
-          );
-          if (matchingChainNode) {
-            if (loc.isAdminFreeUpgrade) {
-              matchingChainNode.isAdminFreeUpgrade = true;
-              let scanId = matchingChainNode.id + 1;
-              while (true) {
-                const trigClone = mergedMap.get(scanId);
-                if (!trigClone || !trigClone.isClone) break;
-                trigClone.isAdminFreeUpgrade = true;
-                scanId++;
-              }
-            }
-            continue;
-          }
-          if (!loc.isLocalUpgrade) continue;
-
-          const locCopy = { ...loc };
-          if (mergedMap.has(locCopy.id)) {
-            const maxCurrentId = Array.from(mergedMap.keys()).reduce((m, k) => Math.max(m, k), 0);
-            locCopy.id = maxCurrentId + 1;
-          }
-          const parentInMerged = mergedMap.get(locCopy.parentId);
-          if (parentInMerged) {
-            if (parentInMerged.leftChild === 0 || parentInMerged.leftChild === loc.id) {
-              parentInMerged.leftChild = locCopy.id;
-            } else if (parentInMerged.rightChild === 0 || parentInMerged.rightChild === loc.id) {
-              parentInMerged.rightChild = locCopy.id;
-            }
-          }
-          mergedMap.set(locCopy.id, locCopy);
-        }
+        // Re-attach any un-synced local database-upgraded Main IDs & Clones and preserve isAdminFreeUpgrade flags
+        reattachLocalUpgradesIntoMergedMap(mergedMap, localUpgradedNodes);
 
         const fetchedNodes = reconcileRankTreeLinks(Array.from(mergedMap.values()));
 
@@ -5578,11 +5749,16 @@ async function startApp() {
     return fullSyncInFlight;
   }
 
-  // Reconcile immediately on boot so matrixDB has all unlocked Auto Extra IDs ready
-  reconcileAutoExtraIdsAcrossRanks();
-  rebuildDatabaseRewardLogsFromNodes();
-  rebuildDatabaseUpgradeLogsFromNodes();
-  saveMatrixDBToDisk(true);
+  const runInitialReconciliation = () => {
+    try {
+      reconcileAutoExtraIdsAcrossRanks();
+      rebuildDatabaseRewardLogsFromNodes();
+      rebuildDatabaseUpgradeLogsFromNodes();
+      saveMatrixDBToDisk(true);
+    } catch (err) {
+      console.warn('[MatrixDB] Initial reconciliation notice:', err);
+    }
+  };
 
   // Helper to compute exact per-Main-ID vaults and 3 Pools from matrixDB
   function computeMainIdDatabaseStats(mainIdNum: number) {
@@ -8737,8 +8913,15 @@ async function startApp() {
       }
 
       const mainIdNum = userR1Node.id;
-      const sponsorAddr = userR1Node.directSponsor || matrixDB.systemWallets.rootOwner;
-      const r1SponsorMainId = userR1Node.directSponsorNodeId > 0 ? userR1Node.directSponsorNodeId : 1;
+      const rawR1SponsorId = userR1Node.directSponsorNodeId > 0 ? userR1Node.directSponsorNodeId : 1;
+      const rawSpR1Node = r1Nodes.find((n) => n.id === rawR1SponsorId);
+      const r1SponsorMainId =
+        rawSpR1Node && rawSpR1Node.isClone && rawSpR1Node.originMainId > 0
+          ? rawSpR1Node.originMainId
+          : rawR1SponsorId;
+      const canonSpR1Node = r1Nodes.find((n) => n.id === r1SponsorMainId && !n.isClone) || rawSpR1Node;
+      const sponsorAddr =
+        canonSpR1Node?.owner || userR1Node.directSponsor || matrixDB.systemWallets.rootOwner;
 
       // If the upgrade was just confirmed on-chain via adminUpgradeRankForMainId / adminUpgradeRank,
       // mark the synced on-chain node(s) and their triggered clone(s) as isAdminFreeUpgrade = true and return without creating duplicate local nodes!
@@ -8748,12 +8931,23 @@ async function startApp() {
         let onChainClonesCount = 0;
 
         for (let r = 2; r <= parsedRank; r++) {
-          const rList = (matrixDB.nodesByRank[r] || []).filter(
+          let rList = (matrixDB.nodesByRank[r] || []).filter(
             (n) => !n.isSyntheticExtra && !n.isLocalUpgrade
           );
-          const chainNode = rList.find(
+          let chainNode = rList.find(
             (n) => !n.isClone && !n.isExtraId && n.originMainId === mainIdNum
           );
+          // Retry briefly if public RPC lagged behind wallet tx.wait()
+          for (let retry = 0; retry < 2 && !chainNode; retry++) {
+            await new Promise((resolve) => setTimeout(resolve, 1200));
+            await syncRankIntoDatabase(r, CONTRACT_ADDRESS, true, true).catch(() => {});
+            rList = (matrixDB.nodesByRank[r] || []).filter(
+              (n) => !n.isSyntheticExtra && !n.isLocalUpgrade
+            );
+            chainNode = rList.find(
+              (n) => !n.isClone && !n.isExtraId && n.originMainId === mainIdNum
+            );
+          }
           if (chainNode) {
             chainNode.isAdminFreeUpgrade = true;
             const pNode = rList.find((n) => n.id === chainNode.parentId);
@@ -8894,6 +9088,11 @@ async function startApp() {
           const nextIdInRank = maxId + 1;
           const nowIso = new Date().toISOString();
 
+          const parentNode = rList.find((n) => n.id === parentIdNum);
+          const placeLeft = parentNode
+            ? !parentNode.leftChild || parentNode.leftChild <= 0 || placement.isLeft
+            : Boolean(placement.isLeft);
+
           const newNode: IndexedTreeNode = {
             id: nextIdInRank,
             rank: r,
@@ -8902,6 +9101,7 @@ async function startApp() {
             parentId: parentIdNum,
             leftChild: 0,
             rightChild: 0,
+            isLeft: placeLeft,
             isClone: false,
             isExtraId: false,
             originMainId: mainIdNum,
@@ -8916,10 +9116,8 @@ async function startApp() {
           };
 
           rList.push(newNode);
-          const parentNode = rList.find((n) => n.id === parentIdNum);
           const rightSlotTriggerQueue: IndexedTreeNode[] = [];
           if (parentNode) {
-            const placeLeft = !parentNode.leftChild || parentNode.leftChild <= 0 || placement.isLeft;
             if (placeLeft) {
               // เงื่อนไข Admin อัพ Rank ฟรี: วางฝั่งซ้าย ไม่จ่ายค่าคอม 30%/30%/4%/1% และไม่บวก 35% เข้ากระปุก
               parentNode.leftChild = nextIdInRank;
@@ -8929,15 +9127,36 @@ async function startApp() {
             }
           }
 
-          // ถ้าลงฝั่งขวา (!placement.isLeft) -> รันระบบโคลนนิ่ง Rebirth ให้ Parent ตามเงื่อนไขปกติ!
+          // ถ้าลงฝั่งขวา (!placeLeft) -> รันระบบโคลนนิ่ง Rebirth ให้ Parent ตามเงื่อนไขปกติ!
           let cloneSafety = 0;
-          while (rightSlotTriggerQueue.length > 0 && cloneSafety < 25) {
+          while (rightSlotTriggerQueue.length > 0 && cloneSafety < 50) {
             cloneSafety++;
             const triggerParent = rightSlotTriggerQueue.shift()!;
             const clonePlacement = findClonePlacementInRankNodes(rList, triggerParent);
             const cloneIdInRank = rList.reduce((m, n) => Math.max(m, n.id), 0) + 1;
             const originNode =
-              rList.find((n) => n.id === clonePlacement.cloneOriginMainId) || triggerParent;
+              rList.find(
+                (n) =>
+                  !n.isClone &&
+                  !n.isExtraId &&
+                  (n.originMainId === clonePlacement.cloneOriginMainId ||
+                    n.id === clonePlacement.cloneOriginMainId)
+              ) ||
+              rList.find(
+                (n) =>
+                  !n.isClone &&
+                  (n.originMainId === clonePlacement.cloneOriginMainId ||
+                    n.id === clonePlacement.cloneOriginMainId)
+              ) ||
+              r1Nodes.find((n) => !n.isClone && n.id === clonePlacement.cloneOriginMainId) ||
+              triggerParent;
+            const cloneParent = rList.find((n) => n.id === clonePlacement.parentId);
+            const clonePlaceLeft = cloneParent
+              ? !cloneParent.leftChild || cloneParent.leftChild <= 0 || clonePlacement.isLeft
+              : Boolean(clonePlacement.isLeft);
+            const existingCloneCountForOrig = rList.filter(
+              (n) => n.isClone && (n.originMainId || n.id) === clonePlacement.cloneOriginMainId
+            ).length;
 
             const cloneNode: IndexedTreeNode = {
               id: cloneIdInRank,
@@ -8948,9 +9167,11 @@ async function startApp() {
               parentId: clonePlacement.parentId,
               leftChild: 0,
               rightChild: 0,
+              isLeft: clonePlaceLeft,
               isClone: true,
               isExtraId: false,
               originMainId: clonePlacement.cloneOriginMainId,
+              cloneSequence: existingCloneCountForOrig + 1,
               cloneRound: clonePlacement.cloneRound,
               directSponsorNodeId: clonePlacement.targetSponsorNodeId,
               nodeVault: 0,
@@ -8958,14 +9179,13 @@ async function startApp() {
               reconciledBaseVault: 0,
               isLocalUpgrade: true,
               isAdminFreeUpgrade: true,
+              originType: 'CLONE',
               createdAt: new Date().toISOString(),
             };
             rList.push(cloneNode);
             clonesCreated++;
-            const cloneParent = rList.find((n) => n.id === clonePlacement.parentId);
             if (cloneParent) {
-              const placeLeft = !cloneParent.leftChild || cloneParent.leftChild <= 0 || clonePlacement.isLeft;
-              if (placeLeft) {
+              if (clonePlaceLeft) {
                 cloneParent.leftChild = cloneIdInRank;
               } else {
                 cloneParent.rightChild = cloneIdInRank;
@@ -8982,7 +9202,7 @@ async function startApp() {
             rank: r,
             nodeId: nextIdInRank,
             parentId: parentIdNum,
-            side: placement.isLeft ? 'LEFT' : 'RIGHT',
+            side: placeLeft ? 'LEFT' : 'RIGHT',
           });
         }
       }
@@ -10851,18 +11071,27 @@ async function startApp() {
     });
   });
 
+  server.on('error', (err: any) => {
+    console.error('[HTTP Server Error]:', err);
+    process.exit(1);
+  });
+
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`Backend API Server + WebSocket running on port ${PORT} (Database-First Mode)`);
-    initPlacementQueue().catch((err) => console.warn('Queue init error:', err));
-    syncAllMatrixDatabase(CONTRACT_ADDRESS, true)
-      .then(() => {
-        console.log(
-          `💾 [MatrixDB] Initial blockchain -> database sync complete (${
-            matrixDB.rankCounts[1] || 1
-          } Rank 1 nodes, ${matrixDB.rewardLogs.length} rewards persisted in prisma/matrix-db.json)`
-        );
-      })
-      .catch((err) => console.warn('Initial MatrixDB sync notice:', err));
+    setImmediate(() => {
+      runInitialReconciliation();
+      resolveUsdtDecimals().catch(() => {});
+      initPlacementQueue().catch((err) => console.warn('Queue init error:', err));
+      syncAllMatrixDatabase(CONTRACT_ADDRESS, true)
+        .then(() => {
+          console.log(
+            `💾 [MatrixDB] Initial blockchain -> database sync complete (${
+              matrixDB.rankCounts[1] || 1
+            } Rank 1 nodes, ${matrixDB.rewardLogs.length} rewards persisted in prisma/matrix-db.json)`
+          );
+        })
+        .catch((err) => console.warn('Initial MatrixDB sync notice:', err));
+    });
 
     // Background Blockchain -> Database Sync & Bot Keeper Loop (every 15 seconds for stability)
     setInterval(() => {
@@ -10877,4 +11106,5 @@ async function startApp() {
 
 startApp().catch((err) => {
   console.error('Failed to start server:', err);
+  process.exit(1);
 });
