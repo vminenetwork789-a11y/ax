@@ -6149,7 +6149,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           return item.rank === rankNum && n.id === item.id;
         }
         if (item.category === 'CLONE') {
-          return item.rank === rankNum && n.isClone && (n.id === item.id || n.r1MainId === targetMain);
+          return item.rank === rankNum && n.isClone && n.id === item.id;
         }
         return (
           !n.isClone &&
@@ -6184,12 +6184,14 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           return item.rank === targetRankNum && sn.id === item.id;
         }
         if (item.category === 'CLONE') {
-          return item.rank === targetRankNum && Boolean(sn.isClone) && (sn.id === item.id || Number(sn.originMainId || 0) === targetMain);
+          return item.rank === targetRankNum && Boolean(sn.isClone) && sn.id === item.id;
         }
         return (
           !sn.isClone &&
           !sn.isExtraId &&
-          (Number(sn.originMainId || sn.id) === targetMain || sn.id === targetMain)
+          (targetRankNum === 1
+            ? sn.id === targetMain || Number(sn.originMainId || 0) === targetMain
+            : Number(sn.originMainId || sn.id) === targetMain)
         );
       });
       return matched ? matched.id : null;
@@ -6201,6 +6203,101 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
     if (!selectedWalletSwitchItem || viewMode !== 'onchain') return null;
     return resolveNodeIdInRankMap(activeNodesMap, selectedWalletSwitchItem, selectedRank);
   }, [selectedWalletSwitchItem, viewMode, activeNodesMap, selectedRank, resolveNodeIdInRankMap]);
+
+  // Total node count per rank (1..18) scoped to the ID currently selected in the Switch ID button
+  const scopedRankNodeCounts = useMemo<Record<number, number> | null>(() => {
+    if (!selectedWalletSwitchItem) return null;
+    const result: Record<number, number> = {};
+    const targetMain = selectedWalletSwitchItem.originMainId || selectedWalletSwitchItem.id;
+    const isMainOrAuto =
+      selectedWalletSwitchItem.category === 'MAIN' || selectedWalletSwitchItem.category === 'AUTO';
+    const rep = isMainOrAuto ? perIdReportsMap.get(targetMain) : null;
+    const repRanksSet = new Set<number>(
+      Array.isArray(rep?.rankNodesList)
+        ? rep.rankNodesList.map((rn: any) => Number(rn?.rank || 0)).filter((x: number) => x > 0)
+        : []
+    );
+
+    for (let r = 1; r <= 18; r++) {
+      if (r === selectedRank && activeNodesMap.size > 0) {
+        const targetId = resolveNodeIdInRankMap(activeNodesMap, selectedWalletSwitchItem, r);
+        if (!targetId || !activeNodesMap.has(targetId)) {
+          result[r] = 0;
+        } else {
+          result[r] = (descendantCountsMap.get(targetId)?.total ?? 0) + 1;
+        }
+        continue;
+      }
+
+      if (viewMode !== 'onchain') {
+        result[r] = 0;
+        continue;
+      }
+
+      const snapMap = multiRankSnapshotsState.get(r);
+      if (snapMap && snapMap.size > 0) {
+        const targetId = resolveSwitchNodeInSnapshot(selectedWalletSwitchItem, r);
+        if (!targetId || !snapMap.has(targetId)) {
+          result[r] = 0;
+          continue;
+        }
+        const childrenByParent = new Map<number, number[]>();
+        for (const sn of snapMap.values()) {
+          if (sn.leftChild > 0 && snapMap.has(sn.leftChild)) {
+            const arr = childrenByParent.get(sn.id) || [];
+            arr.push(sn.leftChild);
+            childrenByParent.set(sn.id, arr);
+          }
+          if (sn.rightChild > 0 && snapMap.has(sn.rightChild)) {
+            const arr = childrenByParent.get(sn.id) || [];
+            arr.push(sn.rightChild);
+            childrenByParent.set(sn.id, arr);
+          }
+          if (sn.parentId > 0 && snapMap.has(sn.parentId)) {
+            const arr = childrenByParent.get(sn.parentId) || [];
+            arr.push(sn.id);
+            childrenByParent.set(sn.parentId, arr);
+          }
+        }
+        const visited = new Set<number>([targetId]);
+        const queue: number[] = [targetId];
+        while (queue.length > 0) {
+          const curr = queue.shift()!;
+          const kids = childrenByParent.get(curr);
+          if (!kids) continue;
+          for (const cid of kids) {
+            if (!visited.has(cid)) {
+              visited.add(cid);
+              queue.push(cid);
+            }
+          }
+        }
+        result[r] = visited.size;
+        continue;
+      }
+
+      if (isMainOrAuto && targetMain === 1 && rankNodeCounts[r] !== undefined) {
+        result[r] = rankNodeCounts[r];
+      } else if (selectedWalletSwitchItem.rank === r || repRanksSet.has(r)) {
+        result[r] = 1;
+      } else {
+        result[r] = 0;
+      }
+    }
+
+    return result;
+  }, [
+    selectedWalletSwitchItem,
+    perIdReportsMap,
+    selectedRank,
+    activeNodesMap,
+    descendantCountsMap,
+    viewMode,
+    multiRankSnapshotsState,
+    rankNodeCounts,
+    resolveNodeIdInRankMap,
+    resolveSwitchNodeInSnapshot,
+  ]);
 
   const selectedSwitchOwnedRankNodes = useMemo<Array<{ rank: number; nodeId: number }>>(() => {
     if (!selectedWalletSwitchItem) return [];
@@ -7863,10 +7960,14 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
               const isSelected = selectedRank === r;
               const isPassed = currentUserRank > r;
               const isCurrent = currentUserRank === r;
-              const count =
+              const globalCount =
                 rankNodeCounts[r] !== undefined
                   ? rankNodeCounts[r]
                   : (r === selectedRank ? totalNodesInRank : (r === 1 ? 1 : 0));
+              const count =
+                scopedRankNodeCounts !== null && scopedRankNodeCounts[r] !== undefined
+                  ? scopedRankNodeCounts[r]
+                  : globalCount;
 
               let buttonClasses = '';
               let textColor = '';
@@ -7926,7 +8027,13 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                     loadOnChainTree(targetRank);
                   }}
                   className={`px-3 py-1.5 rounded-full transition-all duration-200 cursor-pointer shrink-0 flex items-center gap-1.5 text-xs ${buttonClasses}`}
-                  title={`คลิกเพื่อดูผัง Rank ${r} (${price} USDT) • มีสมาชิกในผังนี้ ${count} โหนด`}
+                  title={
+                    selectedWalletSwitchItem
+                      ? language === 'th'
+                        ? `คลิกเพื่อดูผัง Rank ${r} (${price} USDT) • สายงานของ ${selectedWalletSwitchItem.label} ในผังนี้ ${count} โหนด`
+                        : `Click to view Rank ${r} (${price} USDT) • ${selectedWalletSwitchItem.label} subtree: ${count} nodes`
+                      : `คลิกเพื่อดูผัง Rank ${r} (${price} USDT) • มีสมาชิกในผังนี้ ${count} โหนด`
+                  }
                 >
                   {(isSelected || isPassed) && (
                     <span className={`${isSelected ? 'text-white dark:text-emerald-400' : 'text-[#15803D] dark:text-emerald-400'} font-black text-xs leading-none`}>
