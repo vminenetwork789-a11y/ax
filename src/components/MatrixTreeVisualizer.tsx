@@ -4858,7 +4858,8 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                 });
                 if (activeSwitch && isSelectedIdAlertsEnabledRef.current) {
                   const sideLabel = newestNode.isLeft ? '↙ ซ้าย' : '↘ ขวา';
-                  const msgText = `โหนดใหม่ R${activeRank}-#${newestNode.id} เข้าสู่สายงานของ ${activeSwitch.label} (ต่อใต้ #${newestNode.parentId} ${sideLabel})`;
+                  const adminTag = newestNode.isAdminFreeUpgrade ? ' (Admin อัปฟรี • ไม่คิดค่าชั้น/ค่าคอม)' : '';
+                  const msgText = `โหนดใหม่ R${activeRank}-#${newestNode.id} เข้าสู่สายงานของ ${activeSwitch.label} (ต่อใต้ #${newestNode.parentId} ${sideLabel})${adminTag}`;
                   setUnreadSelectedIdAlertCount((prev) => prev + matchedNewIds.length);
                   setSelectedIdAlertsFeed((prev) =>
                     [
@@ -9581,8 +9582,8 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             setModalUpgradeTargetRank(Math.min(18, rankToUpgrade + 1));
             selectedRankRef.current = rankToUpgrade;
             setSelectedRank(rankToUpgrade);
-            await fetchPerIdHistoryForModal();
             await loadOnChainTree(rankToUpgrade, { silent: true, forceSync: false });
+            await fetchPerIdHistoryForModal();
           } catch (err: any) {
             const errMsg = err?.message || 'Admin อัพ Rank ฟรี ล้มเหลว';
             setModalUpgradeMessage(null);

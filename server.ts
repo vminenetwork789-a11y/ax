@@ -116,40 +116,60 @@ export function getAggregatedTransactions(addressFilter?: string) {
     });
 
     // 2. Upgrades
+    const adminFreeKeys = getAdminFreeNodeKeySet();
     const upgrades = matrixDB.upgradeLogs || [];
     upgrades.forEach((u) => {
       const ownerLower = (u.owner || '').toLowerCase();
       if (lowerAddr && ownerLower !== lowerAddr) return;
 
-      const uCost =
-        parseFloat(u.rankPriceUsdt) ||
-        (u as any).costUsdt ||
-        RANK_PRICES_USDT[Number(u.toRank) - 1] ||
-        10;
+      const isAdminFree =
+        Boolean(u.isAdminFreeUpgrade) ||
+        adminFreeKeys.has(`${Number(u.toRank || 1)}:${Number(u.newNodeId || 0)}`);
+      const uCost = isAdminFree
+        ? 0
+        : parseFloat(u.rankPriceUsdt) ||
+          (u as any).costUsdt ||
+          RANK_PRICES_USDT[Number(u.toRank) - 1] ||
+          10;
 
       transactions.push({
         id: `upg-${u.id || `${u.mainNodeId}-${u.toRank}`}`,
         category: 'UPGRADE',
-        titleTh: `อัพเกรดผังแรงค์ Main ID #${u.mainNodeId} → Rank ${u.toRank}`,
-        titleEn: `Rank Upgrade Main ID #${u.mainNodeId} → Rank ${u.toRank}`,
+        titleTh: isAdminFree
+          ? `Admin อัปเกรดฟรี Main ID #${u.mainNodeId} → Rank ${u.toRank}`
+          : `อัพเกรดผังแรงค์ Main ID #${u.mainNodeId} → Rank ${u.toRank}`,
+        titleEn: isAdminFree
+          ? `Admin Free Upgrade Main ID #${u.mainNodeId} → Rank ${u.toRank}`
+          : `Rank Upgrade Main ID #${u.mainNodeId} → Rank ${u.toRank}`,
         userAddress: u.owner,
         mainNodeId: Number(u.mainNodeId),
         rank: Number(u.toRank),
         amountUsdt: uCost,
         timestamp: u.createdAt || matrixDB.lastSyncedAt || new Date().toISOString(),
         txHash: u.txHash,
-        detailsTh: `เลื่อนแรงค์จาก R${u.fromRank} ไปยัง R${u.toRank} (${uCost.toFixed(2)} USDT)`,
-        detailsEn: `Upgraded from R${u.fromRank} to R${u.toRank} (${uCost.toFixed(2)} USDT)`,
-      });
+        isAdminFreeUpgrade: isAdminFree,
+        detailsTh: isAdminFree
+          ? `Admin อัปเกรดฟรีจาก R${u.fromRank} ไปยัง R${u.toRank} (0.00 USDT • ไม่จ่ายค่าคอม)`
+          : `เลื่อนแรงค์จาก R${u.fromRank} ไปยัง R${u.toRank} (${uCost.toFixed(2)} USDT)`,
+        detailsEn: isAdminFree
+          ? `Admin free upgrade from R${u.fromRank} to R${u.toRank} (0.00 USDT • No commission)`
+          : `Upgraded from R${u.fromRank} to R${u.toRank} (${uCost.toFixed(2)} USDT)`,
+      } as any);
     });
 
-    // 3. Payouts / Rewards
+    // 3. Payouts / Rewards (exclude any rewards originating from Admin Free Upgrade nodes)
     const rewards = matrixDB.rewardLogs || [];
     rewards.forEach((r, idx) => {
       const recipientLower = (r.recipient || '').toLowerCase();
       if (lowerAddr && recipientLower !== lowerAddr) return;
 
+      const rRank = Number(r.rank || 1);
+      const fromNid = Number(r.fromNodeId || 0);
+      if (adminFreeKeys.has(`${rRank}:${fromNid}`)) return;
+
       const amt = parseFloat(r.amount) || 0;
+      if (amt <= 0) return;
+
       const rTime =
         r.createdAt ||
         (r as any).timestamp ||
@@ -163,13 +183,17 @@ export function getAggregatedTransactions(addressFilter?: string) {
         titleEn: `Payout / Reward (${r.rewardType})`,
         userAddress: r.recipient,
         mainNodeId: Number(r.toNodeId || 1),
-        rank: Number(r.rank || 1),
+        rank: rRank,
         amountUsdt: amt,
         timestamp: rTime,
         blockNumber: r.blockNumber,
-        detailsTh: `ได้รับจาก ${formatNodeIdentityLabel(Number(r.rank || 1), Number(r.fromNodeId)).th} → ${formatNodeIdentityLabel(Number(r.rank || 1), Number(r.toNodeId)).th} (Rank ${r.rank})`,
-        detailsEn: `Received from ${formatNodeIdentityLabel(Number(r.rank || 1), Number(r.fromNodeId)).en} → ${formatNodeIdentityLabel(Number(r.rank || 1), Number(r.toNodeId)).en} (Rank ${r.rank})`,
-      });
+        txHash: isRealTxHash(r.txHash) ? r.txHash : undefined,
+        rewardType: r.rewardType,
+        fromNodeId: fromNid,
+        toNodeId: Number(r.toNodeId || 0),
+        detailsTh: `ได้รับจาก ${formatNodeIdentityLabel(rRank, fromNid).th} → ${formatNodeIdentityLabel(rRank, Number(r.toNodeId)).th} (Rank ${rRank})`,
+        detailsEn: `Received from ${formatNodeIdentityLabel(rRank, fromNid).en} → ${formatNodeIdentityLabel(rRank, Number(r.toNodeId)).en} (Rank ${rRank})`,
+      } as any);
     });
 
     transactions.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
@@ -727,6 +751,7 @@ export interface UpgradeLogModel {
   upgradeMode: 'AUTO_VAULT' | 'HYBRID_VAULT_WALLET' | 'MANUAL_WALLET' | 'CLONE_IN_RANK' | 'ROOT_INIT';
   isClone?: boolean;
   isExtraId?: boolean;
+  isAdminFreeUpgrade?: boolean;
   txHash: string;
   blockNumber?: number;
   createdAt: string;
@@ -902,6 +927,147 @@ function loadMatrixDBFromDisk(): PersistentMatrixDatabase {
 
 let matrixDB: PersistentMatrixDatabase = loadMatrixDBFromDisk();
 let dbWriteTimer: NodeJS.Timeout | null = null;
+
+// Admin Free Upgrade on-chain selectors:
+// - adminUpgradeRankForMainId(uint256,uint8) => 0x6c2d42b4
+// - adminUpgradeRank(address,uint8) => 0x854562dc
+const ADMIN_UPGRADE_SELECTORS = new Set<string>(['0x6c2d42b4', '0x854562dc']);
+const knownAdminFreeNodeKeys = new Set<string>();
+const inspectedAdminTxCache = new Map<string, boolean>();
+const ADMIN_NODE_CREATED_IFACE = new ethers.Interface([
+  'event NodeCreated(uint8 indexed rank, uint256 indexed nodeId, address indexed owner, address directSponsor, uint256 parentId, bool isLeft, bool isClone, bool isExtraId)',
+  'event RankUpgraded(address indexed user, uint8 fromRank, uint8 toRank, uint256 newNodeId, bool isAutoUpgrade)',
+]);
+
+for (let r = 1; r <= 18; r++) {
+  for (const n of matrixDB.nodesByRank[r] || []) {
+    if (n?.isAdminFreeUpgrade) {
+      knownAdminFreeNodeKeys.add(`${r}:${n.id}`);
+    }
+  }
+}
+
+function getAdminFreeNodeKeySet(): Set<string> {
+  const keys = new Set<string>(knownAdminFreeNodeKeys);
+  for (let r = 1; r <= 18; r++) {
+    for (const n of matrixDB.nodesByRank[r] || []) {
+      if (n?.isAdminFreeUpgrade) {
+        keys.add(`${r}:${n.id}`);
+      }
+    }
+  }
+  return keys;
+}
+
+function markNodeAsAdminFreeUpgrade(rank: number, nodeId: number): boolean {
+  if (rank < 2 || rank > 18 || nodeId <= 1) return false;
+  const key = `${rank}:${nodeId}`;
+  let changed = !knownAdminFreeNodeKeys.has(key);
+  knownAdminFreeNodeKeys.add(key);
+  const list = matrixDB.nodesByRank[rank] || [];
+  const target = list.find((n) => n.id === nodeId);
+  if (target && !target.isAdminFreeUpgrade) {
+    target.isAdminFreeUpgrade = true;
+    changed = true;
+  }
+  return changed;
+}
+
+async function inspectAndTagAdminUpgradeTx(
+  txHash: string,
+  provider?: ethers.Provider,
+  preFetchedReceipt?: any
+): Promise<{ isAdminTx: boolean; taggedNodes: Array<{ rank: number; nodeId: number }>; newlyTagged: boolean }> {
+  if (!isRealTxHash(txHash)) {
+    return { isAdminTx: false, taggedNodes: [], newlyTagged: false };
+  }
+  const hashLower = txHash.toLowerCase();
+  const cached = inspectedAdminTxCache.get(hashLower);
+  if (cached === false && !preFetchedReceipt) {
+    return { isAdminTx: false, taggedNodes: [], newlyTagged: false };
+  }
+
+  let activeProvider: ethers.Provider | undefined = provider;
+  if (!activeProvider) {
+    try {
+      activeProvider = getProvider();
+    } catch {
+      activeProvider = undefined;
+    }
+  }
+  if (!activeProvider && !preFetchedReceipt) {
+    return { isAdminTx: Boolean(cached), taggedNodes: [], newlyTagged: false };
+  }
+
+  try {
+    let isAdminTx = cached === true;
+    if (!isAdminTx && activeProvider) {
+      const tx = await Promise.race([
+        activeProvider.getTransaction(txHash),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000)),
+      ]);
+      const selector = String((tx as any)?.data || '').slice(0, 10).toLowerCase();
+      if (ADMIN_UPGRADE_SELECTORS.has(selector)) {
+        isAdminTx = true;
+      } else if (tx && selector) {
+        inspectedAdminTxCache.set(hashLower, false);
+        return { isAdminTx: false, taggedNodes: [], newlyTagged: false };
+      }
+    }
+
+    if (!isAdminTx) {
+      return { isAdminTx: false, taggedNodes: [], newlyTagged: false };
+    }
+
+    inspectedAdminTxCache.set(hashLower, true);
+    const receipt =
+      preFetchedReceipt ||
+      (activeProvider
+        ? await Promise.race([
+            activeProvider.getTransactionReceipt(txHash),
+            new Promise<null>((resolve) => setTimeout(() => resolve(null), 6000)),
+          ])
+        : null);
+
+    const taggedNodes: Array<{ rank: number; nodeId: number }> = [];
+    let newlyTagged = false;
+
+    for (const log of receipt?.logs || []) {
+      try {
+        const parsed = ADMIN_NODE_CREATED_IFACE.parseLog(log);
+        if (parsed && parsed.name === 'NodeCreated') {
+          const evRank = Number(parsed.args.rank || 0);
+          const evNodeId = Number(parsed.args.nodeId || 0);
+          if (evRank >= 2 && evRank <= 18 && evNodeId > 1) {
+            taggedNodes.push({ rank: evRank, nodeId: evNodeId });
+            if (markNodeAsAdminFreeUpgrade(evRank, evNodeId)) {
+              newlyTagged = true;
+            }
+          }
+        }
+      } catch {
+        // ignore non-matching logs
+      }
+    }
+
+    // Reclassify any earlier transactionLogs recorded for this txHash as ADMIN_UPGRADE (0 USDT)
+    if (Array.isArray(matrixDB.transactionLogs)) {
+      for (const t of matrixDB.transactionLogs) {
+        if (t.txHash.toLowerCase() === hashLower && (t.actionType === 'UPGRADE' || t.actionType === 'CLONE_BOT')) {
+          t.actionType = 'ADMIN_UPGRADE';
+          t.amountUsdt = 0;
+          if (!t.title.includes('Admin')) {
+            t.title = `Admin อัพฟรี: ${t.title}`;
+          }
+        }
+      }
+    }
+
+    return { isAdminTx: true, taggedNodes, newlyTagged };
+  } catch {
+    return { isAdminTx: Boolean(cached), taggedNodes: [], newlyTagged: false };
+  }
+}
 
 function saveMatrixDBToDisk(immediate = false) {
   broadcastAllMatrixUpdates();
@@ -1085,11 +1251,17 @@ function rebuildDatabaseRewardLogsFromNodes() {
   const botAddr = matrixDB.systemWallets.customBotWallet || matrixDB.systemWallets.botWallet || DEFAULT_BOT_WALLET;
   const familyAddr = matrixDB.systemWallets.familyPool || '0x225DF4b5961f757f54728138F289Eaf49D4F275A';
 
+  const adminFreeKeys = getAdminFreeNodeKeySet();
+
   // Preserve any real txHash events captured live by the listener that still exist in current rank nodes
+  // and NEVER belong to an Admin Free Upgrade node (0 commissions / 0 level rewards on-chain)
   const liveTxEvents = matrixDB.rewardLogs.filter((l) => {
     if (!l.txHash || l.id.startsWith('db-chain-')) return false;
-    const rLen = matrixDB.nodesByRank[l.rank || 1]?.length || 1;
-    return Number(l.fromNodeId || 0) <= rLen;
+    const rNum = Number(l.rank || 1);
+    const fromNid = Number(l.fromNodeId || 0);
+    if (adminFreeKeys.has(`${rNum}:${fromNid}`)) return false;
+    const rLen = matrixDB.nodesByRank[rNum]?.length || 1;
+    return fromNid <= rLen;
   });
   const seenKeys = new Set<string>();
   for (const ev of liveTxEvents) {
@@ -1188,7 +1360,7 @@ function rebuildDatabaseRewardLogsFromNodes() {
     for (const id of sortedIds) {
       if (id <= 1) continue;
       const child = nodesMap.get(id)!;
-      if (child.isAdminFreeUpgrade) continue; // เงื่อนไข Admin อัพ Rank ฟรี: ไม่จ่ายค่าคอมเมื่อวางฝั่งซ้าย
+      if (child.isAdminFreeUpgrade || adminFreeKeys.has(`${rankNum}:${id}`)) continue; // เงื่อนไข Admin อัพ Rank ฟรี: ไม่จ่ายค่าคอมเมื่อวางฝั่งซ้าย
       const parent = nodesMap.get(child.parentId);
       if (!parent || parent.leftChild !== id) continue;
 
@@ -1443,6 +1615,10 @@ function rebuildDatabaseRewardLogsFromNodes() {
   inMemoryDB.rewardLogs = matrixDB.rewardLogs;
 }
 
+function isNodeFlaggedAdminFree(rankNum: number, nodeId: number): boolean {
+  return knownAdminFreeNodeKeys.has(`${rankNum}:${nodeId}`);
+}
+
 // Reconstruct deterministic Rank Upgrade History from indexed Ranks 2..27 so the Database always has 100% of Rank Upgrades
 function rebuildDatabaseUpgradeLogsFromNodes() {
   const r1Nodes = matrixDB.nodesByRank[1] || [];
@@ -1537,11 +1713,14 @@ function rebuildDatabaseUpgradeLogsFromNodes() {
       let walletPaid = Math.max(0, Number((rankPrice - vaultDeducted).toFixed(2)));
       let upgradeMode: UpgradeLogModel['upgradeMode'] = 'MANUAL_WALLET';
 
+      const isAdminFree = Boolean(
+        node.isAdminFreeUpgrade || isNodeFlaggedAdminFree(rankNum, node.id)
+      );
       if (node.isClone) {
         upgradeMode = 'CLONE_IN_RANK';
         vaultDeducted = 0;
         walletPaid = 0;
-      } else if (node.isAdminFreeUpgrade) {
+      } else if (isAdminFree) {
         upgradeMode = 'MANUAL_WALLET';
         vaultDeducted = 0;
         walletPaid = 0;
@@ -1592,12 +1771,13 @@ function rebuildDatabaseUpgradeLogsFromNodes() {
         side,
         directSponsor: node.directSponsor || matrixDB.systemWallets.rootOwner,
         directSponsorNodeId: String(spNodeIdInR),
-        rankPriceUsdt: rankPrice.toFixed(2),
+        rankPriceUsdt: isAdminFree ? '0.00' : rankPrice.toFixed(2),
         vaultDeductedUsdt: vaultDeducted.toFixed(2),
         walletPaidUsdt: walletPaid.toFixed(2),
         upgradeMode,
         isClone: node.isClone,
         isExtraId: node.isExtraId,
+        isAdminFreeUpgrade: isAdminFree,
         txHash: liveMeta?.txHash || syntheticTx,
         blockNumber: liveMeta?.blockNumber || baseBlock - Math.max(0, rNodes.length - node.id),
         createdAt:
@@ -3749,7 +3929,7 @@ async function startEventListener(): Promise<void> {
 
     wsBotContract.on(
       'NodeCreated',
-      (
+      async (
         rank: bigint,
         nodeId: bigint,
         owner: string,
@@ -3765,10 +3945,37 @@ async function startEventListener(): Promise<void> {
         const txHash = payload?.log?.transactionHash || payload?.transactionHash;
         const blockNumber = payload?.log?.blockNumber || payload?.blockNumber;
         const rNum = Number(rank);
+        const nidNum = Number(nodeId);
+
+        let isAdminFreeTx = false;
+        if (rNum >= 2 && isRealTxHash(txHash)) {
+          const inspected = await inspectAndTagAdminUpgradeTx(txHash, getBotHttpProvider()).catch(() => ({
+            isAdminTx: false,
+            taggedNodes: [],
+            newlyTagged: false,
+          }));
+          isAdminFreeTx = inspected.isAdminTx;
+          if (isAdminFreeTx) {
+            markNodeAsAdminFreeUpgrade(rNum, nidNum);
+          }
+        }
+
         recordRealTransactionLog({
           txHash,
-          actionType: isExtraId ? 'EXTRA_ID' : isClone ? 'CLONE_BOT' : rNum === 1 ? 'REGISTER' : 'UPGRADE',
-          title: isExtraId
+          actionType: isAdminFreeTx
+            ? 'ADMIN_UPGRADE'
+            : isExtraId
+            ? 'EXTRA_ID'
+            : isClone
+            ? 'CLONE_BOT'
+            : rNum === 1
+            ? 'REGISTER'
+            : 'UPGRADE',
+          title: isAdminFreeTx
+            ? isClone
+              ? `Admin อัพฟรี (โคลนนิ่ง R${rNum}-#${nodeId.toString()})`
+              : `Admin อัพฟรี R${rNum}-#${nodeId.toString()}`
+            : isExtraId
             ? `สร้าง Extra ID R${rNum}-#${nodeId.toString()}`
             : isClone
             ? `สร้างโคลนนิ่ง R${rNum}-#${nodeId.toString()}`
@@ -3776,16 +3983,18 @@ async function startEventListener(): Promise<void> {
             ? `สร้างโหนด R1-#${nodeId.toString()}`
             : `สร้างโหนด R${rNum}-#${nodeId.toString()}`,
           userAddress: owner,
-          nodeId: Number(nodeId),
+          nodeId: nidNum,
           rank: rNum,
-          amountUsdt: RANK_PRICES_USDT[rNum - 1] || 0,
+          amountUsdt: isAdminFreeTx ? 0 : RANK_PRICES_USDT[rNum - 1] || 0,
           blockNumber,
           source: 'ONCHAIN_EVENT',
-          details: `Parent #${parentId.toString()} [${leg}]`,
+          details: isAdminFreeTx
+            ? `Parent #${parentId.toString()} [${leg}] • Admin Free (0 ค่าคอม)`
+            : `Parent #${parentId.toString()} [${leg}]`,
         });
         recordWsBotEvent(
           'NodeCreated',
-          `R${rank.toString()} #${nodeId.toString()} (${kind}) -> Parent #${parentId.toString()} [${leg}] (${owner.slice(0, 8)}...)`
+          `R${rank.toString()} #${nodeId.toString()} (${kind}${isAdminFreeTx ? '/ADMIN_FREE' : ''}) -> Parent #${parentId.toString()} [${leg}] (${owner.slice(0, 8)}...)`
         );
         checkAndProcessBotCloneQueue(`NodeCreated(R${rank},#${nodeId},${leg})`).catch(() => {});
       }
@@ -3793,25 +4002,46 @@ async function startEventListener(): Promise<void> {
 
     wsBotContract.on(
       'RankUpgraded',
-      (user: string, fromRank: bigint, toRank: bigint, newNodeId: bigint, isAutoUpgrade: boolean, payload: any) => {
+      async (user: string, fromRank: bigint, toRank: bigint, newNodeId: bigint, isAutoUpgrade: boolean, payload: any) => {
         const txHash = payload?.log?.transactionHash || payload?.transactionHash;
         const blockNumber = payload?.log?.blockNumber || payload?.blockNumber;
         const toR = Number(toRank);
+        const nidNum = Number(newNodeId);
+
+        let isAdminFreeTx = false;
+        if (toR >= 2 && isRealTxHash(txHash)) {
+          const inspected = await inspectAndTagAdminUpgradeTx(txHash, getBotHttpProvider()).catch(() => ({
+            isAdminTx: false,
+            taggedNodes: [],
+            newlyTagged: false,
+          }));
+          isAdminFreeTx = inspected.isAdminTx;
+          if (isAdminFreeTx) {
+            markNodeAsAdminFreeUpgrade(toR, nidNum);
+          }
+        }
+
         recordRealTransactionLog({
           txHash,
-          actionType: 'UPGRADE',
-          title: `อัปเกรดแรงค์ R${fromRank.toString()} → R${toR} (Node #${newNodeId.toString()})`,
+          actionType: isAdminFreeTx ? 'ADMIN_UPGRADE' : 'UPGRADE',
+          title: isAdminFreeTx
+            ? `Admin อัปเกรดฟรี R${fromRank.toString()} → R${toR} (Node #${newNodeId.toString()})`
+            : `อัปเกรดแรงค์ R${fromRank.toString()} → R${toR} (Node #${newNodeId.toString()})`,
           userAddress: user,
-          nodeId: Number(newNodeId),
+          nodeId: nidNum,
           rank: toR,
-          amountUsdt: RANK_PRICES_USDT[toR - 1] || 0,
+          amountUsdt: isAdminFreeTx ? 0 : RANK_PRICES_USDT[toR - 1] || 0,
           blockNumber,
           source: 'ONCHAIN_EVENT',
-          details: isAutoUpgrade ? 'Auto-Vault Upgrade' : 'Wallet Upgrade',
+          details: isAdminFreeTx
+            ? 'Admin Free Upgrade (0 ค่าคอม)'
+            : isAutoUpgrade
+            ? 'Auto-Vault Upgrade'
+            : 'Wallet Upgrade',
         });
         recordWsBotEvent(
           'RankUpgraded',
-          `${user.slice(0, 8)}... R${fromRank.toString()}->R${toRank.toString()} (#${newNodeId.toString()}, auto=${isAutoUpgrade})`
+          `${user.slice(0, 8)}... R${fromRank.toString()}->R${toRank.toString()} (#${newNodeId.toString()}, auto=${isAutoUpgrade}, adminFree=${isAdminFreeTx})`
         );
         checkAndProcessBotCloneQueue(`RankUpgraded(R${toRank},#${newNodeId})`).catch(() => {});
       }
@@ -5057,15 +5287,9 @@ async function startApp() {
             });
             if (matchingChainNode) {
               syncedNonCloneOrigins.add(loc.originMainId || loc.id);
-              if (loc.isAdminFreeUpgrade) {
+              if (loc.isAdminFreeUpgrade || knownAdminFreeNodeKeys.has(`${rankNum}:${matchingChainNode.id}`)) {
                 matchingChainNode.isAdminFreeUpgrade = true;
-                let scanId = matchingChainNode.id + 1;
-                while (true) {
-                  const trigClone = targetMap.get(scanId);
-                  if (!trigClone || !trigClone.isClone) break;
-                  trigClone.isAdminFreeUpgrade = true;
-                  scanId++;
-                }
+                knownAdminFreeNodeKeys.add(`${rankNum}:${matchingChainNode.id}`);
               }
               continue;
             }
@@ -5250,7 +5474,7 @@ async function startApp() {
             if (item) {
               const prevExisting = mergedMap.get(item.id);
               item.createdAt = prevExisting?.createdAt || new Date().toISOString();
-              if (prevExisting?.isAdminFreeUpgrade) {
+              if (prevExisting?.isAdminFreeUpgrade || knownAdminFreeNodeKeys.has(`${rankNum}:${item.id}`)) {
                 item.isAdminFreeUpgrade = true;
               }
               mergedMap.set(item.id, item);
@@ -5282,7 +5506,9 @@ async function startApp() {
               if (pItem) {
                 const prevExisting = mergedMap.get(pItem.id);
                 if (prevExisting?.createdAt) pItem.createdAt = prevExisting.createdAt;
-                if (prevExisting?.isAdminFreeUpgrade) pItem.isAdminFreeUpgrade = true;
+                if (prevExisting?.isAdminFreeUpgrade || knownAdminFreeNodeKeys.has(`${rankNum}:${pItem.id}`)) {
+                  pItem.isAdminFreeUpgrade = true;
+                }
                 mergedMap.set(pItem.id, pItem);
               }
             }
@@ -5455,7 +5681,8 @@ async function startApp() {
           }
         };
 
-        const beforeLen = (matrixDB.transactionLogs || []).length;
+            const beforeLen = (matrixDB.transactionLogs || []).length;
+        let newlyTaggedAdminNodes = false;
 
         // Scan newest chunks first (up to ~35,000 blocks)
         for (let toBlk = latestBlock; toBlk >= startBlock; toBlk -= chunkSize) {
@@ -5469,6 +5696,32 @@ async function startApp() {
               contract.queryFilter(contract.filters.AutoNewMainIdCreated(), fromBlk, toBlk).catch(() => []),
               contract.queryFilter(contract.filters.AutoExtraIdCreated(), fromBlk, toBlk).catch(() => []),
             ]);
+
+            // Inspect unseen Rank 2+ / RankUpgraded transactions so on-chain adminUpgradeRank* txs are accurately flagged
+            const rank2PlusHashes = Array.from(
+              new Set(
+                [
+                  ...upgLogs.map((l: any) => l?.transactionHash),
+                  ...nodeLogs
+                    .filter((l: any) => Number(l?.args?.rank || 0) >= 2)
+                    .map((l: any) => l?.transactionHash),
+                ].filter((h): h is string => isRealTxHash(h))
+              )
+            );
+            if (rank2PlusHashes.length > 0) {
+              const inspectResults = await Promise.all(
+                rank2PlusHashes.map((h) =>
+                  inspectAndTagAdminUpgradeTx(h, provider).catch(() => ({
+                    isAdminTx: false,
+                    taggedNodes: [],
+                    newlyTagged: false,
+                  }))
+                )
+              );
+              if (inspectResults.some((res) => res.newlyTagged)) {
+                newlyTaggedAdminNodes = true;
+              }
+            }
 
             const allLogs = [
               ...regLogs.map((l) => ({ kind: 'UserRegistered', log: l })),
@@ -5490,6 +5743,8 @@ async function startApp() {
                 const bn = Number(ev?.blockNumber || 0) || undefined;
                 const ts = bn ? blockTimeCache.get(bn) : undefined;
                 if (!txHash || !args) continue;
+
+                const isAdminTx = inspectedAdminTxCache.get(String(txHash).toLowerCase()) === true;
 
                 if (item.kind === 'UserRegistered') {
                   const mainId = Number(args.mainNodeId || 0);
@@ -5526,10 +5781,25 @@ async function startApp() {
                   const nId = Number(args.nodeId || 0);
                   const isClone = Boolean(args.isClone);
                   const isExtra = Boolean(args.isExtraId);
+                  if (isAdminTx && rNum >= 2) {
+                    if (markNodeAsAdminFreeUpgrade(rNum, nId)) newlyTaggedAdminNodes = true;
+                  }
                   recordRealTransactionLog({
                     txHash,
-                    actionType: isExtra ? 'EXTRA_ID' : isClone ? 'CLONE_BOT' : rNum === 1 ? 'REGISTER' : 'UPGRADE',
-                    title: isExtra
+                    actionType: isAdminTx && rNum >= 2
+                      ? 'ADMIN_UPGRADE'
+                      : isExtra
+                      ? 'EXTRA_ID'
+                      : isClone
+                      ? 'CLONE_BOT'
+                      : rNum === 1
+                      ? 'REGISTER'
+                      : 'UPGRADE',
+                    title: isAdminTx && rNum >= 2
+                      ? isClone
+                        ? `Admin อัพฟรี (โคลนนิ่ง R${rNum}-#${nId})`
+                        : `Admin อัพฟรี R${rNum}-#${nId}`
+                      : isExtra
                       ? `สร้าง Extra ID R${rNum}-#${nId}`
                       : isClone
                       ? `สร้างโคลนนิ่ง R${rNum}-#${nId}`
@@ -5539,26 +5809,37 @@ async function startApp() {
                     userAddress: String(args.owner || ''),
                     nodeId: nId,
                     rank: rNum,
-                    amountUsdt: RANK_PRICES_USDT[rNum - 1] || 0,
+                    amountUsdt: isAdminTx && rNum >= 2 ? 0 : RANK_PRICES_USDT[rNum - 1] || 0,
                     blockNumber: bn,
                     source: 'ONCHAIN_EVENT',
-                    details: `Parent #${Number(args.parentId || 0)} [${args.isLeft ? 'LEFT' : 'RIGHT'}]`,
+                    details: isAdminTx && rNum >= 2
+                      ? `Parent #${Number(args.parentId || 0)} [${args.isLeft ? 'LEFT' : 'RIGHT'}] • Admin Free (0 ค่าคอม)`
+                      : `Parent #${Number(args.parentId || 0)} [${args.isLeft ? 'LEFT' : 'RIGHT'}]`,
                     timestamp: ts,
                   });
                 } else if (item.kind === 'RankUpgraded') {
                   const toR = Number(args.toRank || 2);
                   const nId = Number(args.newNodeId || 0);
+                  if (isAdminTx && toR >= 2) {
+                    if (markNodeAsAdminFreeUpgrade(toR, nId)) newlyTaggedAdminNodes = true;
+                  }
                   recordRealTransactionLog({
                     txHash,
-                    actionType: 'UPGRADE',
-                    title: `อัปเกรดแรงค์ R${Number(args.fromRank || 1)} → R${toR} (Node #${nId})`,
+                    actionType: isAdminTx ? 'ADMIN_UPGRADE' : 'UPGRADE',
+                    title: isAdminTx
+                      ? `Admin อัปเกรดฟรี R${Number(args.fromRank || 1)} → R${toR} (Node #${nId})`
+                      : `อัปเกรดแรงค์ R${Number(args.fromRank || 1)} → R${toR} (Node #${nId})`,
                     userAddress: String(args.user || ''),
                     nodeId: nId,
                     rank: toR,
-                    amountUsdt: RANK_PRICES_USDT[toR - 1] || 0,
+                    amountUsdt: isAdminTx ? 0 : RANK_PRICES_USDT[toR - 1] || 0,
                     blockNumber: bn,
                     source: 'ONCHAIN_EVENT',
-                    details: args.isAutoUpgrade ? 'Auto-Vault Upgrade' : 'Wallet Upgrade',
+                    details: isAdminTx
+                      ? 'Admin Free Upgrade (0 ค่าคอม)'
+                      : args.isAutoUpgrade
+                      ? 'Auto-Vault Upgrade'
+                      : 'Wallet Upgrade',
                     timestamp: ts,
                   });
                 } else if (item.kind === 'AutoNewMainIdCreated') {
@@ -5598,6 +5879,11 @@ async function startApp() {
           if (fromBlk <= 0) break;
         }
 
+        if (newlyTaggedAdminNodes) {
+          reconcileAutoExtraIdsAcrossRanks();
+          rebuildDatabaseRewardLogsFromNodes();
+          rebuildDatabaseUpgradeLogsFromNodes();
+        }
         addedCount = Math.max(0, (matrixDB.transactionLogs || []).length - beforeLen);
         lastChainTxSyncAt = Date.now();
         saveMatrixDBToDisk();
@@ -8933,51 +9219,113 @@ async function startApp() {
         canonSpR1Node?.owner || userR1Node.directSponsor || matrixDB.systemWallets.rootOwner;
 
       // If the upgrade was just confirmed on-chain via adminUpgradeRankForMainId / adminUpgradeRank,
-      // mark the synced on-chain node(s) and their triggered clone(s) as isAdminFreeUpgrade = true and return without creating duplicate local nodes!
+      // inspect the tx receipt NodeCreated logs so ONLY newly admin-upgraded nodes & their clones are tagged
+      // isAdminFreeUpgrade = true (preserving any previously paid lower ranks intact!).
       if (onChainConfirmed) {
+        let previousMaxRank = mainIdNum === 1 ? 18 : 1;
+        if (mainIdNum !== 1) {
+          for (let r = 18; r >= 2; r--) {
+            const list = (matrixDB.nodesByRank[r] || []).filter(
+              (n) => !n.isSyntheticExtra && !n.isLocalUpgrade
+            );
+            if (list.some((n) => !n.isClone && !n.isExtraId && n.originMainId === mainIdNum)) {
+              previousMaxRank = r;
+              break;
+            }
+          }
+        }
+
+        const receiptNodesByRank = new Map<number, Set<number>>();
+        if (isRealTxHash(clientTxHash)) {
+          const inspected = await inspectAndTagAdminUpgradeTx(clientTxHash, getProvider()).catch(() => ({
+            isAdminTx: true,
+            taggedNodes: [] as Array<{ rank: number; nodeId: number }>,
+            newlyTagged: false,
+          }));
+          for (const tn of inspected.taggedNodes) {
+            if (!receiptNodesByRank.has(tn.rank)) receiptNodesByRank.set(tn.rank, new Set());
+            receiptNodesByRank.get(tn.rank)!.add(tn.nodeId);
+            knownAdminFreeNodeKeys.add(`${tn.rank}:${tn.nodeId}`);
+          }
+        }
+
         const onChainUpgradedRanks: number[] = [];
         const onChainCreatedNodes: any[] = [];
         let onChainClonesCount = 0;
 
-        for (let r = 2; r <= parsedRank; r++) {
+        const ranksToProcess =
+          receiptNodesByRank.size > 0
+            ? Array.from(receiptNodesByRank.keys()).sort((a, b) => a - b)
+            : Array.from(
+                { length: Math.max(0, parsedRank - Math.max(1, previousMaxRank)) },
+                (_, idx) => Math.max(2, previousMaxRank + 1) + idx
+              );
+
+        for (const r of ranksToProcess) {
+          if (r < 2 || r > 18) continue;
+          const exactReceiptIds = receiptNodesByRank.get(r);
+          await syncRankIntoDatabase(r, CONTRACT_ADDRESS, true, true).catch(() => {});
+
           let rList = (matrixDB.nodesByRank[r] || []).filter(
             (n) => !n.isSyntheticExtra && !n.isLocalUpgrade
           );
-          let chainNode = rList.find(
-            (n) => !n.isClone && !n.isExtraId && n.originMainId === mainIdNum
-          );
-          // Retry briefly if public RPC lagged behind wallet tx.wait()
-          for (let retry = 0; retry < 2 && !chainNode; retry++) {
-            await new Promise((resolve) => setTimeout(resolve, 1200));
-            await syncRankIntoDatabase(r, CONTRACT_ADDRESS, true, true).catch(() => {});
-            rList = (matrixDB.nodesByRank[r] || []).filter(
-              (n) => !n.isSyntheticExtra && !n.isLocalUpgrade
-            );
-            chainNode = rList.find(
-              (n) => !n.isClone && !n.isExtraId && n.originMainId === mainIdNum
-            );
-          }
-          if (chainNode) {
-            chainNode.isAdminFreeUpgrade = true;
-            const pNode = rList.find((n) => n.id === chainNode.parentId);
-            const isLeft = pNode ? pNode.leftChild === chainNode.id : true;
-            if (pNode && pNode.rightChild === chainNode.id) {
-              let scanId = chainNode.id + 1;
-              while (true) {
-                const trigClone = rList.find((n) => n.id === scanId);
-                if (!trigClone || !trigClone.isClone) break;
-                trigClone.isAdminFreeUpgrade = true;
-                onChainClonesCount++;
-                scanId++;
+
+          if (exactReceiptIds && exactReceiptIds.size > 0) {
+            for (const targetNid of exactReceiptIds) {
+              let nodeInList = rList.find((n) => n.id === targetNid);
+              for (let retry = 0; retry < 2 && !nodeInList; retry++) {
+                await new Promise((resolve) => setTimeout(resolve, 1000));
+                await syncRankIntoDatabase(r, CONTRACT_ADDRESS, true, true).catch(() => {});
+                rList = (matrixDB.nodesByRank[r] || []).filter(
+                  (n) => !n.isSyntheticExtra && !n.isLocalUpgrade
+                );
+                nodeInList = rList.find((n) => n.id === targetNid);
+              }
+              if (nodeInList) {
+                nodeInList.isAdminFreeUpgrade = true;
+                knownAdminFreeNodeKeys.add(`${r}:${nodeInList.id}`);
+                if (nodeInList.isClone) {
+                  onChainClonesCount++;
+                } else {
+                  const pNode = rList.find((n) => n.id === nodeInList!.parentId);
+                  const isLeft = pNode ? pNode.leftChild === nodeInList.id : true;
+                  onChainUpgradedRanks.push(r);
+                  onChainCreatedNodes.push({
+                    rank: r,
+                    nodeId: nodeInList.id,
+                    parentId: nodeInList.parentId,
+                    side: isLeft ? 'LEFT' : 'RIGHT',
+                  });
+                }
               }
             }
-            onChainUpgradedRanks.push(r);
-            onChainCreatedNodes.push({
-              rank: r,
-              nodeId: chainNode.id,
-              parentId: chainNode.parentId,
-              side: isLeft ? 'LEFT' : 'RIGHT',
-            });
+          } else {
+            let chainNode = rList.find(
+              (n) => !n.isClone && !n.isExtraId && n.originMainId === mainIdNum
+            );
+            for (let retry = 0; retry < 2 && !chainNode; retry++) {
+              await new Promise((resolve) => setTimeout(resolve, 1200));
+              await syncRankIntoDatabase(r, CONTRACT_ADDRESS, true, true).catch(() => {});
+              rList = (matrixDB.nodesByRank[r] || []).filter(
+                (n) => !n.isSyntheticExtra && !n.isLocalUpgrade
+              );
+              chainNode = rList.find(
+                (n) => !n.isClone && !n.isExtraId && n.originMainId === mainIdNum
+              );
+            }
+            if (chainNode) {
+              chainNode.isAdminFreeUpgrade = true;
+              knownAdminFreeNodeKeys.add(`${r}:${chainNode.id}`);
+              const pNode = rList.find((n) => n.id === chainNode.parentId);
+              const isLeft = pNode ? pNode.leftChild === chainNode.id : true;
+              onChainUpgradedRanks.push(r);
+              onChainCreatedNodes.push({
+                rank: r,
+                nodeId: chainNode.id,
+                parentId: chainNode.parentId,
+                side: isLeft ? 'LEFT' : 'RIGHT',
+              });
+            }
           }
           matrixDB.nodesByRank[r] = reconcileRankTreeLinks(rList);
           matrixDB.rankCounts[r] = matrixDB.nodesByRank[r].length;
@@ -8993,7 +9341,7 @@ async function startApp() {
             rank: parsedRank,
             amountUsdt: 0,
             source: 'WEB3_CLIENT',
-            details: `Ranks: ${onChainUpgradedRanks.map((r) => `R${r}`).join(', ')}`,
+            details: `Ranks: ${onChainUpgradedRanks.map((r) => `R${r}`).join(', ') || `R${parsedRank}`}`,
           });
         }
         reconcileAutoExtraIdsAcrossRanks();
@@ -9009,12 +9357,12 @@ async function startApp() {
           txHash: clientTxHash || undefined,
           mainId: mainIdNum,
           targetUser: normalizedUser,
-          fromRank: Math.max(1, parsedRank - 1),
+          fromRank: previousMaxRank,
           targetRank: parsedRank,
           upgradedRanks: onChainUpgradedRanks,
           createdNodes: onChainCreatedNodes,
           clonesCreated: onChainClonesCount,
-          message: `✅ Admin Upgrade สำเร็จ! อัพ Rank รหัส #${mainIdNum} ให้ฟรีสู่ Rank ${parsedRank} บนบล็อกเชนเรียบร้อยแล้ว (ไม่จ่ายค่าคอมเมื่อวางซ้าย และระบบโคลนนิ่งทำงานปกติเมื่อวางขวา)`,
+          message: `✅ Admin Upgrade สำเร็จ! อัพ Rank รหัส #${mainIdNum} ให้ฟรีสู่ Rank ${parsedRank} บนบล็อกเชนเรียบร้อยแล้ว (ไม่จ่ายค่าคอม/ค่าชั้น และระบบโคลนนิ่งทำงานปกติเมื่อวางขวา)`,
         });
       }
 
@@ -9688,48 +10036,28 @@ async function startApp() {
         userAddress: String(params?.targetUser || params?.user || params?.newOwner || wallet.address),
         mainNodeId: Number(params?.mainId || params?.mainNodeId || params?.r1MainId || 0) || undefined,
         rank: Number(params?.targetRank || params?.currentRank || 0) || undefined,
+        amountUsdt: inferredType === 'ADMIN_UPGRADE' ? 0 : undefined,
         blockNumber: receipt?.blockNumber,
         source: 'ADMIN_SERVER',
         details: `Executed by ${wallet.address}`,
         immediateSave: true,
       });
+
+      // Tag all NodeCreated nodes & clones from this adminUpgradeRank* receipt BEFORE syncAllMatrixDatabase
+      // so rebuildDatabaseRewardLogsFromNodes() never emits transient fake level/commission alerts
+      if (action === 'adminUpgradeRankForMainId' || action === 'adminUpgradeRank') {
+        await inspectAndTagAdminUpgradeTx(txHash, provider, receipt).catch(() => {});
+      }
+
       await syncAllMatrixDatabase(CONTRACT_ADDRESS, true).catch(() => {});
 
-      // If Admin executed adminUpgradeRank / adminUpgradeRankForMainId on-chain, tag all NodeCreated nodes & clones from this receipt as isAdminFreeUpgrade = true
       if (action === 'adminUpgradeRankForMainId' || action === 'adminUpgradeRank') {
-        try {
-          const eventIface = new ethers.Interface([
-            'event NodeCreated(uint8 indexed rank, uint256 indexed nodeId, address indexed owner, address directSponsor, uint256 parentId, bool isLeft, bool isClone, bool isExtraId)',
-          ]);
-          let taggedAny = false;
-          for (const log of receipt?.logs || []) {
-            try {
-              const parsed = eventIface.parseLog(log);
-              if (parsed && parsed.name === 'NodeCreated') {
-                const evRank = Number(parsed.args.rank || 0);
-                const evNodeId = Number(parsed.args.nodeId || 0);
-                if (evRank >= 2 && evRank <= 18 && evNodeId > 1) {
-                  const targetNode = (matrixDB.nodesByRank[evRank] || []).find((n) => n.id === evNodeId);
-                  if (targetNode) {
-                    targetNode.isAdminFreeUpgrade = true;
-                    taggedAny = true;
-                  }
-                }
-              }
-            } catch {
-              // ignore non-NodeCreated logs
-            }
-          }
-          if (taggedAny) {
-            reconcileAutoExtraIdsAcrossRanks();
-            rebuildDatabaseRewardLogsFromNodes();
-            rebuildDatabaseUpgradeLogsFromNodes();
-            saveMatrixDBToDisk(true);
-            broadcastAllMatrixUpdates();
-          }
-        } catch {
-          // ignore parse errors
-        }
+        await inspectAndTagAdminUpgradeTx(txHash, provider, receipt).catch(() => {});
+        reconcileAutoExtraIdsAcrossRanks();
+        rebuildDatabaseRewardLogsFromNodes();
+        rebuildDatabaseUpgradeLogsFromNodes();
+        saveMatrixDBToDisk(true);
+        broadcastAllMatrixUpdates();
       }
 
       res.json({
@@ -10621,36 +10949,43 @@ async function startApp() {
       if (!matrixDB.upgradeLogs || matrixDB.upgradeLogs.length === 0) rebuildDatabaseUpgradeLogsFromNodes();
     }
 
-    const sanitizedLogs = matrixDB.rewardLogs.map((log) => {
-      const parsed = parseFloat(log.amount);
-      const rNum = Math.min(Math.max(Number(log.rank) || 1, 1), 18);
-      const unitPrice = RANK_PRICES_USDT[rNum - 1] || 10;
-      const toIdStr = String(log.toNodeId || '0');
-      let normalizedType = String(log.rewardType || 'DIRECT');
-      if (normalizedType === 'LEVEL' && toIdStr === '0') {
-        normalizedType = 'UNPAID_LEVEL_FAMILY_POOL';
-      }
-      if (parsed > 0) {
+    const adminFreeKeys = getAdminFreeNodeKeySet();
+    const sanitizedLogs = matrixDB.rewardLogs
+      .filter((log) => {
+        const rNum = Number(log.rank || 1);
+        const fromNid = Number(log.fromNodeId || 0);
+        return !adminFreeKeys.has(`${rNum}:${fromNid}`);
+      })
+      .map((log) => {
+        const parsed = parseFloat(log.amount);
+        const rNum = Math.min(Math.max(Number(log.rank) || 1, 1), 18);
+        const unitPrice = RANK_PRICES_USDT[rNum - 1] || 10;
+        const toIdStr = String(log.toNodeId || '0');
+        let normalizedType = String(log.rewardType || 'DIRECT');
+        if (normalizedType === 'LEVEL' && toIdStr === '0') {
+          normalizedType = 'UNPAID_LEVEL_FAMILY_POOL';
+        }
+        if (parsed > 0) {
+          return {
+            ...log,
+            rewardType: normalizedType as RewardType,
+            amount: parsed.toFixed(2),
+          };
+        }
+        const upper = normalizedType.toUpperCase();
+        let repaired = '0.20';
+        if (upper.includes('DIRECT')) repaired = (unitPrice * 0.3).toFixed(2);
+        else if (upper.includes('VAULT')) repaired = (unitPrice * 0.35).toFixed(2);
+        else if (upper.includes('ALLSELL')) repaired = (unitPrice * 0.04).toFixed(2);
+        else if (upper.includes('BOT')) repaired = (unitPrice * 0.01).toFixed(2);
+        else if (upper.includes('LEVEL')) repaired = (unitPrice * 0.02).toFixed(2);
+        else if (upper.includes('FAMILY') || upper.includes('OVERFLOW')) repaired = (unitPrice * 0.28).toFixed(2);
         return {
           ...log,
           rewardType: normalizedType as RewardType,
-          amount: parsed.toFixed(2),
+          amount: repaired,
         };
-      }
-      const upper = normalizedType.toUpperCase();
-      let repaired = '0.20';
-      if (upper.includes('DIRECT')) repaired = (unitPrice * 0.3).toFixed(2);
-      else if (upper.includes('VAULT')) repaired = (unitPrice * 0.35).toFixed(2);
-      else if (upper.includes('ALLSELL')) repaired = (unitPrice * 0.04).toFixed(2);
-      else if (upper.includes('BOT')) repaired = (unitPrice * 0.01).toFixed(2);
-      else if (upper.includes('LEVEL')) repaired = (unitPrice * 0.02).toFixed(2);
-      else if (upper.includes('FAMILY') || upper.includes('OVERFLOW')) repaired = (unitPrice * 0.28).toFixed(2);
-      return {
-        ...log,
-        rewardType: normalizedType as RewardType,
-        amount: repaired,
-      };
-    });
+      });
 
     res.json({
       success: true,
@@ -10672,6 +11007,7 @@ async function startApp() {
       const forceSync = req.query.forceSync === '1';
       const addressFilter = String(req.query.address || '').toLowerCase();
       const categoryFilter = String(req.query.category || 'all').toLowerCase();
+      const limitParam = Math.max(0, Number(req.query.limit || 0) || 0);
 
       if (forceSync || !matrixDB.nodesByRank[1] || matrixDB.nodesByRank[1].length <= 1) {
         await syncAllMatrixDatabase(CONTRACT_ADDRESS, forceSync);
@@ -10680,6 +11016,7 @@ async function startApp() {
         if (!matrixDB.upgradeLogs || matrixDB.upgradeLogs.length === 0) rebuildDatabaseUpgradeLogsFromNodes();
       }
 
+      const adminFreeKeys = getAdminFreeNodeKeySet();
       const transactions: Array<{
         id: string;
         category: 'REGISTRATION' | 'UPGRADE' | 'PAYOUT';
@@ -10692,6 +11029,10 @@ async function startApp() {
         timestamp: string;
         blockNumber?: number;
         txHash?: string;
+        rewardType?: string;
+        fromNodeId?: number;
+        toNodeId?: number;
+        isAdminFreeUpgrade?: boolean;
         detailsTh: string;
         detailsEn: string;
       }> = [];
@@ -10745,11 +11086,15 @@ async function startApp() {
         const ownerLower = (u.owner || '').toLowerCase();
         if (addressFilter && ownerLower !== addressFilter) return;
 
-        const uCost =
-          parseFloat(u.rankPriceUsdt) ||
-          (u as any).costUsdt ||
-          RANK_PRICES_USDT[Number(u.toRank) - 1] ||
-          10;
+        const isAdminFree =
+          Boolean(u.isAdminFreeUpgrade) ||
+          adminFreeKeys.has(`${Number(u.toRank || 1)}:${Number(u.newNodeId || 0)}`);
+        const uCost = isAdminFree
+          ? 0
+          : parseFloat(u.rankPriceUsdt) ||
+            (u as any).costUsdt ||
+            RANK_PRICES_USDT[Number(u.toRank) - 1] ||
+            10;
 
         const realUpgTx = !isRealTxHash(u.txHash)
           ? (matrixDB.transactionLogs || []).find(
@@ -10764,8 +11109,12 @@ async function startApp() {
         transactions.push({
           id: `upg-${u.id || `${u.mainNodeId}-${u.toRank}`}`,
           category: 'UPGRADE',
-          titleTh: `อัพเกรดผังแรงค์ Main ID #${u.mainNodeId} → Rank ${u.toRank}`,
-          titleEn: `Rank Upgrade Main ID #${u.mainNodeId} → Rank ${u.toRank}`,
+          titleTh: isAdminFree
+            ? `Admin อัปเกรดฟรี Main ID #${u.mainNodeId} → Rank ${u.toRank}`
+            : `อัพเกรดผังแรงค์ Main ID #${u.mainNodeId} → Rank ${u.toRank}`,
+          titleEn: isAdminFree
+            ? `Admin Free Upgrade Main ID #${u.mainNodeId} → Rank ${u.toRank}`
+            : `Rank Upgrade Main ID #${u.mainNodeId} → Rank ${u.toRank}`,
           userAddress: u.owner,
           mainNodeId: Number(u.mainNodeId),
           rank: Number(u.toRank),
@@ -10773,18 +11122,29 @@ async function startApp() {
           timestamp: realUpgTx?.timestamp || u.createdAt || matrixDB.lastSyncedAt || new Date().toISOString(),
           blockNumber: realUpgTx?.blockNumber || u.blockNumber,
           txHash: isRealTxHash(u.txHash) ? u.txHash : realUpgTx?.txHash,
-          detailsTh: `เลื่อนแรงค์จาก R${u.fromRank} ไปยัง R${u.toRank} (${uCost.toFixed(2)} USDT)`,
-          detailsEn: `Upgraded from R${u.fromRank} to R${u.toRank} (${uCost.toFixed(2)} USDT)`,
+          isAdminFreeUpgrade: isAdminFree,
+          detailsTh: isAdminFree
+            ? `Admin อัปเกรดฟรีจาก R${u.fromRank} ไปยัง R${u.toRank} (0.00 USDT • ไม่จ่ายค่าคอม)`
+            : `เลื่อนแรงค์จาก R${u.fromRank} ไปยัง R${u.toRank} (${uCost.toFixed(2)} USDT)`,
+          detailsEn: isAdminFree
+            ? `Admin free upgrade from R${u.fromRank} to R${u.toRank} (0.00 USDT • No commission)`
+            : `Upgraded from R${u.fromRank} to R${u.toRank} (${uCost.toFixed(2)} USDT)`,
         });
       });
 
-      // 3. Payouts / Rewards
+      // 3. Payouts / Rewards (exclude any rewards originating from Admin Free Upgrade nodes)
       const rewards = matrixDB.rewardLogs || [];
       rewards.forEach((r, idx) => {
         const recipientLower = (r.recipient || '').toLowerCase();
         if (addressFilter && recipientLower !== addressFilter) return;
 
+        const rRank = Number(r.rank || 1);
+        const fromNid = Number(r.fromNodeId || 0);
+        if (adminFreeKeys.has(`${rRank}:${fromNid}`)) return;
+
         const amt = parseFloat(r.amount) || 0;
+        if (amt <= 0) return;
+
         const rTime =
           r.createdAt ||
           (r as any).timestamp ||
@@ -10798,12 +11158,16 @@ async function startApp() {
           titleEn: `Payout / Reward (${r.rewardType})`,
           userAddress: r.recipient,
           mainNodeId: Number(r.toNodeId || 1),
-          rank: Number(r.rank || 1),
+          rank: rRank,
           amountUsdt: amt,
           timestamp: rTime,
           blockNumber: r.blockNumber,
-          detailsTh: `ได้รับจาก ${formatNodeIdentityLabel(Number(r.rank || 1), Number(r.fromNodeId)).th} → ${formatNodeIdentityLabel(Number(r.rank || 1), Number(r.toNodeId)).th} (Rank ${r.rank})`,
-          detailsEn: `Received from ${formatNodeIdentityLabel(Number(r.rank || 1), Number(r.fromNodeId)).en} → ${formatNodeIdentityLabel(Number(r.rank || 1), Number(r.toNodeId)).en} (Rank ${r.rank})`,
+          txHash: isRealTxHash(r.txHash) ? r.txHash : undefined,
+          rewardType: r.rewardType,
+          fromNodeId: fromNid,
+          toNodeId: Number(r.toNodeId || 0),
+          detailsTh: `ได้รับจาก ${formatNodeIdentityLabel(rRank, fromNid).th} → ${formatNodeIdentityLabel(rRank, Number(r.toNodeId)).th} (Rank ${rRank})`,
+          detailsEn: `Received from ${formatNodeIdentityLabel(rRank, fromNid).en} → ${formatNodeIdentityLabel(rRank, Number(r.toNodeId)).en} (Rank ${rRank})`,
         });
       });
 
@@ -10813,6 +11177,9 @@ async function startApp() {
       let filtered = transactions;
       if (categoryFilter && categoryFilter !== 'all') {
         filtered = transactions.filter((t) => t.category.toLowerCase() === categoryFilter);
+      }
+      if (limitParam > 0) {
+        filtered = filtered.slice(0, limitParam);
       }
 
       res.json({

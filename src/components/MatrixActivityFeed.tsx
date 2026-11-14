@@ -32,6 +32,7 @@ export interface ActivityFeedNodeRef {
   isClone?: boolean;
   isExtraId?: boolean;
   isAutoMainId?: boolean;
+  isAdminFreeUpgrade?: boolean;
   isLeft?: boolean;
   createdAt?: string;
 }
@@ -366,6 +367,9 @@ export const MatrixActivityFeed: React.FC<MatrixActivityFeedProps> = ({
       const rankNum = Number(r.rank || 1);
       const rType = String(r.rewardType || 'DIRECT').toUpperCase();
       const amountNum = Number(parseFloat(String(r.amount || '0')) || 0);
+      const fromNodeRef = rankNum === selectedRank ? activeNodesMap.get(fromId) : undefined;
+      if (r.isAdminFreeUpgrade || amountNum <= 0 || fromNodeRef?.isAdminFreeUpgrade) continue;
+
       const isRecipient = matchesRankNode(rankNum, toId);
       const isSenderVault = rType.includes('VAULT') && matchesRankNode(rankNum, fromId);
 
@@ -666,8 +670,15 @@ export const MatrixActivityFeed: React.FC<MatrixActivityFeedProps> = ({
               String(tx.detailsTh || '').includes(`#${activeRankRootId} (`))));
 
       if (!isSelfTx && !isDownlineReg) continue;
-      // Avoid duplicating payouts/upgrades already normalized above unless they carry a real txHash
-      if (cat === 'PAYOUT' && !isValidTxHash(tx.txHash)) continue;
+      const rewardTypeUpper = String(tx.rewardType || '').toUpperCase();
+      const txTitleUpper = `${String(tx.titleTh || '')} ${String(tx.titleEn || '')}`.toUpperCase();
+      const isVaultPayoutTx =
+        cat === 'PAYOUT' && (rewardTypeUpper.includes('VAULT') || txTitleUpper.includes('UPGRADE_VAULT'));
+      if (cat === 'PAYOUT') {
+        if (tx.isAdminFreeUpgrade || Number(tx.amountUsdt || 0) <= 0 || isVaultPayoutTx) continue;
+        // Avoid duplicating payouts already normalized above unless they carry a real txHash
+        if (!isValidTxHash(tx.txHash)) continue;
+      }
       if (cat === 'UPGRADE') {
         const upgKey = `upg-${txMainId}-${txRank}`;
         if (itemsMap.has(upgKey)) {
@@ -679,11 +690,12 @@ export const MatrixActivityFeed: React.FC<MatrixActivityFeedProps> = ({
         }
       }
 
+      const isAdminFreeTx = Boolean(tx.isAdminFreeUpgrade);
       const ts = String(tx.timestamp || '');
       addItem({
         id: `tx-${tx.id || `${cat}-${effectiveRank}-${txNodeId}`}`,
         category: cat === 'PAYOUT' ? 'INCOME' : cat === 'UPGRADE' ? 'UPGRADE_VAULT' : 'NODE_SPAWN',
-        subType: cat || 'TX',
+        subType: isAdminFreeTx && cat === 'UPGRADE' ? 'ADMIN_UPGRADE' : cat || 'TX',
         title:
           language === 'th'
             ? isDownlineReg && !isSelfTx
@@ -697,12 +709,18 @@ export const MatrixActivityFeed: React.FC<MatrixActivityFeedProps> = ({
           `Rank ${effectiveRank} · ${shortenWallet(tx.userAddress)}`,
         rank: effectiveRank,
         focusNodeId: txNodeId > 0 ? txNodeId : undefined,
-        amountUsdt: Number(tx.amountUsdt || 0) || undefined,
-        amountDirection: cat === 'PAYOUT' ? 'IN' : cat === 'UPGRADE' ? 'OUT' : 'INFO',
+        amountUsdt: isAdminFreeTx ? 0 : Number(tx.amountUsdt || 0) || undefined,
+        amountDirection: isAdminFreeTx
+          ? 'INFO'
+          : cat === 'PAYOUT'
+          ? 'IN'
+          : cat === 'UPGRADE'
+          ? 'OUT'
+          : 'INFO',
         timestamp: ts,
         timestampMs: parseTimestampMs(ts),
         txHash: isValidTxHash(tx.txHash) ? tx.txHash : undefined,
-        sourceLabel: isDownlineReg && !isSelfTx ? 'DOWNLINE' : 'ON-CHAIN',
+        sourceLabel: isAdminFreeTx ? 'ADMIN' : isDownlineReg && !isSelfTx ? 'DOWNLINE' : 'ON-CHAIN',
       });
     }
 

@@ -1,8 +1,8 @@
 {
   "contractAddress": "0xB3832D4cc6daE0B24f1e6660d7C85dcc1F005Cd1",
   "usdtAddress": "0x05f24E1F598DF1aE8d0B424ce978f8ea33bB752b",
-  "lastSyncedBlock": 142678863,
-  "lastSyncedAt": "2026-11-14T11:55:05.407Z",
+  "lastSyncedBlock": 142693949,
+  "lastSyncedAt": "2026-11-14T13:48:35.749Z",
   "systemWallets": {
     "allSellWallet": "0xBeFEB9871a20656aeF7E8d218f751e9C23FAF710",
     "botWallet": "0xB3832D4cc6daE0B24f1e6660d7C85dcc1F005Cd1",
@@ -1312,7 +1312,7 @@
       "rewardType": "DIRECT",
       "amount": "15.00",
       "txHash": "0x060002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:32.703Z"
     },
     {
@@ -1324,7 +1324,7 @@
       "rewardType": "UPGRADE_VAULT",
       "amount": "17.50",
       "txHash": "0x060002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:32.703Z"
     },
     {
@@ -1336,7 +1336,7 @@
       "rewardType": "LEVEL",
       "amount": "1.00",
       "txHash": "0x060002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:32.703Z"
     },
     {
@@ -1348,7 +1348,7 @@
       "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
       "amount": "14.00",
       "txHash": "0x060002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:32.703Z"
     },
     {
@@ -1360,7 +1360,7 @@
       "rewardType": "ALLSELL",
       "amount": "2.00",
       "txHash": "0x060002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:32.703Z"
     },
     {
@@ -1372,7 +1372,7 @@
       "rewardType": "BOT",
       "amount": "0.50",
       "txHash": "0x060002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:32.703Z"
     },
     {
@@ -1384,7 +1384,7 @@
       "rewardType": "DIRECT_ID1_CLONE_FAMILY_POOL",
       "amount": "12.00",
       "txHash": "0x050004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:32.560Z"
     },
     {
@@ -1396,7 +1396,7 @@
       "rewardType": "UPGRADE_VAULT",
       "amount": "14.00",
       "txHash": "0x050004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:32.560Z"
     },
     {
@@ -1408,7 +1408,7 @@
       "rewardType": "LEVEL",
       "amount": "0.80",
       "txHash": "0x050004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:32.560Z"
     },
     {
@@ -1420,7 +1420,7 @@
       "rewardType": "LEVEL",
       "amount": "0.80",
       "txHash": "0x050004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:32.560Z"
     },
     {
@@ -1432,7 +1432,7 @@
       "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
       "amount": "10.40",
       "txHash": "0x050004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:32.560Z"
     },
     {
@@ -1444,7 +1444,7 @@
       "rewardType": "ALLSELL",
       "amount": "1.60",
       "txHash": "0x050004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:32.560Z"
     },
     {
@@ -1456,7 +1456,7 @@
       "rewardType": "BOT",
       "amount": "0.40",
       "txHash": "0x050004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:32.560Z"
     },
     {
@@ -1468,7 +1468,7 @@
       "rewardType": "DIRECT",
       "amount": "12.00",
       "txHash": "0x050002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678861,
+      "blockNumber": 142693947,
       "createdAt": "2026-11-14T11:51:32.560Z"
     },
     {
@@ -1480,7 +1480,7 @@
       "rewardType": "UPGRADE_VAULT",
       "amount": "14.00",
       "txHash": "0x050002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678861,
+      "blockNumber": 142693947,
       "createdAt": "2026-11-14T11:51:32.560Z"
     },
     {
@@ -1492,7 +1492,7 @@
       "rewardType": "LEVEL",
       "amount": "0.80",
       "txHash": "0x050002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678861,
+      "blockNumber": 142693947,
       "createdAt": "2026-11-14T11:51:32.560Z"
     },
     {
@@ -1504,7 +1504,7 @@
       "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
       "amount": "11.20",
       "txHash": "0x050002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678861,
+      "blockNumber": 142693947,
       "createdAt": "2026-11-14T11:51:32.560Z"
     },
     {
@@ -1516,7 +1516,7 @@
       "rewardType": "ALLSELL",
       "amount": "1.60",
       "txHash": "0x050002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678861,
+      "blockNumber": 142693947,
       "createdAt": "2026-11-14T11:51:32.560Z"
     },
     {
@@ -1528,7 +1528,7 @@
       "rewardType": "BOT",
       "amount": "0.40",
       "txHash": "0x050002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678861,
+      "blockNumber": 142693947,
       "createdAt": "2026-11-14T11:51:32.560Z"
     },
     {
@@ -1540,7 +1540,7 @@
       "rewardType": "DIRECT_ID1_CLONE_FAMILY_POOL",
       "amount": "9.00",
       "txHash": "0x040004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:32.435Z"
     },
     {
@@ -1552,7 +1552,7 @@
       "rewardType": "UPGRADE_VAULT",
       "amount": "10.50",
       "txHash": "0x040004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:32.435Z"
     },
     {
@@ -1564,7 +1564,7 @@
       "rewardType": "LEVEL",
       "amount": "0.60",
       "txHash": "0x040004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:32.435Z"
     },
     {
@@ -1576,7 +1576,7 @@
       "rewardType": "LEVEL",
       "amount": "0.60",
       "txHash": "0x040004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:32.435Z"
     },
     {
@@ -1588,7 +1588,7 @@
       "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
       "amount": "7.80",
       "txHash": "0x040004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:32.435Z"
     },
     {
@@ -1600,7 +1600,7 @@
       "rewardType": "ALLSELL",
       "amount": "1.20",
       "txHash": "0x040004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:32.435Z"
     },
     {
@@ -1612,7 +1612,7 @@
       "rewardType": "BOT",
       "amount": "0.30",
       "txHash": "0x040004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:32.435Z"
     },
     {
@@ -1624,7 +1624,7 @@
       "rewardType": "DIRECT",
       "amount": "9.00",
       "txHash": "0x040002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678861,
+      "blockNumber": 142693947,
       "createdAt": "2026-11-14T11:51:32.435Z"
     },
     {
@@ -1636,7 +1636,7 @@
       "rewardType": "UPGRADE_VAULT",
       "amount": "10.50",
       "txHash": "0x040002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678861,
+      "blockNumber": 142693947,
       "createdAt": "2026-11-14T11:51:32.435Z"
     },
     {
@@ -1648,7 +1648,7 @@
       "rewardType": "LEVEL",
       "amount": "0.60",
       "txHash": "0x040002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678861,
+      "blockNumber": 142693947,
       "createdAt": "2026-11-14T11:51:32.435Z"
     },
     {
@@ -1660,7 +1660,7 @@
       "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
       "amount": "8.40",
       "txHash": "0x040002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678861,
+      "blockNumber": 142693947,
       "createdAt": "2026-11-14T11:51:32.435Z"
     },
     {
@@ -1672,7 +1672,7 @@
       "rewardType": "ALLSELL",
       "amount": "1.20",
       "txHash": "0x040002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678861,
+      "blockNumber": 142693947,
       "createdAt": "2026-11-14T11:51:32.435Z"
     },
     {
@@ -1684,7 +1684,7 @@
       "rewardType": "BOT",
       "amount": "0.30",
       "txHash": "0x040002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678861,
+      "blockNumber": 142693947,
       "createdAt": "2026-11-14T11:51:32.435Z"
     },
     {
@@ -1696,7 +1696,7 @@
       "rewardType": "DIRECT",
       "amount": "6.00",
       "txHash": "0x030005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:32.306Z"
     },
     {
@@ -1708,7 +1708,7 @@
       "rewardType": "UPGRADE_VAULT",
       "amount": "7.00",
       "txHash": "0x030005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:32.306Z"
     },
     {
@@ -1720,7 +1720,7 @@
       "rewardType": "LEVEL",
       "amount": "0.40",
       "txHash": "0x030005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:32.306Z"
     },
     {
@@ -1732,7 +1732,7 @@
       "rewardType": "LEVEL",
       "amount": "0.40",
       "txHash": "0x030005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:32.306Z"
     },
     {
@@ -1744,7 +1744,7 @@
       "rewardType": "LEVEL",
       "amount": "0.40",
       "txHash": "0x030005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:32.306Z"
     },
     {
@@ -1756,7 +1756,7 @@
       "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
       "amount": "4.80",
       "txHash": "0x030005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:32.306Z"
     },
     {
@@ -1768,7 +1768,7 @@
       "rewardType": "ALLSELL",
       "amount": "0.80",
       "txHash": "0x030005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:32.306Z"
     },
     {
@@ -1780,7 +1780,7 @@
       "rewardType": "BOT",
       "amount": "0.20",
       "txHash": "0x030005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:32.306Z"
     },
     {
@@ -1792,7 +1792,7 @@
       "rewardType": "DIRECT_ID1_CLONE_FAMILY_POOL",
       "amount": "6.00",
       "txHash": "0x030004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 142678862,
+      "blockNumber": 142693948,
       "createdAt": "2026-11-14T11:51:32.306Z"
     },
     {
@@ -1804,7 +1804,7 @@
       "rewardType": "UPGRADE_VAULT",
       "amount": "7.00",
       "txHash": "0x030004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 142678862,
+      "blockNumber": 142693948,
       "createdAt": "2026-11-14T11:51:32.306Z"
     },
     {
@@ -1816,7 +1816,7 @@
       "rewardType": "LEVEL",
       "amount": "0.40",
       "txHash": "0x030004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 142678862,
+      "blockNumber": 142693948,
       "createdAt": "2026-11-14T11:51:32.306Z"
     },
     {
@@ -1828,7 +1828,7 @@
       "rewardType": "LEVEL",
       "amount": "0.40",
       "txHash": "0x030004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 142678862,
+      "blockNumber": 142693948,
       "createdAt": "2026-11-14T11:51:32.306Z"
     },
     {
@@ -1840,7 +1840,7 @@
       "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
       "amount": "5.20",
       "txHash": "0x030004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 142678862,
+      "blockNumber": 142693948,
       "createdAt": "2026-11-14T11:51:32.306Z"
     },
     {
@@ -1852,7 +1852,7 @@
       "rewardType": "ALLSELL",
       "amount": "0.80",
       "txHash": "0x030004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 142678862,
+      "blockNumber": 142693948,
       "createdAt": "2026-11-14T11:51:32.306Z"
     },
     {
@@ -1864,7 +1864,7 @@
       "rewardType": "BOT",
       "amount": "0.20",
       "txHash": "0x030004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 142678862,
+      "blockNumber": 142693948,
       "createdAt": "2026-11-14T11:51:32.306Z"
     },
     {
@@ -1876,7 +1876,7 @@
       "rewardType": "DIRECT",
       "amount": "6.00",
       "txHash": "0x030002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678860,
+      "blockNumber": 142693946,
       "createdAt": "2026-11-14T11:51:32.306Z"
     },
     {
@@ -1888,7 +1888,7 @@
       "rewardType": "UPGRADE_VAULT",
       "amount": "7.00",
       "txHash": "0x030002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678860,
+      "blockNumber": 142693946,
       "createdAt": "2026-11-14T11:51:32.306Z"
     },
     {
@@ -1900,7 +1900,7 @@
       "rewardType": "LEVEL",
       "amount": "0.40",
       "txHash": "0x030002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678860,
+      "blockNumber": 142693946,
       "createdAt": "2026-11-14T11:51:32.306Z"
     },
     {
@@ -1912,7 +1912,7 @@
       "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
       "amount": "5.60",
       "txHash": "0x030002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678860,
+      "blockNumber": 142693946,
       "createdAt": "2026-11-14T11:51:32.306Z"
     },
     {
@@ -1924,7 +1924,7 @@
       "rewardType": "ALLSELL",
       "amount": "0.80",
       "txHash": "0x030002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678860,
+      "blockNumber": 142693946,
       "createdAt": "2026-11-14T11:51:32.306Z"
     },
     {
@@ -1936,7 +1936,7 @@
       "rewardType": "BOT",
       "amount": "0.20",
       "txHash": "0x030002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678860,
+      "blockNumber": 142693946,
       "createdAt": "2026-11-14T11:51:32.306Z"
     },
     {
@@ -1948,7 +1948,7 @@
       "rewardType": "DIRECT",
       "amount": "3.00",
       "txHash": "0x020009db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000009",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:32.160Z"
     },
     {
@@ -1960,7 +1960,7 @@
       "rewardType": "LEVEL",
       "amount": "3.00",
       "txHash": "0x020009db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000009",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:32.160Z"
     },
     {
@@ -1972,7 +1972,7 @@
       "rewardType": "UPGRADE_VAULT",
       "amount": "3.50",
       "txHash": "0x020009db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000009",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:32.160Z"
     },
     {
@@ -1984,7 +1984,7 @@
       "rewardType": "ALLSELL",
       "amount": "0.40",
       "txHash": "0x020009db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000009",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:32.160Z"
     },
     {
@@ -1996,7 +1996,7 @@
       "rewardType": "BOT",
       "amount": "0.10",
       "txHash": "0x020009db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000009",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:32.160Z"
     },
     {
@@ -2008,7 +2008,7 @@
       "rewardType": "DIRECT",
       "amount": "3.00",
       "txHash": "0x020008db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000008",
-      "blockNumber": 142678862,
+      "blockNumber": 142693948,
       "createdAt": "2026-11-14T11:51:32.160Z"
     },
     {
@@ -2020,7 +2020,7 @@
       "rewardType": "UPGRADE_VAULT",
       "amount": "3.50",
       "txHash": "0x020008db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000008",
-      "blockNumber": 142678862,
+      "blockNumber": 142693948,
       "createdAt": "2026-11-14T11:51:32.160Z"
     },
     {
@@ -2032,7 +2032,7 @@
       "rewardType": "LEVEL",
       "amount": "0.20",
       "txHash": "0x020008db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000008",
-      "blockNumber": 142678862,
+      "blockNumber": 142693948,
       "createdAt": "2026-11-14T11:51:32.160Z"
     },
     {
@@ -2044,7 +2044,7 @@
       "rewardType": "LEVEL",
       "amount": "0.20",
       "txHash": "0x020008db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000008",
-      "blockNumber": 142678862,
+      "blockNumber": 142693948,
       "createdAt": "2026-11-14T11:51:32.160Z"
     },
     {
@@ -2056,7 +2056,7 @@
       "rewardType": "LEVEL",
       "amount": "0.20",
       "txHash": "0x020008db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000008",
-      "blockNumber": 142678862,
+      "blockNumber": 142693948,
       "createdAt": "2026-11-14T11:51:32.160Z"
     },
     {
@@ -2068,7 +2068,7 @@
       "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
       "amount": "2.40",
       "txHash": "0x020008db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000008",
-      "blockNumber": 142678862,
+      "blockNumber": 142693948,
       "createdAt": "2026-11-14T11:51:32.160Z"
     },
     {
@@ -2080,7 +2080,7 @@
       "rewardType": "ALLSELL",
       "amount": "0.40",
       "txHash": "0x020008db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000008",
-      "blockNumber": 142678862,
+      "blockNumber": 142693948,
       "createdAt": "2026-11-14T11:51:32.160Z"
     },
     {
@@ -2092,7 +2092,7 @@
       "rewardType": "BOT",
       "amount": "0.10",
       "txHash": "0x020008db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000008",
-      "blockNumber": 142678862,
+      "blockNumber": 142693948,
       "createdAt": "2026-11-14T11:51:32.160Z"
     },
     {
@@ -2104,7 +2104,7 @@
       "rewardType": "DIRECT",
       "amount": "3.00",
       "txHash": "0x020005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 142678859,
+      "blockNumber": 142693945,
       "createdAt": "2026-11-14T11:51:31.998Z"
     },
     {
@@ -2116,7 +2116,7 @@
       "rewardType": "UPGRADE_VAULT",
       "amount": "3.50",
       "txHash": "0x020005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 142678859,
+      "blockNumber": 142693945,
       "createdAt": "2026-11-14T11:51:31.998Z"
     },
     {
@@ -2128,7 +2128,7 @@
       "rewardType": "LEVEL",
       "amount": "0.20",
       "txHash": "0x020005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 142678859,
+      "blockNumber": 142693945,
       "createdAt": "2026-11-14T11:51:31.998Z"
     },
     {
@@ -2140,7 +2140,7 @@
       "rewardType": "LEVEL",
       "amount": "0.20",
       "txHash": "0x020005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 142678859,
+      "blockNumber": 142693945,
       "createdAt": "2026-11-14T11:51:31.998Z"
     },
     {
@@ -2152,7 +2152,7 @@
       "rewardType": "LEVEL",
       "amount": "0.20",
       "txHash": "0x020005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 142678859,
+      "blockNumber": 142693945,
       "createdAt": "2026-11-14T11:51:31.998Z"
     },
     {
@@ -2164,7 +2164,7 @@
       "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
       "amount": "2.40",
       "txHash": "0x020005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 142678859,
+      "blockNumber": 142693945,
       "createdAt": "2026-11-14T11:51:31.998Z"
     },
     {
@@ -2176,7 +2176,7 @@
       "rewardType": "ALLSELL",
       "amount": "0.40",
       "txHash": "0x020005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 142678859,
+      "blockNumber": 142693945,
       "createdAt": "2026-11-14T11:51:31.998Z"
     },
     {
@@ -2188,7 +2188,7 @@
       "rewardType": "BOT",
       "amount": "0.10",
       "txHash": "0x020005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 142678859,
+      "blockNumber": 142693945,
       "createdAt": "2026-11-14T11:51:31.998Z"
     },
     {
@@ -2200,7 +2200,7 @@
       "rewardType": "DIRECT_ID1_CLONE_FAMILY_POOL",
       "amount": "3.00",
       "txHash": "0x020004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 142678858,
+      "blockNumber": 142693944,
       "createdAt": "2026-11-14T11:51:31.998Z"
     },
     {
@@ -2212,7 +2212,7 @@
       "rewardType": "UPGRADE_VAULT",
       "amount": "3.50",
       "txHash": "0x020004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 142678858,
+      "blockNumber": 142693944,
       "createdAt": "2026-11-14T11:51:31.998Z"
     },
     {
@@ -2224,7 +2224,7 @@
       "rewardType": "LEVEL",
       "amount": "0.20",
       "txHash": "0x020004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 142678858,
+      "blockNumber": 142693944,
       "createdAt": "2026-11-14T11:51:31.998Z"
     },
     {
@@ -2236,7 +2236,7 @@
       "rewardType": "LEVEL",
       "amount": "0.20",
       "txHash": "0x020004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 142678858,
+      "blockNumber": 142693944,
       "createdAt": "2026-11-14T11:51:31.998Z"
     },
     {
@@ -2248,7 +2248,7 @@
       "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
       "amount": "2.60",
       "txHash": "0x020004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 142678858,
+      "blockNumber": 142693944,
       "createdAt": "2026-11-14T11:51:31.998Z"
     },
     {
@@ -2260,7 +2260,7 @@
       "rewardType": "ALLSELL",
       "amount": "0.40",
       "txHash": "0x020004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 142678858,
+      "blockNumber": 142693944,
       "createdAt": "2026-11-14T11:51:31.998Z"
     },
     {
@@ -2272,7 +2272,7 @@
       "rewardType": "BOT",
       "amount": "0.10",
       "txHash": "0x020004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 142678858,
+      "blockNumber": 142693944,
       "createdAt": "2026-11-14T11:51:31.998Z"
     },
     {
@@ -2284,7 +2284,7 @@
       "rewardType": "DIRECT",
       "amount": "3.00",
       "txHash": "0x020002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678856,
+      "blockNumber": 142693942,
       "createdAt": "2026-11-14T11:51:31.998Z"
     },
     {
@@ -2296,7 +2296,7 @@
       "rewardType": "UPGRADE_VAULT",
       "amount": "3.50",
       "txHash": "0x020002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678856,
+      "blockNumber": 142693942,
       "createdAt": "2026-11-14T11:51:31.998Z"
     },
     {
@@ -2308,7 +2308,7 @@
       "rewardType": "LEVEL",
       "amount": "0.20",
       "txHash": "0x020002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678856,
+      "blockNumber": 142693942,
       "createdAt": "2026-11-14T11:51:31.998Z"
     },
     {
@@ -2320,7 +2320,7 @@
       "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
       "amount": "2.80",
       "txHash": "0x020002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678856,
+      "blockNumber": 142693942,
       "createdAt": "2026-11-14T11:51:31.998Z"
     },
     {
@@ -2332,7 +2332,7 @@
       "rewardType": "ALLSELL",
       "amount": "0.40",
       "txHash": "0x020002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678856,
+      "blockNumber": 142693942,
       "createdAt": "2026-11-14T11:51:31.998Z"
     },
     {
@@ -2344,7 +2344,7 @@
       "rewardType": "BOT",
       "amount": "0.10",
       "txHash": "0x020002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678856,
+      "blockNumber": 142693942,
       "createdAt": "2026-11-14T11:51:31.998Z"
     },
     {
@@ -2356,7 +2356,7 @@
       "rewardType": "DIRECT",
       "amount": "1.50",
       "txHash": "0x010017db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000017",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:31.850Z"
     },
     {
@@ -2368,7 +2368,7 @@
       "rewardType": "UPGRADE_VAULT",
       "amount": "1.75",
       "txHash": "0x010017db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000017",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:31.850Z"
     },
     {
@@ -2380,7 +2380,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010017db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000017",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:31.850Z"
     },
     {
@@ -2392,7 +2392,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010017db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000017",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:31.850Z"
     },
     {
@@ -2404,7 +2404,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010017db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000017",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:31.850Z"
     },
     {
@@ -2416,7 +2416,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010017db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000017",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:31.850Z"
     },
     {
@@ -2428,7 +2428,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010017db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000017",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:31.850Z"
     },
     {
@@ -2440,7 +2440,7 @@
       "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
       "amount": "1.00",
       "txHash": "0x010017db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000017",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:31.850Z"
     },
     {
@@ -2452,7 +2452,7 @@
       "rewardType": "ALLSELL",
       "amount": "0.20",
       "txHash": "0x010017db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000017",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:31.850Z"
     },
     {
@@ -2464,7 +2464,7 @@
       "rewardType": "BOT",
       "amount": "0.05",
       "txHash": "0x010017db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000017",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:31.850Z"
     },
     {
@@ -2476,7 +2476,7 @@
       "rewardType": "DIRECT_ID1_CLONE_FAMILY_POOL",
       "amount": "1.50",
       "txHash": "0x010016db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000016",
-      "blockNumber": 142678862,
+      "blockNumber": 142693948,
       "createdAt": "2026-11-14T11:51:31.850Z"
     },
     {
@@ -2488,7 +2488,7 @@
       "rewardType": "UPGRADE_VAULT",
       "amount": "1.75",
       "txHash": "0x010016db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000016",
-      "blockNumber": 142678862,
+      "blockNumber": 142693948,
       "createdAt": "2026-11-14T11:51:31.850Z"
     },
     {
@@ -2500,7 +2500,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010016db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000016",
-      "blockNumber": 142678862,
+      "blockNumber": 142693948,
       "createdAt": "2026-11-14T11:51:31.850Z"
     },
     {
@@ -2512,7 +2512,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010016db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000016",
-      "blockNumber": 142678862,
+      "blockNumber": 142693948,
       "createdAt": "2026-11-14T11:51:31.850Z"
     },
     {
@@ -2524,7 +2524,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010016db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000016",
-      "blockNumber": 142678862,
+      "blockNumber": 142693948,
       "createdAt": "2026-11-14T11:51:31.850Z"
     },
     {
@@ -2536,7 +2536,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010016db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000016",
-      "blockNumber": 142678862,
+      "blockNumber": 142693948,
       "createdAt": "2026-11-14T11:51:31.850Z"
     },
     {
@@ -2548,7 +2548,7 @@
       "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
       "amount": "1.10",
       "txHash": "0x010016db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000016",
-      "blockNumber": 142678862,
+      "blockNumber": 142693948,
       "createdAt": "2026-11-14T11:51:31.850Z"
     },
     {
@@ -2560,7 +2560,7 @@
       "rewardType": "ALLSELL",
       "amount": "0.20",
       "txHash": "0x010016db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000016",
-      "blockNumber": 142678862,
+      "blockNumber": 142693948,
       "createdAt": "2026-11-14T11:51:31.850Z"
     },
     {
@@ -2572,7 +2572,7 @@
       "rewardType": "BOT",
       "amount": "0.05",
       "txHash": "0x010016db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000016",
-      "blockNumber": 142678862,
+      "blockNumber": 142693948,
       "createdAt": "2026-11-14T11:51:31.850Z"
     },
     {
@@ -2584,7 +2584,7 @@
       "rewardType": "DIRECT",
       "amount": "1.50",
       "txHash": "0x010014db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000014",
-      "blockNumber": 142678860,
+      "blockNumber": 142693946,
       "createdAt": "2026-11-14T11:51:31.748Z"
     },
     {
@@ -2596,7 +2596,7 @@
       "rewardType": "UPGRADE_VAULT",
       "amount": "1.75",
       "txHash": "0x010014db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000014",
-      "blockNumber": 142678860,
+      "blockNumber": 142693946,
       "createdAt": "2026-11-14T11:51:31.748Z"
     },
     {
@@ -2608,7 +2608,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010014db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000014",
-      "blockNumber": 142678860,
+      "blockNumber": 142693946,
       "createdAt": "2026-11-14T11:51:31.748Z"
     },
     {
@@ -2620,7 +2620,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010014db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000014",
-      "blockNumber": 142678860,
+      "blockNumber": 142693946,
       "createdAt": "2026-11-14T11:51:31.748Z"
     },
     {
@@ -2632,7 +2632,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010014db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000014",
-      "blockNumber": 142678860,
+      "blockNumber": 142693946,
       "createdAt": "2026-11-14T11:51:31.748Z"
     },
     {
@@ -2644,7 +2644,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010014db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000014",
-      "blockNumber": 142678860,
+      "blockNumber": 142693946,
       "createdAt": "2026-11-14T11:51:31.748Z"
     },
     {
@@ -2656,7 +2656,7 @@
       "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
       "amount": "1.10",
       "txHash": "0x010014db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000014",
-      "blockNumber": 142678860,
+      "blockNumber": 142693946,
       "createdAt": "2026-11-14T11:51:31.748Z"
     },
     {
@@ -2668,7 +2668,7 @@
       "rewardType": "ALLSELL",
       "amount": "0.20",
       "txHash": "0x010014db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000014",
-      "blockNumber": 142678860,
+      "blockNumber": 142693946,
       "createdAt": "2026-11-14T11:51:31.748Z"
     },
     {
@@ -2680,7 +2680,7 @@
       "rewardType": "BOT",
       "amount": "0.05",
       "txHash": "0x010014db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000014",
-      "blockNumber": 142678860,
+      "blockNumber": 142693946,
       "createdAt": "2026-11-14T11:51:31.748Z"
     },
     {
@@ -2692,7 +2692,7 @@
       "rewardType": "DIRECT",
       "amount": "1.50",
       "txHash": "0x010013db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000013",
-      "blockNumber": 142678859,
+      "blockNumber": 142693945,
       "createdAt": "2026-11-14T11:51:31.748Z"
     },
     {
@@ -2704,7 +2704,7 @@
       "rewardType": "UPGRADE_VAULT",
       "amount": "1.75",
       "txHash": "0x010013db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000013",
-      "blockNumber": 142678859,
+      "blockNumber": 142693945,
       "createdAt": "2026-11-14T11:51:31.748Z"
     },
     {
@@ -2716,7 +2716,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010013db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000013",
-      "blockNumber": 142678859,
+      "blockNumber": 142693945,
       "createdAt": "2026-11-14T11:51:31.748Z"
     },
     {
@@ -2728,7 +2728,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010013db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000013",
-      "blockNumber": 142678859,
+      "blockNumber": 142693945,
       "createdAt": "2026-11-14T11:51:31.748Z"
     },
     {
@@ -2740,7 +2740,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010013db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000013",
-      "blockNumber": 142678859,
+      "blockNumber": 142693945,
       "createdAt": "2026-11-14T11:51:31.748Z"
     },
     {
@@ -2752,7 +2752,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010013db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000013",
-      "blockNumber": 142678859,
+      "blockNumber": 142693945,
       "createdAt": "2026-11-14T11:51:31.748Z"
     },
     {
@@ -2764,7 +2764,7 @@
       "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
       "amount": "1.10",
       "txHash": "0x010013db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000013",
-      "blockNumber": 142678859,
+      "blockNumber": 142693945,
       "createdAt": "2026-11-14T11:51:31.748Z"
     },
     {
@@ -2776,7 +2776,7 @@
       "rewardType": "ALLSELL",
       "amount": "0.20",
       "txHash": "0x010013db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000013",
-      "blockNumber": 142678859,
+      "blockNumber": 142693945,
       "createdAt": "2026-11-14T11:51:31.748Z"
     },
     {
@@ -2788,7 +2788,7 @@
       "rewardType": "BOT",
       "amount": "0.05",
       "txHash": "0x010013db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000013",
-      "blockNumber": 142678859,
+      "blockNumber": 142693945,
       "createdAt": "2026-11-14T11:51:31.748Z"
     },
     {
@@ -2800,7 +2800,7 @@
       "rewardType": "DIRECT",
       "amount": "1.50",
       "txHash": "0x010012db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000012",
-      "blockNumber": 142678858,
+      "blockNumber": 142693944,
       "createdAt": "2026-11-14T11:51:31.748Z"
     },
     {
@@ -2812,7 +2812,7 @@
       "rewardType": "UPGRADE_VAULT",
       "amount": "1.75",
       "txHash": "0x010012db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000012",
-      "blockNumber": 142678858,
+      "blockNumber": 142693944,
       "createdAt": "2026-11-14T11:51:31.748Z"
     },
     {
@@ -2824,7 +2824,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010012db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000012",
-      "blockNumber": 142678858,
+      "blockNumber": 142693944,
       "createdAt": "2026-11-14T11:51:31.748Z"
     },
     {
@@ -2836,7 +2836,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010012db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000012",
-      "blockNumber": 142678858,
+      "blockNumber": 142693944,
       "createdAt": "2026-11-14T11:51:31.748Z"
     },
     {
@@ -2848,7 +2848,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010012db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000012",
-      "blockNumber": 142678858,
+      "blockNumber": 142693944,
       "createdAt": "2026-11-14T11:51:31.748Z"
     },
     {
@@ -2860,7 +2860,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010012db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000012",
-      "blockNumber": 142678858,
+      "blockNumber": 142693944,
       "createdAt": "2026-11-14T11:51:31.748Z"
     },
     {
@@ -2872,7 +2872,7 @@
       "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
       "amount": "1.10",
       "txHash": "0x010012db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000012",
-      "blockNumber": 142678858,
+      "blockNumber": 142693944,
       "createdAt": "2026-11-14T11:51:31.748Z"
     },
     {
@@ -2884,7 +2884,7 @@
       "rewardType": "ALLSELL",
       "amount": "0.20",
       "txHash": "0x010012db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000012",
-      "blockNumber": 142678858,
+      "blockNumber": 142693944,
       "createdAt": "2026-11-14T11:51:31.748Z"
     },
     {
@@ -2896,7 +2896,7 @@
       "rewardType": "BOT",
       "amount": "0.05",
       "txHash": "0x010012db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000012",
-      "blockNumber": 142678858,
+      "blockNumber": 142693944,
       "createdAt": "2026-11-14T11:51:31.748Z"
     },
     {
@@ -2908,7 +2908,7 @@
       "rewardType": "DIRECT",
       "amount": "1.50",
       "txHash": "0x01000fdb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000f",
-      "blockNumber": 142678855,
+      "blockNumber": 142693941,
       "createdAt": "2026-11-14T11:51:31.629Z"
     },
     {
@@ -2920,7 +2920,7 @@
       "rewardType": "UPGRADE_VAULT",
       "amount": "1.75",
       "txHash": "0x01000fdb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000f",
-      "blockNumber": 142678855,
+      "blockNumber": 142693941,
       "createdAt": "2026-11-14T11:51:31.629Z"
     },
     {
@@ -2932,7 +2932,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x01000fdb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000f",
-      "blockNumber": 142678855,
+      "blockNumber": 142693941,
       "createdAt": "2026-11-14T11:51:31.629Z"
     },
     {
@@ -2944,7 +2944,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x01000fdb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000f",
-      "blockNumber": 142678855,
+      "blockNumber": 142693941,
       "createdAt": "2026-11-14T11:51:31.629Z"
     },
     {
@@ -2956,7 +2956,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x01000fdb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000f",
-      "blockNumber": 142678855,
+      "blockNumber": 142693941,
       "createdAt": "2026-11-14T11:51:31.629Z"
     },
     {
@@ -2968,7 +2968,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x01000fdb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000f",
-      "blockNumber": 142678855,
+      "blockNumber": 142693941,
       "createdAt": "2026-11-14T11:51:31.629Z"
     },
     {
@@ -2980,7 +2980,7 @@
       "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
       "amount": "1.10",
       "txHash": "0x01000fdb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000f",
-      "blockNumber": 142678855,
+      "blockNumber": 142693941,
       "createdAt": "2026-11-14T11:51:31.629Z"
     },
     {
@@ -2992,7 +2992,7 @@
       "rewardType": "ALLSELL",
       "amount": "0.20",
       "txHash": "0x01000fdb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000f",
-      "blockNumber": 142678855,
+      "blockNumber": 142693941,
       "createdAt": "2026-11-14T11:51:31.629Z"
     },
     {
@@ -3004,7 +3004,7 @@
       "rewardType": "BOT",
       "amount": "0.05",
       "txHash": "0x01000fdb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000f",
-      "blockNumber": 142678855,
+      "blockNumber": 142693941,
       "createdAt": "2026-11-14T11:51:31.629Z"
     },
     {
@@ -3016,7 +3016,7 @@
       "rewardType": "DIRECT_ID1_CLONE_FAMILY_POOL",
       "amount": "1.50",
       "txHash": "0x01000edb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000e",
-      "blockNumber": 142678854,
+      "blockNumber": 142693940,
       "createdAt": "2026-11-14T11:51:31.629Z"
     },
     {
@@ -3028,7 +3028,7 @@
       "rewardType": "UPGRADE_VAULT",
       "amount": "1.75",
       "txHash": "0x01000edb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000e",
-      "blockNumber": 142678854,
+      "blockNumber": 142693940,
       "createdAt": "2026-11-14T11:51:31.629Z"
     },
     {
@@ -3040,7 +3040,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x01000edb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000e",
-      "blockNumber": 142678854,
+      "blockNumber": 142693940,
       "createdAt": "2026-11-14T11:51:31.629Z"
     },
     {
@@ -3052,7 +3052,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x01000edb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000e",
-      "blockNumber": 142678854,
+      "blockNumber": 142693940,
       "createdAt": "2026-11-14T11:51:31.629Z"
     },
     {
@@ -3064,7 +3064,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x01000edb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000e",
-      "blockNumber": 142678854,
+      "blockNumber": 142693940,
       "createdAt": "2026-11-14T11:51:31.629Z"
     },
     {
@@ -3076,7 +3076,7 @@
       "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
       "amount": "1.20",
       "txHash": "0x01000edb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000e",
-      "blockNumber": 142678854,
+      "blockNumber": 142693940,
       "createdAt": "2026-11-14T11:51:31.629Z"
     },
     {
@@ -3088,7 +3088,7 @@
       "rewardType": "ALLSELL",
       "amount": "0.20",
       "txHash": "0x01000edb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000e",
-      "blockNumber": 142678854,
+      "blockNumber": 142693940,
       "createdAt": "2026-11-14T11:51:31.629Z"
     },
     {
@@ -3100,7 +3100,7 @@
       "rewardType": "BOT",
       "amount": "0.05",
       "txHash": "0x01000edb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000e",
-      "blockNumber": 142678854,
+      "blockNumber": 142693940,
       "createdAt": "2026-11-14T11:51:31.629Z"
     },
     {
@@ -3112,7 +3112,7 @@
       "rewardType": "DIRECT",
       "amount": "1.50",
       "txHash": "0x01000cdb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000c",
-      "blockNumber": 142678852,
+      "blockNumber": 142693938,
       "createdAt": "2026-11-14T11:51:31.629Z"
     },
     {
@@ -3124,7 +3124,7 @@
       "rewardType": "UPGRADE_VAULT",
       "amount": "1.75",
       "txHash": "0x01000cdb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000c",
-      "blockNumber": 142678852,
+      "blockNumber": 142693938,
       "createdAt": "2026-11-14T11:51:31.629Z"
     },
     {
@@ -3136,7 +3136,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x01000cdb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000c",
-      "blockNumber": 142678852,
+      "blockNumber": 142693938,
       "createdAt": "2026-11-14T11:51:31.629Z"
     },
     {
@@ -3148,7 +3148,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x01000cdb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000c",
-      "blockNumber": 142678852,
+      "blockNumber": 142693938,
       "createdAt": "2026-11-14T11:51:31.629Z"
     },
     {
@@ -3160,7 +3160,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x01000cdb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000c",
-      "blockNumber": 142678852,
+      "blockNumber": 142693938,
       "createdAt": "2026-11-14T11:51:31.629Z"
     },
     {
@@ -3172,7 +3172,7 @@
       "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
       "amount": "1.20",
       "txHash": "0x01000cdb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000c",
-      "blockNumber": 142678852,
+      "blockNumber": 142693938,
       "createdAt": "2026-11-14T11:51:31.629Z"
     },
     {
@@ -3184,7 +3184,7 @@
       "rewardType": "ALLSELL",
       "amount": "0.20",
       "txHash": "0x01000cdb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000c",
-      "blockNumber": 142678852,
+      "blockNumber": 142693938,
       "createdAt": "2026-11-14T11:51:31.629Z"
     },
     {
@@ -3196,7 +3196,7 @@
       "rewardType": "BOT",
       "amount": "0.05",
       "txHash": "0x01000cdb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000c",
-      "blockNumber": 142678852,
+      "blockNumber": 142693938,
       "createdAt": "2026-11-14T11:51:31.629Z"
     },
     {
@@ -3208,7 +3208,7 @@
       "rewardType": "DIRECT",
       "amount": "1.50",
       "txHash": "0x010009db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000009",
-      "blockNumber": 142678849,
+      "blockNumber": 142693935,
       "createdAt": "2026-11-14T11:51:31.485Z"
     },
     {
@@ -3220,7 +3220,7 @@
       "rewardType": "UPGRADE_VAULT",
       "amount": "1.75",
       "txHash": "0x010009db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000009",
-      "blockNumber": 142678849,
+      "blockNumber": 142693935,
       "createdAt": "2026-11-14T11:51:31.485Z"
     },
     {
@@ -3232,7 +3232,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010009db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000009",
-      "blockNumber": 142678849,
+      "blockNumber": 142693935,
       "createdAt": "2026-11-14T11:51:31.485Z"
     },
     {
@@ -3244,7 +3244,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010009db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000009",
-      "blockNumber": 142678849,
+      "blockNumber": 142693935,
       "createdAt": "2026-11-14T11:51:31.485Z"
     },
     {
@@ -3256,7 +3256,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010009db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000009",
-      "blockNumber": 142678849,
+      "blockNumber": 142693935,
       "createdAt": "2026-11-14T11:51:31.485Z"
     },
     {
@@ -3268,7 +3268,7 @@
       "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
       "amount": "1.20",
       "txHash": "0x010009db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000009",
-      "blockNumber": 142678849,
+      "blockNumber": 142693935,
       "createdAt": "2026-11-14T11:51:31.485Z"
     },
     {
@@ -3280,7 +3280,7 @@
       "rewardType": "ALLSELL",
       "amount": "0.20",
       "txHash": "0x010009db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000009",
-      "blockNumber": 142678849,
+      "blockNumber": 142693935,
       "createdAt": "2026-11-14T11:51:31.485Z"
     },
     {
@@ -3292,7 +3292,7 @@
       "rewardType": "BOT",
       "amount": "0.05",
       "txHash": "0x010009db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000009",
-      "blockNumber": 142678849,
+      "blockNumber": 142693935,
       "createdAt": "2026-11-14T11:51:31.485Z"
     },
     {
@@ -3304,7 +3304,7 @@
       "rewardType": "DIRECT",
       "amount": "1.50",
       "txHash": "0x010006db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000006",
-      "blockNumber": 142678846,
+      "blockNumber": 142693932,
       "createdAt": "2026-11-14T11:51:31.485Z"
     },
     {
@@ -3316,7 +3316,7 @@
       "rewardType": "UPGRADE_VAULT",
       "amount": "1.75",
       "txHash": "0x010006db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000006",
-      "blockNumber": 142678846,
+      "blockNumber": 142693932,
       "createdAt": "2026-11-14T11:51:31.485Z"
     },
     {
@@ -3328,7 +3328,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010006db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000006",
-      "blockNumber": 142678846,
+      "blockNumber": 142693932,
       "createdAt": "2026-11-14T11:51:31.485Z"
     },
     {
@@ -3340,7 +3340,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010006db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000006",
-      "blockNumber": 142678846,
+      "blockNumber": 142693932,
       "createdAt": "2026-11-14T11:51:31.485Z"
     },
     {
@@ -3352,7 +3352,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010006db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000006",
-      "blockNumber": 142678846,
+      "blockNumber": 142693932,
       "createdAt": "2026-11-14T11:51:31.485Z"
     },
     {
@@ -3364,7 +3364,7 @@
       "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
       "amount": "1.20",
       "txHash": "0x010006db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000006",
-      "blockNumber": 142678846,
+      "blockNumber": 142693932,
       "createdAt": "2026-11-14T11:51:31.485Z"
     },
     {
@@ -3376,7 +3376,7 @@
       "rewardType": "ALLSELL",
       "amount": "0.20",
       "txHash": "0x010006db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000006",
-      "blockNumber": 142678846,
+      "blockNumber": 142693932,
       "createdAt": "2026-11-14T11:51:31.485Z"
     },
     {
@@ -3388,7 +3388,7 @@
       "rewardType": "BOT",
       "amount": "0.05",
       "txHash": "0x010006db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000006",
-      "blockNumber": 142678846,
+      "blockNumber": 142693932,
       "createdAt": "2026-11-14T11:51:31.485Z"
     },
     {
@@ -3400,7 +3400,7 @@
       "rewardType": "DIRECT",
       "amount": "1.50",
       "txHash": "0x010005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 142678845,
+      "blockNumber": 142693931,
       "createdAt": "2026-11-14T11:51:31.347Z"
     },
     {
@@ -3412,7 +3412,7 @@
       "rewardType": "UPGRADE_VAULT",
       "amount": "1.75",
       "txHash": "0x010005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 142678845,
+      "blockNumber": 142693931,
       "createdAt": "2026-11-14T11:51:31.347Z"
     },
     {
@@ -3424,7 +3424,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 142678845,
+      "blockNumber": 142693931,
       "createdAt": "2026-11-14T11:51:31.347Z"
     },
     {
@@ -3436,7 +3436,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 142678845,
+      "blockNumber": 142693931,
       "createdAt": "2026-11-14T11:51:31.347Z"
     },
     {
@@ -3448,7 +3448,7 @@
       "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
       "amount": "1.30",
       "txHash": "0x010005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 142678845,
+      "blockNumber": 142693931,
       "createdAt": "2026-11-14T11:51:31.347Z"
     },
     {
@@ -3460,7 +3460,7 @@
       "rewardType": "ALLSELL",
       "amount": "0.20",
       "txHash": "0x010005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 142678845,
+      "blockNumber": 142693931,
       "createdAt": "2026-11-14T11:51:31.347Z"
     },
     {
@@ -3472,7 +3472,7 @@
       "rewardType": "BOT",
       "amount": "0.05",
       "txHash": "0x010005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 142678845,
+      "blockNumber": 142693931,
       "createdAt": "2026-11-14T11:51:31.347Z"
     },
     {
@@ -3484,7 +3484,7 @@
       "rewardType": "DIRECT_ID1_CLONE_FAMILY_POOL",
       "amount": "1.50",
       "txHash": "0x010004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 142678844,
+      "blockNumber": 142693930,
       "createdAt": "2026-11-14T11:51:31.347Z"
     },
     {
@@ -3496,7 +3496,7 @@
       "rewardType": "UPGRADE_VAULT",
       "amount": "1.75",
       "txHash": "0x010004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 142678844,
+      "blockNumber": 142693930,
       "createdAt": "2026-11-14T11:51:31.347Z"
     },
     {
@@ -3508,7 +3508,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 142678844,
+      "blockNumber": 142693930,
       "createdAt": "2026-11-14T11:51:31.347Z"
     },
     {
@@ -3520,7 +3520,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 142678844,
+      "blockNumber": 142693930,
       "createdAt": "2026-11-14T11:51:31.347Z"
     },
     {
@@ -3532,7 +3532,7 @@
       "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
       "amount": "1.30",
       "txHash": "0x010004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 142678844,
+      "blockNumber": 142693930,
       "createdAt": "2026-11-14T11:51:31.347Z"
     },
     {
@@ -3544,7 +3544,7 @@
       "rewardType": "ALLSELL",
       "amount": "0.20",
       "txHash": "0x010004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 142678844,
+      "blockNumber": 142693930,
       "createdAt": "2026-11-14T11:51:31.347Z"
     },
     {
@@ -3556,7 +3556,7 @@
       "rewardType": "BOT",
       "amount": "0.05",
       "txHash": "0x010004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 142678844,
+      "blockNumber": 142693930,
       "createdAt": "2026-11-14T11:51:31.347Z"
     },
     {
@@ -3568,7 +3568,7 @@
       "rewardType": "DIRECT",
       "amount": "1.50",
       "txHash": "0x010002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678842,
+      "blockNumber": 142693928,
       "createdAt": "2026-11-14T11:51:31.347Z"
     },
     {
@@ -3580,7 +3580,7 @@
       "rewardType": "UPGRADE_VAULT",
       "amount": "1.75",
       "txHash": "0x010002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678842,
+      "blockNumber": 142693928,
       "createdAt": "2026-11-14T11:51:31.347Z"
     },
     {
@@ -3592,7 +3592,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678842,
+      "blockNumber": 142693928,
       "createdAt": "2026-11-14T11:51:31.347Z"
     },
     {
@@ -3604,7 +3604,7 @@
       "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
       "amount": "1.40",
       "txHash": "0x010002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678842,
+      "blockNumber": 142693928,
       "createdAt": "2026-11-14T11:51:31.347Z"
     },
     {
@@ -3616,7 +3616,7 @@
       "rewardType": "ALLSELL",
       "amount": "0.20",
       "txHash": "0x010002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678842,
+      "blockNumber": 142693928,
       "createdAt": "2026-11-14T11:51:31.347Z"
     },
     {
@@ -3628,7 +3628,7 @@
       "rewardType": "BOT",
       "amount": "0.05",
       "txHash": "0x010002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678842,
+      "blockNumber": 142693928,
       "createdAt": "2026-11-14T11:51:31.347Z"
     }
   ],
@@ -3650,8 +3650,9 @@
       "upgradeMode": "MANUAL_WALLET",
       "isClone": false,
       "isExtraId": false,
+      "isAdminFreeUpgrade": false,
       "txHash": "0xup06000248acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:32.703Z"
     },
     {
@@ -3671,8 +3672,9 @@
       "upgradeMode": "CLONE_IN_RANK",
       "isClone": true,
       "isExtraId": false,
+      "isAdminFreeUpgrade": false,
       "txHash": "0xup05000448acb86c42a389efda47cc1b16938eea73f1f8920000000000000001",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:32.560Z"
     },
     {
@@ -3692,8 +3694,9 @@
       "upgradeMode": "MANUAL_WALLET",
       "isClone": false,
       "isExtraId": false,
+      "isAdminFreeUpgrade": false,
       "txHash": "0xup05000348acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678862,
+      "blockNumber": 142693948,
       "createdAt": "2026-11-14T11:51:32.560Z"
     },
     {
@@ -3713,8 +3716,9 @@
       "upgradeMode": "MANUAL_WALLET",
       "isClone": false,
       "isExtraId": false,
+      "isAdminFreeUpgrade": false,
       "txHash": "0xup05000248acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 142678861,
+      "blockNumber": 142693947,
       "createdAt": "2026-11-14T11:51:32.560Z"
     },
     {
@@ -3734,8 +3738,9 @@
       "upgradeMode": "CLONE_IN_RANK",
       "isClone": true,
       "isExtraId": false,
+      "isAdminFreeUpgrade": false,
       "txHash": "0xup04000448acb86c42a389efda47cc1b16938eea73f1f8920000000000000001",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:32.435Z"
     },
     {
@@ -3755,8 +3760,9 @@
       "upgradeMode": "MANUAL_WALLET",
       "isClone": false,
       "isExtraId": false,
+      "isAdminFreeUpgrade": false,
       "txHash": "0xup04000348acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678862,
+      "blockNumber": 142693948,
       "createdAt": "2026-11-14T11:51:32.435Z"
     },
     {
@@ -3776,8 +3782,9 @@
       "upgradeMode": "MANUAL_WALLET",
       "isClone": false,
       "isExtraId": false,
+      "isAdminFreeUpgrade": false,
       "txHash": "0xup04000248acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 142678861,
+      "blockNumber": 142693947,
       "createdAt": "2026-11-14T11:51:32.435Z"
     },
     {
@@ -3797,8 +3804,9 @@
       "upgradeMode": "AUTO_VAULT",
       "isClone": false,
       "isExtraId": true,
+      "isAdminFreeUpgrade": false,
       "txHash": "0xup03000548acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:32.306Z"
     },
     {
@@ -3818,8 +3826,9 @@
       "upgradeMode": "CLONE_IN_RANK",
       "isClone": true,
       "isExtraId": false,
+      "isAdminFreeUpgrade": false,
       "txHash": "0xup03000448acb86c42a389efda47cc1b16938eea73f1f8920000000000000001",
-      "blockNumber": 142678862,
+      "blockNumber": 142693948,
       "createdAt": "2026-11-14T11:51:32.306Z"
     },
     {
@@ -3839,8 +3848,9 @@
       "upgradeMode": "MANUAL_WALLET",
       "isClone": false,
       "isExtraId": false,
+      "isAdminFreeUpgrade": false,
       "txHash": "0xup03000348acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 142678861,
+      "blockNumber": 142693947,
       "createdAt": "2026-11-14T11:51:32.306Z"
     },
     {
@@ -3860,8 +3870,9 @@
       "upgradeMode": "MANUAL_WALLET",
       "isClone": false,
       "isExtraId": false,
+      "isAdminFreeUpgrade": false,
       "txHash": "0xup03000248acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678860,
+      "blockNumber": 142693946,
       "createdAt": "2026-11-14T11:51:32.306Z"
     },
     {
@@ -3881,8 +3892,9 @@
       "upgradeMode": "MANUAL_WALLET",
       "isClone": false,
       "isExtraId": false,
+      "isAdminFreeUpgrade": false,
       "txHash": "0xup02000948acb86c42a389efda47cc1b16938eea73f1f8920000000000000017",
-      "blockNumber": 142678863,
+      "blockNumber": 142693949,
       "createdAt": "2026-11-14T11:51:32.160Z"
     },
     {
@@ -3902,8 +3914,9 @@
       "upgradeMode": "CLONE_IN_RANK",
       "isClone": true,
       "isExtraId": false,
+      "isAdminFreeUpgrade": false,
       "txHash": "0xup02000848acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678862,
+      "blockNumber": 142693948,
       "createdAt": "2026-11-14T11:51:32.160Z"
     },
     {
@@ -3923,8 +3936,9 @@
       "upgradeMode": "CLONE_IN_RANK",
       "isClone": true,
       "isExtraId": false,
+      "isAdminFreeUpgrade": false,
       "txHash": "0xup02000748acb86c42a389efda47cc1b16938eea73f1f8920000000000000001",
-      "blockNumber": 142678861,
+      "blockNumber": 142693947,
       "createdAt": "2026-11-14T11:51:32.160Z"
     },
     {
@@ -3944,8 +3958,9 @@
       "upgradeMode": "AUTO_VAULT",
       "isClone": false,
       "isExtraId": true,
+      "isAdminFreeUpgrade": false,
       "txHash": "0xup02000648acb86c42a389efda47cc1b16938eea73f1f8920000000000000006",
-      "blockNumber": 142678860,
+      "blockNumber": 142693946,
       "createdAt": "2026-11-14T11:51:32.160Z"
     },
     {
@@ -3965,8 +3980,9 @@
       "upgradeMode": "AUTO_VAULT",
       "isClone": false,
       "isExtraId": true,
+      "isAdminFreeUpgrade": false,
       "txHash": "0xup02000548acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 142678859,
+      "blockNumber": 142693945,
       "createdAt": "2026-11-14T11:51:31.998Z"
     },
     {
@@ -3986,8 +4002,9 @@
       "upgradeMode": "CLONE_IN_RANK",
       "isClone": true,
       "isExtraId": false,
+      "isAdminFreeUpgrade": false,
       "txHash": "0xup02000448acb86c42a389efda47cc1b16938eea73f1f8920000000000000001",
-      "blockNumber": 142678858,
+      "blockNumber": 142693944,
       "createdAt": "2026-11-14T11:51:31.998Z"
     },
     {
@@ -4007,8 +4024,9 @@
       "upgradeMode": "MANUAL_WALLET",
       "isClone": false,
       "isExtraId": false,
+      "isAdminFreeUpgrade": false,
       "txHash": "0xup02000348acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 142678857,
+      "blockNumber": 142693943,
       "createdAt": "2026-11-14T11:51:31.998Z"
     },
     {
@@ -4028,8 +4046,9 @@
       "upgradeMode": "MANUAL_WALLET",
       "isClone": false,
       "isExtraId": false,
+      "isAdminFreeUpgrade": false,
       "txHash": "0xup02000248acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 142678856,
+      "blockNumber": 142693942,
       "createdAt": "2026-11-14T11:51:31.998Z"
     }
   ],

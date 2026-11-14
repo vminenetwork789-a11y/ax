@@ -263,24 +263,26 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
           setUpgradeLogs(dbJson.upgradeLogs);
         }
         if (dbJson?.success && Array.isArray(dbJson.data) && dbJson.data.length > 0) {
-          const normalizedLogs: RewardLog[] = dbJson.data.map((item: any) => {
-            const parsedAmt = parseFloat(item.amount);
-            const rankVal = Number(item.rank) || 1;
-            const toIdStr = String(item.toNodeId || '0');
-            let normalizedType = String(item.rewardType || 'DIRECT');
-            if (normalizedType === 'LEVEL' && toIdStr === '0') {
-              normalizedType = 'UNPAID_LEVEL_FAMILY_POOL';
-            }
-            const sanitizedAmt =
-              parsedAmt > 0
-                ? parsedAmt.toFixed(2)
-                : getFallbackRewardUsdt(rankVal, normalizedType);
-            return {
-              ...item,
-              rewardType: normalizedType,
-              amount: sanitizedAmt,
-            };
-          });
+          const normalizedLogs: RewardLog[] = dbJson.data
+            .filter((item: any) => !item?.isAdminFreeUpgrade && parseFloat(item?.amount) > 0)
+            .map((item: any) => {
+              const parsedAmt = parseFloat(item.amount);
+              const rankVal = Number(item.rank) || 1;
+              const toIdStr = String(item.toNodeId || '0');
+              let normalizedType = String(item.rewardType || 'DIRECT');
+              if (normalizedType === 'LEVEL' && toIdStr === '0') {
+                normalizedType = 'UNPAID_LEVEL_FAMILY_POOL';
+              }
+              const sanitizedAmt =
+                parsedAmt > 0
+                  ? parsedAmt.toFixed(2)
+                  : getFallbackRewardUsdt(rankVal, normalizedType);
+              return {
+                ...item,
+                rewardType: normalizedType,
+                amount: sanitizedAmt,
+              };
+            });
 
           // เรียงข้อมูลในตารางโดยอ้างอิงเวลาล่าสุดเป็นหลัก (ใหม่สุด -> เก่าสุด)
           normalizedLogs.sort((a, b) => {
@@ -718,9 +720,11 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
         const cat = String(tx.category || '').toUpperCase();
         const catNorm = cat.includes('REG')
           ? 'REGISTRATION'
-          : cat.includes('UPG')
+          : cat.includes('UPG') || cat.includes('ADMIN')
           ? 'UPGRADE'
           : 'PAYOUT';
+        const amtNum = Number(tx.amountUsdt || 0);
+        if (catNorm === 'PAYOUT' && (tx.isAdminFreeUpgrade || amtNum <= 0)) return;
         const key = tx.id || `${catNorm}-${tx.mainNodeId}-${tx.timestamp}`;
         if (!seenIds.has(key)) {
           seenIds.add(key);
@@ -732,7 +736,7 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
             userAddress: tx.userAddress || '',
             mainNodeId: Number(tx.mainNodeId || 1),
             rank: Number(tx.rank || 1),
-            amountUsdt: Number(tx.amountUsdt || 0),
+            amountUsdt: amtNum,
             timestamp: tx.timestamp || new Date().toISOString(),
             blockNumber: tx.blockNumber,
             txHash: tx.txHash,
@@ -745,6 +749,9 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
 
     // 1. Transactions from API endpoint
     transactions.forEach((tx) => {
+      if (tx.category === 'PAYOUT' && ((tx as any).isAdminFreeUpgrade || Number(tx.amountUsdt || 0) <= 0)) {
+        return;
+      }
       if (!seenIds.has(tx.id)) {
         seenIds.add(tx.id);
         list.push(tx);
@@ -783,30 +790,45 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
       const upgId = `upg-log-${u.id || `${u.mainNodeId}-${u.toRank}`}`;
       if (!seenIds.has(upgId)) {
         seenIds.add(upgId);
-        const cost = parseFloat(u.rankPriceUsdt) || (u as any).costUsdt || 10;
+        const isAdminFree = Boolean((u as any).isAdminFreeUpgrade);
+        const parsedPrice = parseFloat(u.rankPriceUsdt);
+        const cost = isAdminFree
+          ? 0
+          : Number.isFinite(parsedPrice)
+          ? parsedPrice
+          : (u as any).costUsdt || 10;
         list.push({
           id: upgId,
           category: 'UPGRADE',
-          titleTh: `อัพเกรดผังแรงค์ Main ID #${u.mainNodeId} → Rank ${u.toRank}`,
-          titleEn: `Rank Upgrade Main ID #${u.mainNodeId} → Rank ${u.toRank}`,
+          titleTh: isAdminFree
+            ? `Admin อัพ Rank ฟรี Main ID #${u.mainNodeId} → Rank ${u.toRank}`
+            : `อัพเกรดผังแรงค์ Main ID #${u.mainNodeId} → Rank ${u.toRank}`,
+          titleEn: isAdminFree
+            ? `Admin Free Upgrade Main ID #${u.mainNodeId} → Rank ${u.toRank}`
+            : `Rank Upgrade Main ID #${u.mainNodeId} → Rank ${u.toRank}`,
           userAddress: u.owner,
           mainNodeId: Number(u.mainNodeId),
           rank: Number(u.toRank),
           amountUsdt: cost,
           timestamp: u.createdAt || lastSyncedAt || new Date().toISOString(),
           txHash: u.txHash,
-          detailsTh: `เลื่อนแรงค์จาก R${u.fromRank} ไปยัง R${u.toRank} (${cost.toFixed(2)} USDT)`,
-          detailsEn: `Upgraded from R${u.fromRank} to R${u.toRank} (${cost.toFixed(2)} USDT)`,
+          detailsTh: isAdminFree
+            ? `Admin อัปเกรดฟรีจาก R${u.fromRank} ไปยัง R${u.toRank} (0.00 USDT • ไม่จ่ายค่าชั้น/ค่าคอม)`
+            : `เลื่อนแรงค์จาก R${u.fromRank} ไปยัง R${u.toRank} (${cost.toFixed(2)} USDT)`,
+          detailsEn: isAdminFree
+            ? `Admin Free Upgrade from R${u.fromRank} to R${u.toRank} (0.00 USDT • Zero commissions)`
+            : `Upgraded from R${u.fromRank} to R${u.toRank} (${cost.toFixed(2)} USDT)`,
         });
       }
     });
 
     // 4. Payouts & Rewards from logs
     logs.forEach((log) => {
+      const amt = parseFloat(log.amount) || 0;
+      if ((log as any).isAdminFreeUpgrade || amt <= 0) return;
       const rewId = `rew-log-${log.id}`;
       if (!seenIds.has(rewId)) {
         seenIds.add(rewId);
-        const amt = parseFloat(log.amount) || 0;
         const fromNodeTxt = Number(log.fromNodeId) === 0 ? 'Node #0 (Root / ระบบ)' : (Number(log.fromNodeId) === 2 && Number(log.rank) === 2) ? 'Node #2 (Main ID #7)' : `Node #${log.fromNodeId}`;
         const toNodeTxt = Number(log.toNodeId) === 0 ? 'Node #0 (Root / ระบบ)' : (Number(log.toNodeId) === 1 && Number(log.rank) === 2) ? 'Node #1 (Main ID #1)' : `Node #${log.toNodeId}`;
         list.push({
@@ -2067,26 +2089,31 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
               </div>
             ) : (
               filteredUpgrades.map((up) => {
-                const modeInfo =
-                  up.upgradeMode === 'AUTO_VAULT'
-                    ? {
-                        label: language === 'th' ? 'Auto-Upgrade (หัก Vault 100%)' : 'Auto Vault 100%',
-                        cls: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
-                      }
-                    : up.upgradeMode === 'HYBRID_VAULT_WALLET'
-                    ? {
-                        label: language === 'th' ? 'หักยอด Vault + จ่ายส่วนต่างกระเป๋า' : 'Vault + Wallet Top-up',
-                        cls: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
-                      }
-                    : up.upgradeMode === 'CLONE_IN_RANK'
-                    ? {
-                        label: language === 'th' ? 'รหัสโคลนในแรงค์' : 'Rank Clone',
-                        cls: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40',
-                      }
-                    : {
-                        label: language === 'th' ? 'อัปเกรดด้วย USDT จากกระเป๋า' : 'Manual Wallet USDT',
-                        cls: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40',
-                      };
+                const isAdminFree = Boolean((up as any).isAdminFreeUpgrade);
+                const modeInfo = isAdminFree
+                  ? {
+                      label: language === 'th' ? 'Admin อัพ Rank ฟรี (ไม่จ่ายค่าชั้น/ค่าคอม)' : 'Admin Free Upgrade (0% Commission)',
+                      cls: 'bg-fuchsia-500/20 text-fuchsia-300 border-fuchsia-500/40',
+                    }
+                  : up.upgradeMode === 'AUTO_VAULT'
+                  ? {
+                      label: language === 'th' ? 'Auto-Upgrade (หัก Vault 100%)' : 'Auto Vault 100%',
+                      cls: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
+                    }
+                  : up.upgradeMode === 'HYBRID_VAULT_WALLET'
+                  ? {
+                      label: language === 'th' ? 'หักยอด Vault + จ่ายส่วนต่างกระเป๋า' : 'Vault + Wallet Top-up',
+                      cls: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
+                    }
+                  : up.upgradeMode === 'CLONE_IN_RANK'
+                  ? {
+                      label: language === 'th' ? 'รหัสโคลนในแรงค์' : 'Rank Clone',
+                      cls: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40',
+                    }
+                  : {
+                      label: language === 'th' ? 'อัปเกรดด้วย USDT จากกระเป๋า' : 'Manual Wallet USDT',
+                      cls: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40',
+                    };
 
                 return (
                   <div
@@ -2120,7 +2147,11 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
                         <div className="text-[11px] text-slate-400 flex flex-wrap items-center gap-2 font-mono">
                           <span>
                             {language === 'th' ? 'วางใต้โหนด:' : 'Parent:'} #{up.parentId} (
-                            {up.side === 'LEFT' ? 'ซ้าย • จ่ายรางวัล 30%/35%' : 'ขวา • Rebirth'})
+                            {up.side === 'LEFT'
+                              ? isAdminFree
+                                ? 'ซ้าย • Admin ฟรี ไม่จ่ายรางวัล'
+                                : 'ซ้าย • จ่ายรางวัล 30%/35%'
+                              : 'ขวา • Rebirth'})
                           </span>
                           <span className="text-slate-600">•</span>
                           <span>

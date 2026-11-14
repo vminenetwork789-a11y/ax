@@ -35,6 +35,10 @@ export interface WalletTransactionItem {
   detailsTh?: string;
   detailsEn?: string;
   isRead?: boolean;
+  rewardType?: string;
+  fromNodeId?: number;
+  toNodeId?: number;
+  isAdminFreeUpgrade?: boolean;
 }
 
 interface WalletIncomeNotifierProps {
@@ -99,38 +103,60 @@ function playIncomeCoinChime() {
  */
 export function isIncomePayoutTransaction(tx: WalletTransactionItem): boolean {
   if (!tx) return false;
+  if (tx.isAdminFreeUpgrade) return false;
+  if (tx.amountUsdt !== undefined && Number(tx.amountUsdt) <= 0) return false;
+
   const cat = String(tx.category || '').toUpperCase();
-  // Forbid any upgrade or registration
-  if (cat.includes('UPGRADE') || cat.includes('REGIST') || cat.includes('REGISTER')) return false;
-
-  const titleTh = String(tx.titleTh || '');
-  const titleEn = String(tx.titleEn || '');
-
-  // Forbid any upgrade text or registration text
+  // Forbid any upgrade, admin action, or registration
   if (
-    titleTh.includes('อัพเกรด') ||
-    titleTh.includes('เลื่อนแรงค์') ||
-    titleTh.includes('สมัครสมาชิก') ||
-    titleTh.includes('สร้างรหัส') ||
-    titleEn.toLowerCase().includes('upgrade') ||
-    titleEn.toLowerCase().includes('registration') ||
-    titleEn.toLowerCase().includes('registered') ||
-    titleEn.toLowerCase().includes('node created') ||
-    titleEn.toLowerCase().includes('clone created')
+    cat.includes('UPGRADE') ||
+    cat.includes('ADMIN') ||
+    cat.includes('REGIST') ||
+    cat.includes('REGISTER')
   ) {
     return false;
   }
 
-  // Must be PAYOUT or reward/bonus
+  const rewardType = String(tx.rewardType || '').toUpperCase();
+  // UPGRADE_VAULT stays locked inside the smart contract vault for future auto-upgrades/IDs, not paid to wallet
+  if (rewardType.includes('VAULT')) {
+    return false;
+  }
+
+  const titleTh = String(tx.titleTh || '');
+  const titleEn = String(tx.titleEn || '');
+  const titleEnLower = titleEn.toLowerCase();
+
+  // Forbid any upgrade text, vault text, admin-free text, or registration text
+  if (
+    titleTh.includes('อัพเกรด') ||
+    titleTh.includes('เลื่อนแรงค์') ||
+    titleTh.includes('อัพ Rank ฟรี') ||
+    titleTh.includes('Admin อัพ') ||
+    titleTh.includes('สมัครสมาชิก') ||
+    titleTh.includes('สร้างรหัส') ||
+    titleTh.includes('UPGRADE_VAULT') ||
+    titleTh.includes('เข้าคลัง') ||
+    titleEnLower.includes('upgrade') ||
+    titleEnLower.includes('admin free') ||
+    titleEnLower.includes('registration') ||
+    titleEnLower.includes('registered') ||
+    titleEnLower.includes('node created') ||
+    titleEnLower.includes('clone created')
+  ) {
+    return false;
+  }
+
+  // Must be PAYOUT or reward/bonus with positive amount
   return (
     cat === 'PAYOUT' ||
     cat === 'REWARD' ||
     cat === 'BONUS' ||
     titleTh.includes('รับโบนัส') ||
     titleTh.includes('ค่าคอมมิชชั่น') ||
-    titleEn.toLowerCase().includes('payout') ||
-    titleEn.toLowerCase().includes('reward') ||
-    titleEn.toLowerCase().includes('bonus')
+    titleEnLower.includes('payout') ||
+    titleEnLower.includes('reward') ||
+    titleEnLower.includes('bonus')
   );
 }
 
@@ -273,6 +299,11 @@ export const WalletIncomeNotifier: React.FC<WalletIncomeNotifierProps> = ({
         serverTxs.forEach((t) => knownTxIdsRef.current.add(t.id));
         initialLoadDoneRef.current = true;
       }
+
+      setActiveIncomeBanner((curr) => {
+        if (!curr || curr.id.startsWith('test-income-')) return curr;
+        return serverTxs.some((s) => s.id === curr.id) ? curr : null;
+      });
 
       setTransactions((prev) => {
         // Merge without losing test items
