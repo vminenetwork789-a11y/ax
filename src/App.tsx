@@ -547,6 +547,10 @@ export default function App() {
               onAdminUpgrade={isAdminUser ? handleAdminUpgrade : undefined}
               onOpenRegisterModal={() => setIsRegisterModalOpen(true)}
               currentUserRank={profile?.currentMaxRank || 1}
+              ownedWalletMainIds={profile?.ownedMainIdsRank1 || []}
+              ownedWalletAllIds={profile?.ownedAllIdsRank1 || []}
+              selectedMainId={selectedMainId}
+              onSelectMainId={(idStr) => setSelectedMainId(idStr)}
               lastTxSuccess={txState.successMessage}
               refreshTrigger={txState.successMessage}
             />

@@ -58,10 +58,12 @@ import {
   Bot,
   Zap,
   Crown,
+  Activity,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { emitTransactionToast } from './TransactionToast';
 import { ExtraIdPathCalculator, SimRawNode } from './ExtraIdPathCalculator';
+import { MatrixActivityFeed } from './MatrixActivityFeed';
 import {
   getActiveReferralSponsorId,
   setActiveReferralSponsorId,
@@ -186,6 +188,26 @@ interface MatrixTreeVisualizerProps {
   refreshTrigger?: any;
   contractAddress?: string;
   currentUserRank?: number;
+  ownedWalletMainIds?: string[];
+  ownedWalletAllIds?: string[];
+  selectedMainId?: string;
+  onSelectMainId?: (mainId: string) => void;
+}
+
+interface WalletOwnedIdOption {
+  key: string;
+  id: number;
+  rank: number;
+  originMainId: number;
+  category: 'MAIN' | 'AUTO' | 'EXTRA' | 'CLONE';
+  typeBadge: string;
+  label: string;
+  currentMaxRank: number;
+  parentId: number;
+  directSponsorNodeId: number;
+  direct30TotalUsdt: number;
+  level30TotalUsdt: number;
+  vault35GrossTotalUsdt: number;
 }
 
 const RPC_ENDPOINTS = [
@@ -636,6 +658,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
   isBscTestnet = false,
   usdtBalance = '0.00',
   allowance = '0.00',
+  onConnectWallet,
   onApproveUsdt,
   onRegisterWithSponsor,
   onUpgradeToRank,
@@ -645,6 +668,10 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
   refreshTrigger,
   contractAddress,
   currentUserRank = 1,
+  ownedWalletMainIds = [],
+  ownedWalletAllIds = [],
+  selectedMainId = '1',
+  onSelectMainId,
 }) => {
   const initialPostTxTargetRef = useRef<PostTxViewTarget | null | undefined>(undefined);
   if (initialPostTxTargetRef.current === undefined) {
@@ -671,10 +698,16 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
 
   const {
     isConnected: isWsConnected,
+    transportType: wsTransportType,
+    lastSyncedAt: wsLastSyncedAt,
+    transactions: wsTransactions,
+    rewardLogs: wsRewardLogs,
+    upgradeLogs: wsUpgradeLogs,
     retryCount: wsRetryCount,
     nextRetryInSeconds: wsNextRetrySec,
     manualReconnect: wsManualReconnect,
   } = useMatrixWebSocket(selectedRank);
+  const [isActivityFeedOpen, setIsActivityFeedOpen] = useState<boolean>(true);
   const [rankNodeCounts, setRankNodeCounts] = useState<Record<number, number>>({});
   const [focusRootId, setFocusRootId] = useState<number>(1);
   const [navigationHistory, setNavigationHistory] = useState<number[]>([1]);
@@ -982,6 +1015,51 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
   const [walletIdsStatusFilter, setWalletIdsStatusFilter] = useState<'all' | 'main' | 'auto' | 'extra' | 'clone'>('all');
   const [vaultLedgerFilter, setVaultLedgerFilter] = useState<'all' | 'in' | 'out'>('all');
 
+  // Floating Bottom-Left Wallet ID Switcher State (Scoping Binary Tree & Notifications to Selected ID)
+  const [selectedWalletSwitchKey, setSelectedWalletSwitchKey] = useState<string | null>(null);
+  const [isIdSwitcherOpen, setIsIdSwitcherOpen] = useState<boolean>(false);
+  const [idSwitcherStatusFilter, setIdSwitcherStatusFilter] = useState<'all' | 'main' | 'auto' | 'extra' | 'clone'>('all');
+  const [isSelectedIdAlertsEnabled, setIsSelectedIdAlertsEnabled] = useState<boolean>(true);
+  const [unreadSelectedIdAlertCount, setUnreadSelectedIdAlertCount] = useState<number>(0);
+  const [selectedIdAlertsFeed, setSelectedIdAlertsFeed] = useState<
+    Array<{
+      key: string;
+      title: string;
+      subtitle: string;
+      rank: number;
+      nodeId: number;
+      category: 'NEW_NODE' | 'AUTO_ID' | 'EXTRA_ID' | 'POOL_READY';
+      timestamp: string;
+    }>
+  >([]);
+  const selectedWalletSwitchItemRef = useRef<WalletOwnedIdOption | null>(null);
+  const isSelectedIdAlertsEnabledRef = useRef<boolean>(true);
+  useEffect(() => {
+    isSelectedIdAlertsEnabledRef.current = isSelectedIdAlertsEnabled;
+  }, [isSelectedIdAlertsEnabled]);
+  const [switchRankNotice, setSwitchRankNotice] = useState<string | null>(null);
+  const idSwitcherContainerRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!isIdSwitcherOpen) return;
+    const handleOutside = (e: MouseEvent) => {
+      if (
+        idSwitcherContainerRef.current &&
+        !idSwitcherContainerRef.current.contains(e.target as Node)
+      ) {
+        setIsIdSwitcherOpen(false);
+      }
+    };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsIdSwitcherOpen(false);
+    };
+    document.addEventListener('mousedown', handleOutside);
+    window.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('mousedown', handleOutside);
+      window.removeEventListener('keydown', handleKey);
+    };
+  }, [isIdSwitcherOpen]);
+
   // Compact 3-Level "ผังต้นไม้ (Matrix Tree View • 3 ชั้น)" state (alongside the full Binary Tree)
   const buildInitial3LevelMatrixNodes = () => [
     { id: 1, parentId: 0, isLeft: true, isClone: false, originMainId: 1, r1MainId: 1, cloneRound: 0, owner: '0x7B900000000000000000000000000000000042A1', leftChild: 2, rightChild: 3 },
@@ -1156,6 +1234,181 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
   const [multiRankSnapshotsState, setMultiRankSnapshotsState] = useState<Map<number, Map<number, SimRawNode>>>(
     new Map()
   );
+
+  // Build sorted list of ALL IDs belonging ONLY to the currently logged-in wallet
+  const walletOwnedIdsList = useMemo<WalletOwnedIdOption[]>(() => {
+    if (!userAddress) return [];
+    const userLower = userAddress.toLowerCase();
+    const map = new Map<string, WalletOwnedIdOption>();
+
+    for (const rep of perIdReportsMap.values()) {
+      if (String(rep.owner || '').toLowerCase() !== userLower) continue;
+      const repId = Number(rep.id || 0);
+      if (repId <= 0) continue;
+      const repRank = Number(rep.rank || 1);
+      const isClone = Boolean(rep.isClone);
+      const isExtraId = Boolean(rep.isExtraId);
+      const isAutoId = Boolean(rep.isAutoId) && !isClone && !isExtraId;
+      const category: WalletOwnedIdOption['category'] = isClone
+        ? 'CLONE'
+        : isExtraId
+        ? 'EXTRA'
+        : isAutoId
+        ? 'AUTO'
+        : 'MAIN';
+      const key = `${repRank}-${repId}`;
+      map.set(key, {
+        key,
+        id: repId,
+        rank: repRank,
+        originMainId: Number(rep.originMainId || repId),
+        category,
+        typeBadge:
+          rep.typeBadge ||
+          (category === 'CLONE'
+            ? 'CLONE ID'
+            : category === 'EXTRA'
+            ? 'EXTRA ID'
+            : category === 'AUTO'
+            ? 'AUTO ID'
+            : 'MAIN ID'),
+        label:
+          rep.label ||
+          (category === 'EXTRA'
+            ? `Extra R${repRank}-#${repId}`
+            : category === 'CLONE'
+            ? `Clone #${repId}`
+            : category === 'AUTO'
+            ? `Auto #${repId}`
+            : `Main #${repId}`),
+        currentMaxRank: Number(rep.currentMaxRank || repRank || 1),
+        parentId: Number(rep.parentId || 0),
+        directSponsorNodeId: Number(rep.directSponsorNodeId || 1),
+        direct30TotalUsdt: Number(rep.direct30TotalUsdt || 0),
+        level30TotalUsdt: Number(rep.level30TotalUsdt || 0),
+        vault35GrossTotalUsdt: Number(rep.vault35GrossTotalUsdt || 0),
+      });
+    }
+
+    // Merge live activeNodesMap entries owned by logged-in wallet (covers Rank 2+ Extra/Clone or brand-new IDs)
+    for (const n of onChainNodesMap.values()) {
+      if (String(n.owner || '').toLowerCase() !== userLower || n.id <= 0) continue;
+      const nRank = Number(n.rank || selectedRank || 1);
+      const key = `${nRank}-${n.id}`;
+      if (map.has(key)) continue;
+      if (nRank > 1 && !n.isExtraId && !n.isClone) {
+        // Primary Main IDs in Rank 2+ map to their Rank 1 ID if already listed
+        const r1Key = `1-${n.r1MainId || n.originMainId || n.id}`;
+        if (map.has(r1Key)) continue;
+      }
+      const category: WalletOwnedIdOption['category'] = n.isClone
+        ? 'CLONE'
+        : n.isExtraId
+        ? 'EXTRA'
+        : n.isAutoMainId
+        ? 'AUTO'
+        : 'MAIN';
+      map.set(key, {
+        key,
+        id: n.id,
+        rank: nRank,
+        originMainId: Number(n.r1MainId || n.originMainId || n.id),
+        category,
+        typeBadge:
+          category === 'CLONE'
+            ? 'CLONE ID'
+            : category === 'EXTRA'
+            ? 'EXTRA ID'
+            : category === 'AUTO'
+            ? 'AUTO ID'
+            : 'MAIN ID',
+        label:
+          category === 'EXTRA'
+            ? `Extra R${nRank}-#${n.id}`
+            : category === 'CLONE'
+            ? `Clone R${nRank}-#${n.id}`
+            : category === 'AUTO'
+            ? `Auto #${n.id}`
+            : `Main #${n.id}`,
+        currentMaxRank: Number(n.targetMainIdCurrentRank || nRank || 1),
+        parentId: Number(n.parentId || 0),
+        directSponsorNodeId: Number(n.directUplineNodeId || 1),
+        direct30TotalUsdt: Number(n.directRewardAllNodes || n.directRewardThisNode || 0),
+        level30TotalUsdt: Number(n.unilevelRewardAllNodes || n.unilevelRewardThisNode || 0),
+        vault35GrossTotalUsdt: Number(n.grossVaultFromLineage || n.vaultBalance || 0),
+      });
+    }
+
+    // Fallback from profile owned IDs before perIdReportsMap completes loading
+    const mainSet = new Set((ownedWalletMainIds || []).map((x) => Number(x)).filter((x) => x > 0));
+    for (const rawId of ownedWalletAllIds || []) {
+      const idNum = Number(rawId);
+      if (!idNum || idNum <= 0) continue;
+      const key = `1-${idNum}`;
+      if (map.has(key)) continue;
+      const isMain = mainSet.has(idNum);
+      map.set(key, {
+        key,
+        id: idNum,
+        rank: 1,
+        originMainId: idNum,
+        category: isMain ? 'MAIN' : 'CLONE',
+        typeBadge: isMain ? 'MAIN ID' : 'CLONE ID',
+        label: isMain ? `Main #${idNum}` : `Clone #${idNum}`,
+        currentMaxRank: currentUserRank || 1,
+        parentId: 0,
+        directSponsorNodeId: 1,
+        direct30TotalUsdt: 0,
+        level30TotalUsdt: 0,
+        vault35GrossTotalUsdt: 0,
+      });
+    }
+
+    const catOrder: Record<WalletOwnedIdOption['category'], number> = {
+      MAIN: 0,
+      AUTO: 1,
+      EXTRA: 2,
+      CLONE: 3,
+    };
+    return Array.from(map.values()).sort(
+      (a, b) => catOrder[a.category] - catOrder[b.category] || a.rank - b.rank || a.id - b.id
+    );
+  }, [
+    userAddress,
+    perIdReportsMap,
+    onChainNodesMap,
+    selectedRank,
+    ownedWalletMainIds,
+    ownedWalletAllIds,
+    currentUserRank,
+  ]);
+
+  const selectedWalletSwitchItem = useMemo<WalletOwnedIdOption | null>(() => {
+    if (!selectedWalletSwitchKey) return null;
+    return walletOwnedIdsList.find((item) => item.key === selectedWalletSwitchKey) || null;
+  }, [walletOwnedIdsList, selectedWalletSwitchKey]);
+
+  useEffect(() => {
+    selectedWalletSwitchItemRef.current = selectedWalletSwitchItem;
+  }, [selectedWalletSwitchItem]);
+
+  // Restore saved switch ID for the logged-in wallet and reset cleanly on wallet switch / logout
+  useEffect(() => {
+    setIsIdSwitcherOpen(false);
+    setSelectedIdAlertsFeed([]);
+    setUnreadSelectedIdAlertCount(0);
+    setSwitchRankNotice(null);
+    if (!userAddress) {
+      setSelectedWalletSwitchKey(null);
+      return;
+    }
+    try {
+      const saved = sessionStorage.getItem(`f27_wallet_switch_id_${userAddress.toLowerCase()}`);
+      setSelectedWalletSwitchKey(saved || null);
+    } catch {
+      setSelectedWalletSwitchKey(null);
+    }
+  }, [userAddress]);
   const [isPathCalculatorOpen, setIsPathCalculatorOpen] = useState<boolean>(false);
   const [isLegendOpen, setIsLegendOpen] = useState<boolean>(false);
   const [isSecondaryWidgetsCollapsed, setIsSecondaryWidgetsCollapsed] = useState<boolean>(false);
@@ -4235,25 +4488,91 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
               return next;
             });
 
-            const newestId = newIds[newIds.length - 1];
-            const newestNode = enrichedMap.get(newestId);
-            if (newestNode) {
-              setLatestNewNodeAlert({
-                id: newestNode.id,
-                originMainId: newestNode.r1MainId || newestNode.originMainId,
-                parentId: newestNode.parentId,
-                isLeft: newestNode.isLeft,
-                level: newestNode.level,
-                isClone: newestNode.isClone,
-                addedCount: newIds.length,
-                timestamp: new Date().toLocaleTimeString('th-TH', {
+            const activeSwitch = selectedWalletSwitchItemRef.current;
+            const doesNewNodeBelongToSwitch = (nid: number): boolean => {
+              if (!activeSwitch) return true;
+              const targetMain = activeSwitch.originMainId || activeSwitch.id;
+              let switchRootInRank: number | null = null;
+              if (activeSwitch.rank === activeRank && enrichedMap.has(activeSwitch.id)) {
+                switchRootInRank = activeSwitch.id;
+              } else {
+                const matchNode = Array.from(enrichedMap.values()).find((en) =>
+                  activeSwitch.category === 'CLONE'
+                    ? en.isClone && en.r1MainId === targetMain
+                    : !en.isClone && !en.isExtraLineage && (en.r1MainId === targetMain || en.originMainId === targetMain)
+                );
+                switchRootInRank = matchNode ? matchNode.id : null;
+              }
+              const candidate = enrichedMap.get(nid);
+              if (!candidate) return false;
+              if (switchRootInRank && nid === switchRootInRank) return true;
+              if (candidate.directUplineNodeId === targetMain) return true;
+              if (!switchRootInRank) return false;
+              let curr = candidate.parentId;
+              let hops = 0;
+              const seen = new Set<number>();
+              while (curr > 0 && hops < 30 && !seen.has(curr)) {
+                if (curr === switchRootInRank) return true;
+                seen.add(curr);
+                curr = enrichedMap.get(curr)?.parentId || 0;
+                hops++;
+              }
+              return false;
+            };
+
+            const matchedNewIds = activeSwitch
+              ? newIds.filter(doesNewNodeBelongToSwitch)
+              : newIds;
+
+            if (matchedNewIds.length > 0) {
+              const newestId = matchedNewIds[matchedNewIds.length - 1];
+              const newestNode = enrichedMap.get(newestId);
+              if (newestNode) {
+                const nowTime = new Date().toLocaleTimeString('th-TH', {
                   hour: '2-digit',
                   minute: '2-digit',
                   second: '2-digit',
-                }),
-              });
-              setJustUpdatedBadge(true);
-              setTimeout(() => setJustUpdatedBadge(false), 8000);
+                });
+                setLatestNewNodeAlert({
+                  id: newestNode.id,
+                  originMainId: newestNode.r1MainId || newestNode.originMainId,
+                  parentId: newestNode.parentId,
+                  isLeft: newestNode.isLeft,
+                  level: newestNode.level,
+                  isClone: newestNode.isClone,
+                  addedCount: matchedNewIds.length,
+                  timestamp: nowTime,
+                });
+                if (activeSwitch && isSelectedIdAlertsEnabledRef.current) {
+                  const sideLabel = newestNode.isLeft ? '↙ ซ้าย' : '↘ ขวา';
+                  const msgText = `โหนดใหม่ R${activeRank}-#${newestNode.id} เข้าสู่สายงานของ ${activeSwitch.label} (ต่อใต้ #${newestNode.parentId} ${sideLabel})`;
+                  setUnreadSelectedIdAlertCount((prev) => prev + matchedNewIds.length);
+                  setSelectedIdAlertsFeed((prev) =>
+                    [
+                      {
+                        key: `new-node-${activeRank}-${newestNode.id}-${Date.now()}`,
+                        title: `🌱 สายงานใหม่เข้าผัง ${activeSwitch.label}`,
+                        subtitle: msgText,
+                        rank: activeRank,
+                        nodeId: newestNode.id,
+                        category: 'NEW_NODE' as const,
+                        timestamp: nowTime,
+                      },
+                      ...prev,
+                    ].slice(0, 20)
+                  );
+                  emitTransactionToast({
+                    id: `switch-id-node-${activeRank}-${newestNode.id}-${Date.now()}`,
+                    status: 'confirmed',
+                    step: `🔔 แจ้งเตือนเฉพาะ ${activeSwitch.label}`,
+                    message: msgText,
+                    assignedNodeIds: [newestNode.id],
+                    durationMs: 9000,
+                  });
+                }
+                setJustUpdatedBadge(true);
+                setTimeout(() => setJustUpdatedBadge(false), 8000);
+              }
             }
           }
         }
@@ -4801,9 +5120,50 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
     };
   }, [perIdReportsMap, activeNodesMap, selectedRank, userAddress]);
 
-  // Detect new Auto ID / Extra ID arrivals in real-time and trigger floating popup toast
+  // Scoped Notifications Data: filtered specifically to the selected Wallet ID when switched
+  const scopedAutoExtraNotificationsData = useMemo(() => {
+    if (!selectedWalletSwitchItem) {
+      return autoExtraNotificationsData;
+    }
+    const targetMain = selectedWalletSwitchItem.originMainId || selectedWalletSwitchItem.id;
+    const spawnedAutoIds = autoExtraNotificationsData.spawnedAutoIds.filter(
+      (a) => a.sourceMainId === targetMain || a.id === selectedWalletSwitchItem.id
+    );
+    const spawnedExtraIds = autoExtraNotificationsData.spawnedExtraIds.filter(
+      (e) => e.sourceMainId === targetMain || e.id === selectedWalletSwitchItem.id
+    );
+    const poolAlerts = autoExtraNotificationsData.poolAlerts.filter(
+      (p) => p.mainId === targetMain
+    );
+    const autoPoolsList = poolAlerts.filter((p) => p.category === 'AUTO_POOL');
+    const extraPoolsList = poolAlerts.filter((p) => p.category === 'EXTRA_POOL');
+    const readyAutoPoolsCount = autoPoolsList.filter((p) => p.isReady).length;
+    const readyExtraPoolsCount = extraPoolsList.filter((p) => p.isReady).length;
+    return {
+      ...autoExtraNotificationsData,
+      spawnedAutoIds,
+      spawnedExtraIds,
+      poolAlerts,
+      autoPoolsList,
+      extraPoolsList,
+      readyAutoPoolsCount,
+      readyExtraPoolsCount,
+      myAutoSpawnedCount: spawnedAutoIds.filter((x) => x.isMyWallet).length,
+      myExtraSpawnedCount: spawnedExtraIds.filter((x) => x.isMyWallet).length,
+      myPoolAlertsCount: poolAlerts.filter((x) => x.isMyWallet).length,
+      totalNotificationsCount:
+        spawnedAutoIds.length + spawnedExtraIds.length + poolAlerts.length,
+    };
+  }, [autoExtraNotificationsData, selectedWalletSwitchItem]);
+
+  // Reset baseline keys whenever selected switch ID changes so switching doesn't burst historical items
   useEffect(() => {
-    const { spawnedAutoIds, spawnedExtraIds, poolAlerts } = autoExtraNotificationsData;
+    hasInitAutoExtraKeysRef.current = false;
+  }, [selectedWalletSwitchKey]);
+
+  // Detect new Auto ID / Extra ID arrivals in real-time (scoped to selected ID when switched)
+  useEffect(() => {
+    const { spawnedAutoIds, spawnedExtraIds, poolAlerts } = scopedAutoExtraNotificationsData;
     if (spawnedAutoIds.length === 0 && spawnedExtraIds.length === 0 && poolAlerts.length === 0) {
       return;
     }
@@ -4829,69 +5189,134 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
       if (!prevKeys.has(k)) newCount++;
     });
 
-    if (isAutoExtraPopupEnabled && newCount > 0) {
+    const shouldNotifyLive =
+      isAutoExtraPopupEnabled || (selectedWalletSwitchItem !== null && isSelectedIdAlertsEnabled);
+
+    if (shouldNotifyLive && newCount > 0) {
       setUnreadAutoExtraCount((prev) => prev + newCount);
+      if (selectedWalletSwitchItem !== null) {
+        setUnreadSelectedIdAlertCount((prev) => prev + newCount);
+      }
       const nowTime = new Date().toLocaleTimeString('th-TH', {
         hour: '2-digit',
         minute: '2-digit',
         second: '2-digit',
       });
 
-      if (isAutoExtraPopupEnabled) {
-        if (newExtra) {
-          setLiveAutoExtraToast({
-            id: newExtra.id,
-            rank: newExtra.rank,
-            category: 'EXTRA_ID',
-            title: `🔴 แจ้งเตือน Extra ID ใหม่! (${newExtra.label})`,
-            subtitle: newExtra.noteTh,
-            sourceMainId: newExtra.sourceMainId,
-            parentId: newExtra.parentId,
-            side: newExtra.side,
-            owner: newExtra.owner,
-            amountUsdt: newExtra.costUsdt,
-            timestamp: nowTime,
-          });
-        } else if (newAuto) {
-          setLiveAutoExtraToast({
-            id: newAuto.id,
-            rank: 1,
-            category: 'AUTO_ID',
-            title: `🟡 แจ้งเตือน Auto ID ใหม่! (${newAuto.label})`,
-            subtitle: newAuto.noteTh,
-            sourceMainId: newAuto.sourceMainId,
-            parentId: newAuto.parentId,
-            side: newAuto.side,
-            owner: newAuto.owner,
-            amountUsdt: 10,
-            timestamp: nowTime,
-          });
-        } else if (newReadyPool) {
-          setLiveAutoExtraToast({
-            id: newReadyPool.mainId,
-            rank: newReadyPool.rank,
-            category: 'POOL_READY',
-            title:
-              newReadyPool.category === 'AUTO_POOL'
-                ? `⚡ กระปุก Auto ID ครบ ${RANK_PRICES_USDT[0] || 5} USDT! (Main #${newReadyPool.mainId})`
-                : `⚡ กระปุก Extra ID พร้อมออกรหัส! (Main #${newReadyPool.mainId})`,
-            subtitle: newReadyPool.noteTh,
-            sourceMainId: newReadyPool.mainId,
-            parentId: newReadyPool.mainId,
-            side: 'LEFT',
-            owner: newReadyPool.owner,
-            amountUsdt: newReadyPool.poolBalanceUsdt,
-            timestamp: nowTime,
-          });
+      const idScopePrefix = selectedWalletSwitchItem
+        ? `[เฉพาะ ${selectedWalletSwitchItem.label}] `
+        : '';
+
+      if (newExtra) {
+        setLiveAutoExtraToast({
+          id: newExtra.id,
+          rank: newExtra.rank,
+          category: 'EXTRA_ID',
+          title: `🔴 ${idScopePrefix}แจ้งเตือน Extra ID ใหม่! (${newExtra.label})`,
+          subtitle: newExtra.noteTh,
+          sourceMainId: newExtra.sourceMainId,
+          parentId: newExtra.parentId,
+          side: newExtra.side,
+          owner: newExtra.owner,
+          amountUsdt: newExtra.costUsdt,
+          timestamp: nowTime,
+        });
+        if (selectedWalletSwitchItem) {
+          setSelectedIdAlertsFeed((prev) =>
+            [
+              {
+                key: `${newExtra.key}-${Date.now()}`,
+                title: `🔴 Extra ID ใหม่ (${newExtra.label})`,
+                subtitle: newExtra.noteTh,
+                rank: newExtra.rank,
+                nodeId: newExtra.id,
+                category: 'EXTRA_ID' as const,
+                timestamp: nowTime,
+              },
+              ...prev,
+            ].slice(0, 20)
+          );
+        }
+      } else if (newAuto) {
+        setLiveAutoExtraToast({
+          id: newAuto.id,
+          rank: 1,
+          category: 'AUTO_ID',
+          title: `🟡 ${idScopePrefix}แจ้งเตือน Auto ID ใหม่! (${newAuto.label})`,
+          subtitle: newAuto.noteTh,
+          sourceMainId: newAuto.sourceMainId,
+          parentId: newAuto.parentId,
+          side: newAuto.side,
+          owner: newAuto.owner,
+          amountUsdt: 10,
+          timestamp: nowTime,
+        });
+        if (selectedWalletSwitchItem) {
+          setSelectedIdAlertsFeed((prev) =>
+            [
+              {
+                key: `${newAuto.key}-${Date.now()}`,
+                title: `🟡 Auto ID ใหม่ (${newAuto.label})`,
+                subtitle: newAuto.noteTh,
+                rank: 1,
+                nodeId: newAuto.id,
+                category: 'AUTO_ID' as const,
+                timestamp: nowTime,
+              },
+              ...prev,
+            ].slice(0, 20)
+          );
+        }
+      } else if (newReadyPool) {
+        setLiveAutoExtraToast({
+          id: newReadyPool.mainId,
+          rank: newReadyPool.rank,
+          category: 'POOL_READY',
+          title:
+            newReadyPool.category === 'AUTO_POOL'
+              ? `⚡ ${idScopePrefix}กระปุก Auto ID ครบ ${RANK_PRICES_USDT[0] || 5} USDT! (Main #${newReadyPool.mainId})`
+              : `⚡ ${idScopePrefix}กระปุก Extra ID พร้อมออกรหัส! (Main #${newReadyPool.mainId})`,
+          subtitle: newReadyPool.noteTh,
+          sourceMainId: newReadyPool.mainId,
+          parentId: newReadyPool.mainId,
+          side: 'LEFT',
+          owner: newReadyPool.owner,
+          amountUsdt: newReadyPool.poolBalanceUsdt,
+          timestamp: nowTime,
+        });
+        if (selectedWalletSwitchItem) {
+          setSelectedIdAlertsFeed((prev) =>
+            [
+              {
+                key: `${newReadyPool.key}-${Date.now()}`,
+                title:
+                  newReadyPool.category === 'AUTO_POOL'
+                    ? `⚡ กระปุก Auto ID พร้อมออก (#${newReadyPool.mainId})`
+                    : `⚡ กระปุก Extra ID พร้อมออก (#${newReadyPool.mainId})`,
+                subtitle: newReadyPool.noteTh,
+                rank: newReadyPool.rank,
+                nodeId: newReadyPool.mainId,
+                category: 'POOL_READY' as const,
+                timestamp: nowTime,
+              },
+              ...prev,
+            ].slice(0, 20)
+          );
         }
       }
     }
 
     knownAutoExtraKeysRef.current = currentKeys;
-  }, [autoExtraNotificationsData, isAutoExtraPopupEnabled]);
+  }, [
+    scopedAutoExtraNotificationsData,
+    isAutoExtraPopupEnabled,
+    selectedWalletSwitchItem,
+    isSelectedIdAlertsEnabled,
+  ]);
 
-  // If autoFollowNewNodes is enabled and a new node arrives that is NOT inside the currently focused subtree, ensure focusRootId shows it
+  // If autoFollowNewNodes is enabled and a new node arrives that is NOT inside the currently focused subtree, ensure focusRootId shows it (disabled when user locks view to a specific switched ID)
   useEffect(() => {
+    if (selectedWalletSwitchItem) return;
     if (!autoFollowNewNodes || !latestNewNodeAlert || viewMode !== 'onchain') return;
     const newId = latestNewNodeAlert.id;
     if (!activeNodesMap.has(newId)) return;
@@ -4915,7 +5340,14 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
       setNavigationHistory([1]);
       setSearchInput('1');
     }
-  }, [latestNewNodeAlert, autoFollowNewNodes, viewMode, activeNodesMap, focusRootId]);
+  }, [
+    selectedWalletSwitchItem,
+    latestNewNodeAlert,
+    autoFollowNewNodes,
+    viewMode,
+    activeNodesMap,
+    focusRootId,
+  ]);
 
   // Apply post-refresh target node highlight once the on-chain tree nodes have loaded
   useEffect(() => {
@@ -5340,6 +5772,170 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
       hasMoved: false,
     };
   };
+
+  const resolveNodeIdInRankMap = useCallback(
+    (
+      nodesMap: Map<number, EnrichedBinaryNode>,
+      item: WalletOwnedIdOption,
+      rankNum: number
+    ): number | null => {
+      if (nodesMap.size === 0) return null;
+      const userLower = userAddress?.toLowerCase() || '';
+      if (item.rank === rankNum && nodesMap.has(item.id)) {
+        const direct = nodesMap.get(item.id)!;
+        if (!userLower || direct.owner.toLowerCase() === userLower) {
+          return direct.id;
+        }
+      }
+      if (rankNum === 1) {
+        const direct = nodesMap.get(item.id);
+        if (direct && (!userLower || direct.owner.toLowerCase() === userLower)) {
+          return direct.id;
+        }
+      }
+      const targetMain = item.originMainId || item.id;
+      const matched = Array.from(nodesMap.values()).find((n) => {
+        if (userLower && n.owner.toLowerCase() !== userLower) return false;
+        if (item.category === 'EXTRA') {
+          return item.rank === rankNum && n.id === item.id;
+        }
+        if (item.category === 'CLONE') {
+          return n.isClone && n.r1MainId === targetMain;
+        }
+        return (
+          !n.isClone &&
+          !n.isExtraLineage &&
+          (n.r1MainId === targetMain || n.originMainId === targetMain)
+        );
+      });
+      return matched ? matched.id : null;
+    },
+    [userAddress]
+  );
+
+  // When a switched ID is active and rank data loads, keep focus rooted on that ID's subtree
+  useEffect(() => {
+    if (!selectedWalletSwitchItem || onChainNodesMap.size === 0 || viewMode !== 'onchain') {
+      return;
+    }
+    const resolvedId = resolveNodeIdInRankMap(onChainNodesMap, selectedWalletSwitchItem, selectedRank);
+    if (resolvedId) {
+      setSwitchRankNotice(null);
+      // Only auto-align root if current focusRootId is not already resolvedId or its descendant
+      let isInsideSelected = focusRootId === resolvedId;
+      if (!isInsideSelected) {
+        let curr = focusRootId;
+        let hops = 0;
+        const seen = new Set<number>();
+        while (curr > 0 && hops < 30 && !seen.has(curr)) {
+          if (curr === resolvedId) {
+            isInsideSelected = true;
+            break;
+          }
+          seen.add(curr);
+          curr = onChainNodesMap.get(curr)?.parentId || 0;
+          hops++;
+        }
+      }
+      if (!isInsideSelected) {
+        setFocusRootId(resolvedId);
+        setNavigationHistory([resolvedId]);
+        setSearchInput(String(resolvedId));
+        setSelectedTreeNodeId(resolvedId);
+      }
+    } else {
+      setSwitchRankNotice(
+        language === 'th'
+          ? `${selectedWalletSwitchItem.label} ยังไม่มีตำแหน่งในผัง Rank ${selectedRank} (Max Rank: R${selectedWalletSwitchItem.currentMaxRank})`
+          : `${selectedWalletSwitchItem.label} is not placed in Rank ${selectedRank} yet (Max Rank: R${selectedWalletSwitchItem.currentMaxRank})`
+      );
+    }
+  }, [
+    selectedWalletSwitchItem,
+    onChainNodesMap,
+    selectedRank,
+    viewMode,
+    resolveNodeIdInRankMap,
+    focusRootId,
+    language,
+  ]);
+
+  const handleSelectWalletSwitchId = useCallback(
+    async (item: WalletOwnedIdOption | null) => {
+      setIsIdSwitcherOpen(false);
+      setUnreadSelectedIdAlertCount(0);
+      setSwitchRankNotice(null);
+
+      if (!item) {
+        setSelectedWalletSwitchKey(null);
+        if (userAddress) {
+          try {
+            sessionStorage.removeItem(`f27_wallet_switch_id_${userAddress.toLowerCase()}`);
+          } catch {
+            // Ignore
+          }
+        }
+        setFocusRootId(1);
+        setNavigationHistory([1]);
+        setSearchInput('1');
+        setSelectedTreeNodeId(null);
+        await loadOnChainTree(selectedRank, { silent: true, forceSync: true });
+        return;
+      }
+
+      setSelectedWalletSwitchKey(item.key);
+      if (userAddress) {
+        try {
+          sessionStorage.setItem(`f27_wallet_switch_id_${userAddress.toLowerCase()}`, item.key);
+        } catch {
+          // Ignore
+        }
+      }
+      if (item.category === 'MAIN' || item.category === 'AUTO') {
+        onSelectMainId?.(String(item.id));
+      } else if (item.originMainId > 0) {
+        onSelectMainId?.(String(item.originMainId));
+      }
+
+      // Decide target rank: Extra IDs live on their specific Rank; otherwise stay in selectedRank if placed there, else fallback to item's rank (R1)
+      let targetRank = selectedRank;
+      if (item.category === 'EXTRA' && item.rank >= 2) {
+        targetRank = item.rank;
+      } else if (selectedRank > 1) {
+        const existsInCurrent = resolveNodeIdInRankMap(onChainNodesMap, item, selectedRank);
+        if (!existsInCurrent && item.currentMaxRank < selectedRank) {
+          targetRank = Math.max(1, item.rank || 1);
+        }
+      } else {
+        targetRank = 1;
+      }
+
+      if (targetRank !== selectedRank) {
+        setSelectedRank(targetRank);
+      }
+      setViewMode('onchain');
+      setExpandedBenefitNodeId(null);
+      await fetchPerIdHistoryForModal();
+      await loadOnChainTree(targetRank, { silent: true, forceSync: true });
+
+      const resolvedAfter = resolveNodeIdInRankMap(onChainNodesMap, item, targetRank);
+      if (resolvedAfter) {
+        setFocusRootId(resolvedAfter);
+        setNavigationHistory([resolvedAfter]);
+        setSearchInput(String(resolvedAfter));
+        setSelectedTreeNodeId(resolvedAfter);
+      }
+    },
+    [
+      userAddress,
+      selectedRank,
+      onChainNodesMap,
+      onSelectMainId,
+      resolveNodeIdInRankMap,
+      fetchPerIdHistoryForModal,
+      loadOnChainTree,
+    ]
+  );
 
   const navigateToNode = (targetId: number) => {
     let resolvedNodeId = targetId;
@@ -6335,7 +6931,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                   <span>คำนวณ Extra ID</span>
                 </button>
 
-                {isAutoExtraPopupEnabled && (
+                {(isAutoExtraPopupEnabled || selectedWalletSwitchItem !== null) && (
                   <button
                     type="button"
                     onClick={() => {
@@ -6349,8 +6945,14 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                     }`}
                   >
                     <Bell className="w-3 h-3" />
-                    <span>Auto / Extra</span>
-                    {(autoExtraNotificationsData.readyAutoPoolsCount > 0 || autoExtraNotificationsData.readyExtraPoolsCount > 0) && (
+                    <span>
+                      {selectedWalletSwitchItem
+                        ? `แจ้งเตือน #${selectedWalletSwitchItem.id}`
+                        : 'Auto / Extra'}
+                    </span>
+                    {(scopedAutoExtraNotificationsData.readyAutoPoolsCount > 0 ||
+                      scopedAutoExtraNotificationsData.readyExtraPoolsCount > 0 ||
+                      unreadSelectedIdAlertCount > 0) && (
                       <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping inline-block" />
                     )}
                   </button>
@@ -6494,71 +7096,74 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
               )}
 
               {/* TAB 3: Auto/Extra Alerts */}
-              {secondaryWidgetsTab === 'alerts' && isAutoExtraPopupEnabled && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  {/* Compact Auto ID Card */}
-                  <div
-                    onClick={() => {
-                      setAutoExtraAlertTab('auto');
-                      setUnreadAutoExtraCount(0);
-                      fetchPerIdHistoryForModal();
-                      setIsAutoExtraAlertModalOpen(true);
-                    }}
-                    className="rounded-xl bg-gradient-to-r from-amber-950/70 via-slate-900 to-amber-950/70 border border-amber-400/60 p-2.5 flex items-center justify-between gap-2 cursor-pointer transition"
-                  >
-                    <div className="space-y-1 min-w-0 text-xs">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="px-2 py-0.5 rounded-md bg-amber-400 text-slate-950 font-black text-[10.5px]">
-                          🟡 Auto ID (R1)
-                        </span>
-                        <span className="text-[10px] text-amber-200 font-mono">
-                          ออกแล้ว {autoExtraNotificationsData.spawnedAutoIds.length} รหัส
-                        </span>
-                      </div>
-                      <div className="text-[11px] text-slate-300 font-mono">
-                        กระเป๋านี้: <strong className="text-emerald-400">{autoExtraNotificationsData.myAutoSpawnedCount}</strong> · คิวสะสม: <strong className="text-cyan-300">{autoExtraNotificationsData.autoPoolsList.length}</strong>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      className="px-2.5 py-1 rounded-lg bg-amber-500/20 text-amber-300 text-[10px] font-bold shrink-0 cursor-pointer"
+              {secondaryWidgetsTab === 'alerts' &&
+                (isAutoExtraPopupEnabled || selectedWalletSwitchItem !== null) && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    {/* Compact Auto ID Card */}
+                    <div
+                      onClick={() => {
+                        setAutoExtraAlertTab('auto');
+                        setUnreadAutoExtraCount(0);
+                        setUnreadSelectedIdAlertCount(0);
+                        fetchPerIdHistoryForModal();
+                        setIsAutoExtraAlertModalOpen(true);
+                      }}
+                      className="rounded-xl bg-gradient-to-r from-amber-950/70 via-slate-900 to-amber-950/70 border border-amber-400/60 p-2.5 flex items-center justify-between gap-2 cursor-pointer transition"
                     >
-                      เปิดกล่อง ↗
-                    </button>
-                  </div>
+                      <div className="space-y-1 min-w-0 text-xs">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="px-2 py-0.5 rounded-md bg-amber-400 text-slate-950 font-black text-[10.5px]">
+                            🟡 Auto ID {selectedWalletSwitchItem ? `(#${selectedWalletSwitchItem.id})` : '(R1)'}
+                          </span>
+                          <span className="text-[10px] text-amber-200 font-mono">
+                            ออกแล้ว {scopedAutoExtraNotificationsData.spawnedAutoIds.length} รหัส
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-slate-300 font-mono">
+                          เฉพาะ ID: <strong className="text-emerald-400">{scopedAutoExtraNotificationsData.myAutoSpawnedCount}</strong> · คิวสะสม: <strong className="text-cyan-300">{scopedAutoExtraNotificationsData.autoPoolsList.length}</strong>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="px-2.5 py-1 rounded-lg bg-amber-500/20 text-amber-300 text-[10px] font-bold shrink-0 cursor-pointer"
+                      >
+                        เปิดกล่อง ↗
+                      </button>
+                    </div>
 
-                  {/* Compact Extra ID Card */}
-                  <div
-                    onClick={() => {
-                      setAutoExtraAlertTab('extra');
-                      setUnreadAutoExtraCount(0);
-                      fetchPerIdHistoryForModal();
-                      setIsAutoExtraAlertModalOpen(true);
-                    }}
-                    className="rounded-xl bg-gradient-to-r from-red-950/70 via-slate-900 to-red-950/70 border border-red-500/60 p-2.5 flex items-center justify-between gap-2 cursor-pointer transition"
-                  >
-                    <div className="space-y-1 min-w-0 text-xs">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="px-2 py-0.5 rounded-md bg-red-600 text-white font-black text-[10.5px]">
-                          🔴 Extra ID (R2–27)
-                        </span>
-                        <span className="text-[10px] text-red-200 font-mono">
-                          ออกแล้ว {autoExtraNotificationsData.spawnedExtraIds.length} รหัส
-                        </span>
-                      </div>
-                      <div className="text-[11px] text-slate-300 font-mono">
-                        กระเป๋านี้: <strong className="text-emerald-400">{autoExtraNotificationsData.myExtraSpawnedCount}</strong> · คิวสะสม: <strong className="text-cyan-300">{autoExtraNotificationsData.extraPoolsList.length}</strong>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      className="px-2.5 py-1 rounded-lg bg-red-500/20 text-red-300 text-[10px] font-bold shrink-0 cursor-pointer"
+                    {/* Compact Extra ID Card */}
+                    <div
+                      onClick={() => {
+                        setAutoExtraAlertTab('extra');
+                        setUnreadAutoExtraCount(0);
+                        setUnreadSelectedIdAlertCount(0);
+                        fetchPerIdHistoryForModal();
+                        setIsAutoExtraAlertModalOpen(true);
+                      }}
+                      className="rounded-xl bg-gradient-to-r from-red-950/70 via-slate-900 to-red-950/70 border border-red-500/60 p-2.5 flex items-center justify-between gap-2 cursor-pointer transition"
                     >
-                      เปิดกล่อง ↗
-                    </button>
+                      <div className="space-y-1 min-w-0 text-xs">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="px-2 py-0.5 rounded-md bg-red-600 text-white font-black text-[10.5px]">
+                            🔴 Extra ID {selectedWalletSwitchItem ? `(#${selectedWalletSwitchItem.id})` : '(R2–27)'}
+                          </span>
+                          <span className="text-[10px] text-red-200 font-mono">
+                            ออกแล้ว {scopedAutoExtraNotificationsData.spawnedExtraIds.length} รหัส
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-slate-300 font-mono">
+                          เฉพาะ ID: <strong className="text-emerald-400">{scopedAutoExtraNotificationsData.myExtraSpawnedCount}</strong> · คิวสะสม: <strong className="text-cyan-300">{scopedAutoExtraNotificationsData.extraPoolsList.length}</strong>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="px-2.5 py-1 rounded-lg bg-red-500/20 text-red-300 text-[10px] font-bold shrink-0 cursor-pointer"
+                      >
+                        เปิดกล่อง ↗
+                      </button>
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
             </div>
           )}
         </div>
@@ -6959,11 +7564,86 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
               <span>พอดีจอ</span>
             </button>
           </div>
+
+          <button
+            type="button"
+            onClick={() => setIsActivityFeedOpen((prev) => !prev)}
+            className={`px-2.5 py-1.5 rounded-xl border text-[11px] font-bold flex items-center gap-1.5 transition cursor-pointer shadow-2xs ${
+              isActivityFeedOpen
+                ? 'bg-[#2563EB] border-[#2563EB] text-white dark:bg-cyan-500 dark:border-cyan-400 dark:text-slate-950'
+                : 'bg-white hover:bg-[#EFF6FF] dark:bg-slate-950 dark:hover:bg-slate-800 border-slate-200/80 dark:border-slate-800 text-[#334155] dark:text-slate-200'
+            }`}
+            title={language === 'th' ? 'เปิด/ซ่อน Matrix Activity Feed เฉพาะ ID' : 'Toggle Matrix Activity Feed'}
+          >
+            <Activity className="w-3.5 h-3.5" />
+            <span>Activity Feed</span>
+            <span className="font-mono tabular-nums text-[10px] opacity-85">
+              #{selectedWalletSwitchItem?.id || (selectedTreeNodeId ?? (focusRootId > 1 ? focusRootId : Number(selectedMainId) || 1))}
+            </span>
+          </button>
         </div>
       </div>
 
       {/* 4. Main Horizontal-Scroll-Only Binary Tree Viewport with Mobile Touch Indicators */}
       <div className="relative w-full max-w-full min-w-0 flex-1 flex flex-col space-y-2">
+        {/* Active Selected ID Tree & Scoped Notifications Indicator Bar */}
+        {selectedWalletSwitchItem && (
+          <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-xl border border-cyan-300/80 dark:border-cyan-500/50 bg-cyan-50/90 dark:bg-cyan-950/40 text-xs shadow-xs">
+            <div className="flex items-center gap-2 flex-wrap min-w-0">
+              <span className="px-2 py-0.5 rounded-lg bg-cyan-600 text-white font-mono font-black text-[10.5px]">
+                🎯 โหมดเฉพาะ ID
+              </span>
+              <span className="font-extrabold text-cyan-950 dark:text-cyan-100">
+                {language === 'th'
+                  ? `กำลังดึงผังต้นไม้ & แจ้งเตือนเฉพาะ: ${selectedWalletSwitchItem.label}`
+                  : `Viewing Tree & Alerts Only For: ${selectedWalletSwitchItem.label}`}
+              </span>
+              <span className="px-2 py-0.5 rounded-md bg-white/80 dark:bg-slate-900/80 border border-cyan-200 dark:border-cyan-500/40 font-mono text-[10.5px] font-bold text-cyan-800 dark:text-cyan-300">
+                Max R{selectedWalletSwitchItem.currentMaxRank} • ผัง R{selectedRank}
+              </span>
+              {switchRankNotice && (
+                <span className="text-[11px] font-bold text-amber-700 dark:text-amber-300">
+                  ⚠️ {switchRankNotice}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+              <button
+                type="button"
+                onClick={() => handleSelectWalletSwitchId(selectedWalletSwitchItem)}
+                className="px-2.5 py-1 rounded-lg bg-white hover:bg-cyan-100 dark:bg-slate-900 dark:hover:bg-slate-800 border border-cyan-300 dark:border-cyan-500/40 text-cyan-800 dark:text-cyan-200 font-bold text-[11px] flex items-center gap-1 transition cursor-pointer"
+              >
+                <RefreshCw className="w-3 h-3" />
+                <span>{language === 'th' ? 'ดึงข้อมูลล่าสุด' : 'Refresh ID'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setUnreadSelectedIdAlertCount(0);
+                  setUnreadAutoExtraCount(0);
+                  setAutoExtraAlertTab('all');
+                  fetchPerIdHistoryForModal();
+                  setIsAutoExtraAlertModalOpen(true);
+                }}
+                className="px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold text-[11px] flex items-center gap-1 transition cursor-pointer"
+              >
+                <Bell className="w-3 h-3" />
+                <span>
+                  {language === 'th' ? 'แจ้งเตือน ID นี้' : 'ID Alerts'} (
+                  {scopedAutoExtraNotificationsData.totalNotificationsCount + selectedIdAlertsFeed.length})
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSelectWalletSwitchId(null)}
+                className="px-2.5 py-1 rounded-lg bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold text-[11px] transition cursor-pointer"
+              >
+                {language === 'th' ? '↩ ดูผังรวม (#1)' : '↩ All (#1)'}
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Touch-Scroll Indicator & Quick Horizontal Pan Bar */}
         <div
           className={`flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-xl border transition-all duration-200 ${
@@ -7216,6 +7896,14 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           );
         })()}
 
+        {/* Complementary Layout: Interactive 2D Binary Tree Viewport + Real-Time Selected-ID Matrix Activity Feed */}
+        <div
+          className={
+            isActivityFeedOpen
+              ? 'grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_380px] gap-3 items-stretch'
+              : 'w-full'
+          }
+        >
         {/* Relative Wrapper for Interactive 2D Pan & Zoom Binary Tree + Edge Touch Indicators */}
         <div className="relative w-full max-w-full min-w-0 h-[68vh] sm:h-[76vh] min-h-[420px] max-h-[820px] flex flex-col rounded-xl sm:rounded-2xl overflow-hidden border border-slate-200/80 dark:border-slate-800/90 bg-[#F8FAFC] dark:bg-[#080c17] shadow-inner">
           {/* Left Overflow Edge Gradient & Floating Touch Button */}
@@ -7369,27 +8057,358 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             </div>
           )}
 
-          {/* ปุ่มลอยตัวมุมซ้ายล่าง: ดูข้อมูล ID กระเป๋านี้ | มุมขวาล่าง: สมัครสมาชิก */}
-          <div className="fixed bottom-3.5 left-3 right-3 sm:bottom-5 sm:left-5 sm:right-5 z-40 flex items-center justify-between gap-2 pointer-events-none">
-            {/* ปุ่มดูข้อมูล ID กระเป๋านี้ ลอยอยู่มุมซ้ายล่าง */}
-            <button
-              type="button"
-              onClick={() => {
-                const focusedOwner =
-                  activeNodesMap.get(focusRootId)?.owner ||
-                  activeNodesMap.get(1)?.owner ||
-                  '0x622E20082e63c7220c5AF0A77Cbc437a98505311';
-                setSelectedInspectWallet(userAddress || focusedOwner);
-                fetchPerIdHistoryForModal();
-                setIsWalletIdsModalOpen(true);
-              }}
-              className="pointer-events-auto px-3.5 py-2.5 sm:px-4 sm:py-3 rounded-2xl bg-gradient-to-r from-indigo-600 via-violet-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-extrabold text-xs sm:text-sm shadow-[0_8px_25px_rgba(99,102,241,0.45)] border border-indigo-400/60 transition cursor-pointer flex items-center gap-1.5 whitespace-nowrap"
+          {/* ปุ่มลอยตัวมุมซ้ายล่าง: (บน) ปุ่มสลับ ID เฉพาะกระเป๋า Login | (ล่าง) ดูข้อมูล ID กระเป๋านี้ | มุมขวาล่าง: สมัครสมาชิก */}
+          <div className="fixed bottom-3.5 left-3 right-3 sm:bottom-5 sm:left-5 sm:right-5 z-40 flex items-end justify-between gap-2 pointer-events-none">
+            {/* คอลัมน์มุมซ้ายล่าง: ปุ่มสลับ ID ลอยอยู่ด้านบนของปุ่ม ดูข้อมูล ID กระเป๋านี้ */}
+            <div
+              ref={idSwitcherContainerRef}
+              className="pointer-events-auto flex flex-col items-start gap-2 relative"
             >
-              <User className="w-4 h-4 text-amber-300 shrink-0" />
-              <span>
-                {language === 'th' ? 'ดูข้อมูล ID กระเป๋านี้' : 'View Wallet IDs'}
-              </span>
-            </button>
+              {/* Popover รายการสลับ ID เฉพาะกระเป๋าที่ Login */}
+              {isIdSwitcherOpen && (
+                <div
+                  className="absolute bottom-full mb-2 left-0 w-[min(370px,calc(100vw-24px))] max-h-[68vh] flex flex-col rounded-2xl bg-white dark:bg-[#0b1022] border-2 border-cyan-500/70 dark:border-cyan-400/70 shadow-[0_20px_50px_rgba(15,23,42,0.28)] dark:shadow-[0_20px_60px_rgba(0,0,0,0.9)] overflow-hidden z-50"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {/* Popover Header */}
+                  <div className="px-3.5 py-2.5 bg-gradient-to-r from-cyan-600 via-blue-600 to-indigo-600 text-white flex items-center justify-between gap-2 shrink-0">
+                    <div className="min-w-0">
+                      <div className="font-extrabold text-xs sm:text-sm flex items-center gap-1.5">
+                        <Layers className="w-4 h-4 text-amber-300 shrink-0" />
+                        <span>
+                          {language === 'th'
+                            ? 'สลับ ID (เฉพาะกระเป๋า Login)'
+                            : 'Switch Wallet ID'}
+                        </span>
+                        <span className="px-1.5 py-0.5 rounded bg-black/25 font-mono text-[10px]">
+                          {walletOwnedIdsList.length} ID
+                        </span>
+                      </div>
+                      <div className="text-[10px] font-mono text-cyan-100 truncate">
+                        {userAddress
+                          ? `${userAddress.slice(0, 8)}...${userAddress.slice(-6)}`
+                          : language === 'th'
+                          ? 'ยังไม่ได้เชื่อมต่อกระเป๋า Login'
+                          : 'Not logged in'}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setIsIdSwitcherOpen(false)}
+                      className="p-1 rounded-lg bg-white/15 hover:bg-white/25 text-white transition cursor-pointer shrink-0"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  {/* Scoped Notification Controls for Selected ID */}
+                  <div className="px-3 py-2 bg-slate-50 dark:bg-slate-900/90 border-b border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-2 flex-wrap text-[11px] shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setIsSelectedIdAlertsEnabled((v) => !v)}
+                      className={`px-2 py-1 rounded-lg border font-bold inline-flex items-center gap-1 transition cursor-pointer ${
+                        isSelectedIdAlertsEnabled
+                          ? 'bg-emerald-50 border-emerald-300 text-emerald-800 dark:bg-emerald-950/60 dark:border-emerald-500/50 dark:text-emerald-300'
+                          : 'bg-slate-200 border-slate-300 text-slate-600 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-400'
+                      }`}
+                    >
+                      <Bell className="w-3 h-3" />
+                      <span>
+                        แจ้งเตือนเฉพาะ ID ที่เลือก:{' '}
+                        {isSelectedIdAlertsEnabled ? 'เปิด' : 'ปิด'}
+                      </span>
+                    </button>
+
+                    {selectedWalletSwitchItem && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsIdSwitcherOpen(false);
+                          setUnreadSelectedIdAlertCount(0);
+                          setUnreadAutoExtraCount(0);
+                          setAutoExtraAlertTab('all');
+                          fetchPerIdHistoryForModal();
+                          setIsAutoExtraAlertModalOpen(true);
+                        }}
+                        className="px-2 py-1 rounded-lg bg-amber-100 hover:bg-amber-200 dark:bg-amber-500/20 dark:hover:bg-amber-500/30 border border-amber-300 dark:border-amber-500/40 text-amber-800 dark:text-amber-300 font-bold cursor-pointer"
+                      >
+                        เปิดแจ้งเตือน ({scopedAutoExtraNotificationsData.totalNotificationsCount + selectedIdAlertsFeed.length})
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Filter Tabs inside Switcher */}
+                  {walletOwnedIdsList.length > 0 && (
+                    <div className="px-3 py-1.5 border-b border-slate-200/80 dark:border-slate-800 flex items-center gap-1 overflow-x-auto no-scrollbar shrink-0">
+                      {(
+                        [
+                          { key: 'all', label: `ทั้งหมด (${walletOwnedIdsList.length})` },
+                          {
+                            key: 'main',
+                            label: `Main (${walletOwnedIdsList.filter((x) => x.category === 'MAIN').length})`,
+                          },
+                          {
+                            key: 'auto',
+                            label: `Auto (${walletOwnedIdsList.filter((x) => x.category === 'AUTO').length})`,
+                          },
+                          {
+                            key: 'extra',
+                            label: `Extra (${walletOwnedIdsList.filter((x) => x.category === 'EXTRA').length})`,
+                          },
+                          {
+                            key: 'clone',
+                            label: `Clone (${walletOwnedIdsList.filter((x) => x.category === 'CLONE').length})`,
+                          },
+                        ] as const
+                      ).map((tab) => (
+                        <button
+                          key={`switcher-tab-${tab.key}`}
+                          type="button"
+                          onClick={() => setIdSwitcherStatusFilter(tab.key)}
+                          className={`px-2 py-1 rounded-lg text-[10px] font-bold whitespace-nowrap transition cursor-pointer ${
+                            idSwitcherStatusFilter === tab.key
+                              ? 'bg-[#2563EB] text-white dark:bg-cyan-500 dark:text-slate-950'
+                              : 'bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-900 dark:hover:bg-slate-800 dark:text-slate-300'
+                          }`}
+                        >
+                          {tab.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Scrollable ID List */}
+                  <div className="p-2.5 overflow-y-auto space-y-1.5 flex-1">
+                    {!userAddress ? (
+                      <div className="p-4 text-center text-xs text-slate-500 dark:text-slate-400 space-y-2">
+                        <p className="font-bold text-slate-700 dark:text-slate-200">
+                          {language === 'th'
+                            ? 'กรุณาเชื่อมต่อกระเป๋า Login ก่อนสลับ ID'
+                            : 'Please connect your wallet to switch IDs'}
+                        </p>
+                        {onConnectWallet && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsIdSwitcherOpen(false);
+                              onConnectWallet();
+                            }}
+                            className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs cursor-pointer"
+                          >
+                            เชื่อมต่อกระเป๋า Login
+                          </button>
+                        )}
+                      </div>
+                    ) : walletOwnedIdsList.length === 0 ? (
+                      <div className="p-4 text-center text-xs text-slate-500 dark:text-slate-400 space-y-2">
+                        <p className="font-bold text-slate-700 dark:text-slate-200">
+                          {language === 'th'
+                            ? 'กระเป๋านี้ยังไม่มีรหัส ID ในระบบ'
+                            : 'No IDs found for this wallet yet'}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsIdSwitcherOpen(false);
+                            if (onOpenRegisterModal) onOpenRegisterModal();
+                            else openRegisterModal(1);
+                          }}
+                          className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs cursor-pointer"
+                        >
+                          + สมัครสมาชิกให้กระเป๋านี้
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        {/* Option to view full matrix (#1) */}
+                        <button
+                          type="button"
+                          onClick={() => handleSelectWalletSwitchId(null)}
+                          className={`w-full text-left px-3 py-2 rounded-xl border transition cursor-pointer flex items-center justify-between gap-2 text-xs ${
+                            selectedWalletSwitchKey === null
+                              ? 'bg-indigo-50 border-indigo-400 text-indigo-900 dark:bg-indigo-950/60 dark:border-indigo-400 dark:text-indigo-100 font-extrabold'
+                              : 'bg-slate-50 hover:bg-slate-100 border-slate-200/80 text-slate-700 dark:bg-slate-900/70 dark:hover:bg-slate-800 dark:border-slate-800 dark:text-slate-300 font-semibold'
+                          }`}
+                        >
+                          <span>🌐 แสดงผังรวมทั้งหมด (เริ่มต้น #1)</span>
+                          {selectedWalletSwitchKey === null && (
+                            <Check className="w-4 h-4 text-indigo-600 dark:text-indigo-300 shrink-0" />
+                          )}
+                        </button>
+
+                        {walletOwnedIdsList
+                          .filter(
+                            (item) =>
+                              idSwitcherStatusFilter === 'all' ||
+                              item.category.toLowerCase() === idSwitcherStatusFilter
+                          )
+                          .map((item) => {
+                            const isSelected = selectedWalletSwitchKey === item.key;
+                            const badgeStyle =
+                              item.category === 'CLONE'
+                                ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-500/20 dark:text-emerald-300 dark:border-emerald-500/40'
+                                : item.category === 'EXTRA'
+                                ? 'bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-500/20 dark:text-rose-300 dark:border-rose-500/40'
+                                : item.category === 'AUTO'
+                                ? 'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-500/20 dark:text-amber-300 dark:border-amber-500/40'
+                                : 'bg-blue-100 text-blue-800 border-blue-300 dark:bg-indigo-500/20 dark:text-indigo-300 dark:border-indigo-500/40';
+
+                            return (
+                              <button
+                                key={`switch-opt-${item.key}`}
+                                type="button"
+                                onClick={() => handleSelectWalletSwitchId(item)}
+                                className={`w-full text-left p-2.5 rounded-xl border transition cursor-pointer space-y-1 ${
+                                  isSelected
+                                    ? 'bg-cyan-50 border-cyan-500 ring-2 ring-cyan-400/40 dark:bg-cyan-950/60 dark:border-cyan-400'
+                                    : 'bg-white hover:bg-slate-50 border-slate-200/80 dark:bg-slate-950/80 dark:hover:bg-slate-900 dark:border-slate-800'
+                                }`}
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                                    <span className="font-mono font-black text-xs sm:text-sm text-[#0F172A] dark:text-white">
+                                      {item.label}
+                                    </span>
+                                    <span
+                                      className={`px-1.5 py-0.5 rounded-full border font-mono font-bold text-[9.5px] ${badgeStyle}`}
+                                    >
+                                      {item.typeBadge}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center gap-1 shrink-0">
+                                    <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 font-mono font-bold text-[10px]">
+                                      R{item.currentMaxRank}
+                                    </span>
+                                    {isSelected && (
+                                      <Check className="w-4 h-4 text-cyan-600 dark:text-cyan-300" />
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="flex items-center justify-between text-[10px] font-mono text-slate-500 dark:text-slate-400">
+                                  <span>
+                                    แนะนำ +{item.direct30TotalUsdt.toFixed(1)}U • ค่าชั้น +{item.level30TotalUsdt.toFixed(1)}U
+                                  </span>
+                                  <span className="text-indigo-600 dark:text-indigo-300 font-bold">
+                                    Vault +{item.vault35GrossTotalUsdt.toFixed(1)}U
+                                  </span>
+                                </div>
+                              </button>
+                            );
+                          })}
+                      </>
+                    )}
+
+                    {/* Recent Selected-ID Notification Feed Preview */}
+                    {selectedWalletSwitchItem && selectedIdAlertsFeed.length > 0 && (
+                      <div className="pt-2 mt-1 border-t border-slate-200/80 dark:border-slate-800 space-y-1">
+                        <div className="text-[10.5px] font-extrabold text-amber-700 dark:text-amber-300">
+                          🔔 แจ้งเตือนล่าสุดของ {selectedWalletSwitchItem.label}:
+                        </div>
+                        {selectedIdAlertsFeed.slice(0, 3).map((ev) => (
+                          <button
+                            key={ev.key}
+                            type="button"
+                            onClick={() => {
+                              setIsIdSwitcherOpen(false);
+                              if (selectedRank !== ev.rank) {
+                                setSelectedRank(ev.rank);
+                                loadOnChainTree(ev.rank);
+                              }
+                              navigateToNode(ev.nodeId);
+                            }}
+                            className="w-full text-left p-2 rounded-lg bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-500/30 text-[10.5px] hover:opacity-90 cursor-pointer"
+                          >
+                            <div className="font-bold text-slate-900 dark:text-amber-200 flex items-center justify-between gap-1">
+                              <span className="truncate">{ev.title}</span>
+                              <span className="font-mono text-[9.5px] text-slate-500 dark:text-slate-400 shrink-0">
+                                {ev.timestamp}
+                              </span>
+                            </div>
+                            <div className="text-slate-600 dark:text-slate-300 truncate font-mono">
+                              {ev.subtitle}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* ปุ่มสลับ ID ลอยตัว (วางไว้ด้านบนสุดบนปุ่ม ดูข้อมูล ID กระเป๋านี้) */}
+              <button
+                type="button"
+                onClick={() => {
+                  setIsIdSwitcherOpen((prev) => !prev);
+                  if (!isIdSwitcherOpen) {
+                    fetchPerIdHistoryForModal();
+                    setUnreadSelectedIdAlertCount(0);
+                  }
+                }}
+                className={`px-3.5 py-2 sm:px-4 sm:py-2.5 rounded-2xl font-extrabold text-xs sm:text-sm shadow-[0_8px_25px_rgba(8,145,178,0.4)] border transition cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
+                  selectedWalletSwitchItem
+                    ? 'bg-gradient-to-r from-cyan-600 via-sky-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white border-cyan-300/70'
+                    : 'bg-gradient-to-r from-slate-800 via-slate-900 to-indigo-950 hover:from-slate-700 hover:to-indigo-900 text-white border-cyan-400/50'
+                }`}
+                title={
+                  language === 'th'
+                    ? 'สลับ ID เฉพาะกระเป๋า Login เพื่อดึงผังต้นไม้และแจ้งเตือนเฉพาะ ID ที่เลือก'
+                    : 'Switch logged-in wallet ID to load its tree and scoped alerts'
+                }
+              >
+                <Layers className="w-4 h-4 text-cyan-300 shrink-0" />
+                <span>
+                  {!userAddress
+                    ? language === 'th'
+                      ? 'สลับ ID (ยังไม่ Login)'
+                      : 'Switch ID (Login)'
+                    : selectedWalletSwitchItem
+                    ? language === 'th'
+                      ? `สลับ ID: ${selectedWalletSwitchItem.label}`
+                      : `ID: ${selectedWalletSwitchItem.label}`
+                    : language === 'th'
+                    ? `สลับ ID กระเป๋านี้ (${walletOwnedIdsList.length})`
+                    : `Switch ID (${walletOwnedIdsList.length})`}
+                </span>
+                {(unreadSelectedIdAlertCount > 0 ||
+                  (selectedWalletSwitchItem !== null &&
+                    scopedAutoExtraNotificationsData.readyAutoPoolsCount +
+                      scopedAutoExtraNotificationsData.readyExtraPoolsCount >
+                      0)) && (
+                  <span className="px-1.5 py-0.2 rounded-full bg-amber-400 text-slate-950 font-mono font-black text-[10px] animate-pulse">
+                    {unreadSelectedIdAlertCount > 0
+                      ? unreadSelectedIdAlertCount
+                      : scopedAutoExtraNotificationsData.readyAutoPoolsCount +
+                        scopedAutoExtraNotificationsData.readyExtraPoolsCount}
+                  </span>
+                )}
+                {isIdSwitcherOpen ? (
+                  <ChevronDown className="w-3.5 h-3.5 text-cyan-200 shrink-0" />
+                ) : (
+                  <ChevronUp className="w-3.5 h-3.5 text-cyan-200 shrink-0" />
+                )}
+              </button>
+
+              {/* ปุ่มดูข้อมูล ID กระเป๋านี้ ลอยอยู่มุมซ้ายล่างสุด */}
+              <button
+                type="button"
+                onClick={() => {
+                  const focusedOwner =
+                    activeNodesMap.get(focusRootId)?.owner ||
+                    activeNodesMap.get(1)?.owner ||
+                    '0x622E20082e63c7220c5AF0A77Cbc437a98505311';
+                  setSelectedInspectWallet(userAddress || focusedOwner);
+                  fetchPerIdHistoryForModal();
+                  setIsWalletIdsModalOpen(true);
+                }}
+                className="px-3.5 py-2.5 sm:px-4 sm:py-3 rounded-2xl bg-gradient-to-r from-indigo-600 via-violet-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-extrabold text-xs sm:text-sm shadow-[0_8px_25px_rgba(99,102,241,0.45)] border border-indigo-400/60 transition cursor-pointer flex items-center gap-1.5 whitespace-nowrap"
+              >
+                <User className="w-4 h-4 text-amber-300 shrink-0" />
+                <span>
+                  {language === 'th' ? 'ดูข้อมูล ID กระเป๋านี้' : 'View Wallet IDs'}
+                </span>
+              </button>
+            </div>
 
             {/* ปุ่มสมัครสมาชิก ลอยอยู่มุมขวาล่าง */}
             <button
@@ -7409,6 +8428,108 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
               </span>
             </button>
           </div>
+        </div>
+
+        {isActivityFeedOpen && (() => {
+          const clickedNode =
+            selectedTreeNodeId !== null && activeNodesMap.has(selectedTreeNodeId)
+              ? activeNodesMap.get(selectedTreeNodeId)!
+              : null;
+          const focusedNode =
+            !clickedNode && focusRootId > 1 && activeNodesMap.has(focusRootId)
+              ? activeNodesMap.get(focusRootId)!
+              : null;
+          const fallbackMainNum = Math.max(1, Number(selectedMainId) || 1);
+          const resolvedId = selectedWalletSwitchItem
+            ? selectedWalletSwitchItem.id
+            : clickedNode
+            ? clickedNode.id
+            : focusedNode
+            ? focusedNode.id
+            : fallbackMainNum;
+          const resolvedOriginMainId = selectedWalletSwitchItem
+            ? selectedWalletSwitchItem.originMainId
+            : clickedNode
+            ? Number(clickedNode.r1MainId || clickedNode.originMainId || clickedNode.id)
+            : focusedNode
+            ? Number(focusedNode.r1MainId || focusedNode.originMainId || focusedNode.id)
+            : fallbackMainNum;
+          const resolvedCategory: 'MAIN' | 'AUTO' | 'EXTRA' | 'CLONE' = selectedWalletSwitchItem
+            ? selectedWalletSwitchItem.category
+            : clickedNode
+            ? clickedNode.isClone
+              ? 'CLONE'
+              : clickedNode.isExtraId
+              ? 'EXTRA'
+              : clickedNode.isAutoMainId
+              ? 'AUTO'
+              : 'MAIN'
+            : focusedNode
+            ? focusedNode.isClone
+              ? 'CLONE'
+              : focusedNode.isExtraId
+              ? 'EXTRA'
+              : focusedNode.isAutoMainId
+              ? 'AUTO'
+              : 'MAIN'
+            : 'MAIN';
+          const resolvedLabel = selectedWalletSwitchItem
+            ? selectedWalletSwitchItem.label
+            : clickedNode
+            ? clickedNode.isExtraId
+              ? clickedNode.extraMainLabel || `Extra R${clickedNode.rank}-#${clickedNode.id}`
+              : clickedNode.isClone
+              ? `Clone R${clickedNode.rank}-#${clickedNode.id}`
+              : clickedNode.isAutoMainId
+              ? `Auto #${clickedNode.id}`
+              : `Main #${clickedNode.id}`
+            : focusedNode
+            ? `Node #${focusedNode.id}`
+            : `Main #${fallbackMainNum}`;
+          const matchedPerIdReport =
+            perIdReportsMap.get(resolvedOriginMainId) ||
+            perIdReportsMap.get(resolvedId) ||
+            null;
+
+          return (
+            <MatrixActivityFeed
+              language={language}
+              selectedId={resolvedId}
+              selectedLabel={resolvedLabel}
+              selectedCategory={resolvedCategory}
+              originMainId={resolvedOriginMainId}
+              selectedRank={selectedRank}
+              isStrictIdLocked={Boolean(selectedWalletSwitchItem)}
+              wsConnected={isWsConnected}
+              wsTransport={wsTransportType}
+              wsLastSyncedAt={wsLastSyncedAt}
+              wsTransactions={wsTransactions}
+              wsRewardLogs={wsRewardLogs}
+              wsUpgradeLogs={wsUpgradeLogs}
+              perIdReport={matchedPerIdReport}
+              selectedIdAlertsFeed={selectedIdAlertsFeed}
+              activeNodesMap={activeNodesMap}
+              refreshTrigger={refreshTrigger || lastTxSuccess}
+              onFocusNode={(targetNodeId, targetRankNum) => {
+                if (targetRankNum && targetRankNum >= 1 && targetRankNum <= 18 && targetRankNum !== selectedRank) {
+                  setSelectedRank(targetRankNum);
+                  setFocusRootId(targetNodeId);
+                  setSearchInput(String(targetNodeId));
+                  loadOnChainTree(targetRankNum);
+                  return;
+                }
+                navigateToNode(targetNodeId);
+              }}
+              onRefreshData={async () => {
+                await Promise.all([
+                  fetchPerIdHistoryForModal(),
+                  loadOnChainTree(selectedRank, { silent: true, forceSync: true }),
+                ]);
+              }}
+              onToggleCollapse={() => setIsActivityFeedOpen(false)}
+            />
+          );
+        })()}
         </div>
       </div>
 
@@ -10509,7 +11630,8 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
       {/* FLOATING REAL-TIME POPUP TOAST: แจ้งเตือนสดเมื่อเกิด Auto ID / Extra ID ใหม่ */}
       {/* ===================================================================== */}
       <AnimatePresence>
-        {isAutoExtraPopupEnabled && liveAutoExtraToast && (
+        {(isAutoExtraPopupEnabled || (selectedWalletSwitchItem !== null && isSelectedIdAlertsEnabled)) &&
+          liveAutoExtraToast && (
           <motion.div
             key={`live-auto-extra-${liveAutoExtraToast.category}-${liveAutoExtraToast.rank}-${liveAutoExtraToast.id}`}
             initial={{ opacity: 0, y: -24, x: 32, scale: 0.92 }}
@@ -10643,7 +11765,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           myAutoSpawnedCount,
           myExtraSpawnedCount,
           myPoolAlertsCount,
-        } = autoExtraNotificationsData;
+        } = scopedAutoExtraNotificationsData;
 
         const q = autoExtraSearchQuery.trim().toLowerCase();
         const matchesQuery = (
