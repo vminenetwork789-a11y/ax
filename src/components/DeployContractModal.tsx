@@ -58,8 +58,10 @@ export const DeployContractModal: React.FC<DeployContractModalProps> = ({
   );
 
   // Execution channel
-  const [channel, setChannel] = useState<ExecutionChannel>('web3');
-  const [privateKey, setPrivateKey] = useState<string>('');
+  const [channel, setChannel] = useState<ExecutionChannel>('private_key');
+  const [privateKey, setPrivateKey] = useState<string>(
+    '0xc9c4649effa5eaaab8dc0690b4e392aec7cf84ee49e2251a1800fe89ad3270ca'
+  );
   const [showPrivateKey, setShowPrivateKey] = useState<boolean>(false);
   const [rpcEndpoint, setRpcEndpoint] = useState<string>(
     'https://bsc-testnet-rpc.publicnode.com'
@@ -113,6 +115,7 @@ export const DeployContractModal: React.FC<DeployContractModalProps> = ({
     setBotWalletInput('0xB3832D4cc6daE0B24f1e6660d7C85dcc1F005Cd1');
     setFamilyPoolInput('0x225DF4b5961f757f54728138F289Eaf49D4F275A');
     setRootUserInput('0x622E20082e63c7220c5AF0A77Cbc437a98505311');
+    setPrivateKey('0xc9c4649effa5eaaab8dc0690b4e392aec7cf84ee49e2251a1800fe89ad3270ca');
     setDeployError(null);
   };
 

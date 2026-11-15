@@ -189,7 +189,6 @@ export default function App() {
   }, [account, profile]);
 
   const [mainIdVaultsOnChain, setMainIdVaultsOnChain] = useState<Record<number, number>>({});
-  const [selectedMainIdLatestCloneByRank, setSelectedMainIdLatestCloneByRank] = useState<Record<number, number>>({});
   const [selectedMainIdRankOnChain, setSelectedMainIdRankOnChain] = useState<number | null>(null);
   const [selectedMainIdExtraLeftBonus, setSelectedMainIdExtraLeftBonus] = useState<number>(0);
 
@@ -212,12 +211,8 @@ export default function App() {
           const dbData = await dbRes.json();
           if (dbData?.success && dbData.vaultsByRank) {
             const resultMap: Record<number, number> = {};
-            const latestCloneMap: Record<number, number> = {};
             for (let r = 1; r <= 27; r++) {
               resultMap[r] = Number(dbData.vaultsByRank[r] ?? 0);
-              if (r <= 18) {
-                latestCloneMap[r] = Number(dbData.latestCloneByRank?.[r] ?? 0);
-              }
             }
             if (isMounted) {
               setMainIdVaultsOnChain((prev) => {
@@ -225,12 +220,6 @@ export default function App() {
                   (k) => prev[Number(k)] !== resultMap[Number(k)]
                 );
                 return changed || Object.keys(prev).length === 0 ? resultMap : prev;
-              });
-              setSelectedMainIdLatestCloneByRank((prev) => {
-                const changed = Object.keys(latestCloneMap).some(
-                  (k) => prev[Number(k)] !== latestCloneMap[Number(k)]
-                );
-                return changed || Object.keys(prev).length === 0 ? latestCloneMap : prev;
               });
               const nextR = Number(dbData.currentRank || 1);
               setSelectedMainIdRankOnChain((prev) => (prev === nextR ? prev : nextR));
@@ -565,7 +554,6 @@ export default function App() {
               ownedWalletMainIds={profile?.ownedMainIdsRank1 || []}
               ownedWalletAllIds={profile?.ownedAllIdsRank1 || []}
               selectedMainId={selectedMainId}
-              selectedMainIdLatestCloneByRank={selectedMainIdLatestCloneByRank}
               onSelectMainId={(idStr) => setSelectedMainId(idStr)}
               lastTxSuccess={txState.successMessage}
               refreshTrigger={txState.successMessage}

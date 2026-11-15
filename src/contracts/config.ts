@@ -1,5 +1,5 @@
 export const DEFAULT_CONTRACT_ADDRESS =
-  import.meta.env?.VITE_CONTRACT_ADDRESS || '0x424323b398080439DEe4Ddb8D326A0bbD39db9a5';
+  import.meta.env?.VITE_CONTRACT_ADDRESS || '0xB3832D4cc6daE0B24f1e6660d7C85dcc1F005Cd1';
 export const DEFAULT_USDT_ADDRESS =
   import.meta.env?.VITE_USDT_ADDRESS || '0x05f24E1F598DF1aE8d0B424ce978f8ea33bB752b';
 
@@ -46,10 +46,6 @@ const LEGACY_CONTRACT_ADDRESSES = new Set([
   '0xd3e4e4d7f367e563756d82989bb930b0261eb2ba',
   '0x49a754084903678b7d46ff2934edb037cd1ab518',
   '0x8b2ef84f543f5c1dfa8240a1853d63efe66006eb',
-  '0xb3832d4cc6dae0b24f1e6660d7c85dcc1f005cd1',
-  '0xbe7012a27d8c648faacd89d00b73633e880db7cc',
-  '0xce4b7f8471e275681ed6da5b52a53115078866fe',
-  '0x1ea774f84748e97673fe93bf456d87d9b01a3ffd',
 ]);
 
 const LEGACY_USDT_ADDRESSES = new Set([
@@ -271,14 +267,12 @@ export const MATRIX_ABI = [
   'function mainIdCurrentMaxRank(uint256) external view returns (uint8)',
   'function mainIdNodeInRank(uint256, uint8) external view returns (uint256)',
   'function mainNodeLatestCloneId(uint8, uint256) external view returns (uint256)',
-  'function getLatestCloneByMainIdAndRank(uint256 _mainId, uint8 _rank) external view returns (uint256)',
   'function nodeDirectSponsorNodeId(uint8, uint256) external view returns (uint256)',
   'function nodeCloneRound(uint8, uint256) external view returns (uint8)',
   'function nodeCloneTotalCount(uint8, uint256) external view returns (uint256)',
   'function getNodeCloneRound(uint8, uint256) external view returns (uint8)',
   'function getNodeCloneTotalCount(uint8, uint256) external view returns (uint256)',
   'function getNodeVault(uint8 _rank, uint256 _nodeId) external view returns (uint256)',
-  'function getPendingCloneCount() external view returns (uint256)',
 
   // State-changing Functions
   'function register(uint256 _sponsorNodeId) external',
@@ -290,7 +284,6 @@ export const MATRIX_ABI = [
   'function checkAndProcessAutoExtraId(address _user, uint8 _currentRank) external',
   'function checkAndProcessAutoExtraIdForNode(address _user, uint8 _currentRank, uint256 _sponsorNodeId) external',
   'function processPendingExtraIdQueue(uint256 _r1MainId, uint8 _maxBatch) external returns (uint8 processed)',
-  'function processCloneQueue(uint256 _maxIterations) external',
   'function adminUpgradeRank(address _user, uint8 _targetRank) external',
   'function adminUpgradeRankForMainId(uint256 _r1MainId, uint8 _targetRank) external',
   'function setSystemWallets(address _allSell, address _bot, address _familyPool) external',
@@ -307,7 +300,6 @@ export const MATRIX_ABI = [
   'event RankUpgraded(address indexed user, uint8 fromRank, uint8 toRank, uint256 newNodeId, bool isAutoUpgrade)',
   'event AutoNewMainIdCreated(address indexed user, uint256 count, uint256 vaultDiff)',
   'event AutoExtraIdCreated(address indexed user, uint8 indexed rank, uint256 nodeId)',
-  'event CloneQueued(uint8 indexed rank, uint256 indexed parentId, uint256 pendingCount)',
 ];
 
 export const CONTRACT_ABI = MATRIX_ABI;

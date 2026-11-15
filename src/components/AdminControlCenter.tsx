@@ -338,13 +338,7 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
           await contract.setSystemWallets.staticCall(a, b, f);
           tx = await contract.setSystemWallets(a, b, f);
         } else if (actionName === 'emergencyWithdrawToken') {
-          const tokenContract = new ethers.Contract(
-            params.token,
-            ['function decimals() view returns (uint8)'],
-            provider
-          );
-          const tokenDecimals = Number(await tokenContract.decimals().catch(() => 18)) || 18;
-          const wei = ethers.parseUnits(String(params.amount), tokenDecimals);
+          const wei = ethers.parseUnits(String(params.amount), 18);
           await contract.emergencyWithdrawToken.staticCall(params.token, wei);
           tx = await contract.emergencyWithdrawToken(params.token, wei);
         } else if (actionName === 'emergencyWithdrawNative') {
@@ -1520,9 +1514,6 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
                           }),
                         });
                         const data = await res.json();
-                        if (!res.ok || data?.success === false) {
-                          throw new Error(data?.error || 'ประมวลผล Extra ID ไม่สำเร็จ');
-                        }
                         await fetchAdminOverview();
                         if (typeof window !== 'undefined') {
                           window.dispatchEvent(new CustomEvent('matrix:tree:refresh'));

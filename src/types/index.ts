@@ -16,7 +16,6 @@ export interface UserVault {
   balance: string;
   firstNodeId?: string;
   latestNodeId?: string;
-  latestCloneId?: string;
   updatedAt: string;
 }
 
@@ -41,8 +40,6 @@ export interface UserProfile {
   currentMaxRank: number;
   mainNodeIdRank1: string;
   latestCloneIdRank1: string;
-  latestCloneByRank?: Record<number, string>;
-  latestCloneByMainIdAndRank?: Record<string, Record<number, string>>;
   ownedMainIdsRank1?: string[];
   ownedCloneIdsRank1?: string[];
   ownedAllIdsRank1?: string[];

@@ -172,18 +172,6 @@ export const UserProfileCard: React.FC<UserProfileCardProps> = ({
               </>
             )}
           </p>
-          <p className="text-[10px] text-cyan-300/90 mt-0.5 truncate font-mono">
-            {language === 'th' ? `โคลนล่าสุด #${selectedMainId} (R${selectedInspectRank}): ` : `Latest Clone #${selectedMainId} (R${selectedInspectRank}): `}
-            <strong className="text-cyan-200">
-              {(() => {
-                const lc =
-                  profile?.latestCloneByMainIdAndRank?.[String(selectedMainId)]?.[selectedInspectRank] ||
-                  (selectedInspectRank === 1 ? profile?.latestCloneIdRank1 : '0') ||
-                  '0';
-                return lc !== '0' ? `#${lc}` : '-';
-              })()}
-            </strong>
-          </p>
         </div>
 
         {/* Card 4: Vault Balance & Pools Scoped to Main ID */}

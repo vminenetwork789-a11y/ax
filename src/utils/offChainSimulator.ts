@@ -20,7 +20,6 @@ export interface InMemoryMatrixNode {
   isClone: boolean;
   originMainId?: string;
   directSponsorNodeId?: string;
-  cloneRound?: number;
 }
 
 export interface WalletNodeDetail {
@@ -64,8 +63,6 @@ export interface SpawnedCloneStep {
   triggeredByParentId: string;
   cloneParentId: string;
   cloneIsLeft: boolean;
-  cloneRound?: number;
-  originMainId?: string;
 }
 
 export interface SimulationStepLog {
@@ -254,8 +251,7 @@ export function buildCloneLineageMap(
         const prevCount = mainNodeCloneRoundCount.get(originId) || 0;
         const currentCount = prevCount + 1;
         mainNodeCloneRoundCount.set(originId, currentCount);
-        const cloneRound =
-          n.cloneRound && n.cloneRound > 0 ? n.cloneRound : ((currentCount - 1) % 2) + 1;
+        const cloneRound = ((currentCount - 1) % 2) + 1;
         lineageMap.set(idStr, {
           nodeId: idStr,
           isClone: true,
@@ -597,26 +593,11 @@ function simulateRightChildCloneCascade(
     parentSponsor
   );
 
-  // นับจำนวนโคลนที่เคยเกิดขึ้นแล้วของรหัสหลักต้นสังกัด (originMainId) นี้:
-  // - รอบคี่ (Round 1, 3, 5... => existingClones % 2 === 0): ช่วยทีมสปอนเซอร์ (ต่อ Sponsor / โคลนของ Sponsor)
-  // - รอบคู่ (Round 2, 4, 6... => existingClones % 2 === 1): ช่วยผังกลางโลก (Global BFS ใต้ Root #1)
-  let existingClonesForOrigin = 0;
-  for (const existingNode of Object.values(rankNodes)) {
-    if (!existingNode.isClone) continue;
-    const exMeta = lineageMap.get(existingNode.id.toString());
-    const exOrigin = exMeta?.originMainId || existingNode.originMainId || existingNode.id.toString();
-    if (exOrigin === cloneOriginMainIdStr) {
-      existingClonesForOrigin++;
-    }
-  }
-  const roundIndex = existingClonesForOrigin % 2;
-  const cloneRound = roundIndex + 1;
-  state.currentToggle = roundIndex === 0 ? 1 : 0;
-
-  const clonePlacement: { parentId: bigint; isLeft: boolean } =
-    roundIndex === 0
-      ? findClonePlacementSlot(rankNodes, parentSponsor, targetSponsorNodeId)
-      : findFirstAvailableUnder(rankNodes, 1n);
+  const clonePlacement = findClonePlacementSlot(
+    rankNodes,
+    parentSponsor,
+    targetSponsorNodeId
+  );
 
   state.nextNodeId += 1n;
   const cloneNodeId = state.nextNodeId;
@@ -632,7 +613,6 @@ function simulateRightChildCloneCascade(
     isClone: true,
     originMainId: cloneOriginMainIdStr,
     directSponsorNodeId: targetSponsorNodeId.toString(),
-    cloneRound,
   };
 
   const targetParentNode = rankNodes[clonePlacement.parentId.toString()];
@@ -660,8 +640,6 @@ function simulateRightChildCloneCascade(
     triggeredByParentId: triggerParentId.toString(),
     cloneParentId: clonePlacement.parentId.toString(),
     cloneIsLeft: clonePlacement.isLeft,
-    cloneRound,
-    originMainId: cloneOriginMainIdStr,
   });
 
   // If the clone itself landed on a RIGHT child slot, Solidity recursively triggers another clone!
@@ -681,8 +659,7 @@ function simulateRightChildCloneCascade(
 export async function loadOnChainRank1State(
   providerOrSigner: ethers.Provider | ethers.Signer | null,
   contractAddress: string = CONTRACT_ADDRESS,
-  sponsorNodeId: number = 1,
-  excludeTicketId?: string
+  sponsorNodeId: number = 1
 ): Promise<{
   rankNodes: RankNodesMap;
   ownerProfiles: Record<string, OwnerProfileCache>;
@@ -727,9 +704,6 @@ export async function loadOnChainRank1State(
             leftChild: BigInt(n.leftChild || 0),
             rightChild: BigInt(n.rightChild || 0),
             isClone: Boolean(n.isClone),
-            originMainId: n.originMainId ? String(n.originMainId) : undefined,
-            directSponsorNodeId: n.directSponsorNodeId ? String(n.directSponsorNodeId) : undefined,
-            cloneRound: n.cloneRound ? Number(n.cloneRound) : undefined,
           };
           if (ownerStr && ownerStr !== ethers.ZeroAddress) {
             uniqueOwners.add(ownerStr.toLowerCase());
@@ -782,12 +756,7 @@ export async function loadOnChainRank1State(
       const rawNodesList = await Promise.all(
         ids.map(async (id) => {
           try {
-            const [n, origBn, spNodeBn, roundBn] = await Promise.all([
-              contract.rankNodes(1, id),
-              contract.nodeOriginMainId(1, id).catch(() => 0n),
-              contract.nodeDirectSponsorNodeId(1, id).catch(() => 0n),
-              contract.nodeCloneRound(1, id).catch(() => 0n),
-            ]);
+            const n = await contract.rankNodes(1, id);
             return {
               id: BigInt(n.id ?? n[0]),
               owner: String(n.owner ?? n[1]),
@@ -796,9 +765,6 @@ export async function loadOnChainRank1State(
               leftChild: BigInt(n.leftChild ?? n[4]),
               rightChild: BigInt(n.rightChild ?? n[5]),
               isClone: Boolean(n.isClone ?? n[6]),
-              originMainId: Number(origBn) > 0 ? String(origBn) : undefined,
-              directSponsorNodeId: Number(spNodeBn) > 0 ? String(spNodeBn) : undefined,
-              cloneRound: Number(roundBn) > 0 ? Number(roundBn) : undefined,
             };
           } catch {
             return null;
@@ -863,9 +829,8 @@ export async function loadOnChainRank1State(
       if (queueData.activeReservations && Array.isArray(queueData.activeReservations)) {
         const now = Date.now();
         for (const res of queueData.activeReservations) {
-          if (excludeTicketId && res.ticketId === excludeTicketId) continue;
-          if (res.status === 'RESERVED' && now <= res.expiresAt && Number(res.rank || 1) === 1) {
-            for (const item of res.batchDetails || []) {
+          if (res.status === 'RESERVED' && now <= res.expiresAt) {
+            for (const item of res.batchDetails) {
               const pKey = String(item.targetParentId);
               if (rankNodes[pKey]) {
                 if (item.isLeft) {
@@ -882,35 +847,7 @@ export async function loadOnChainRank1State(
                 leftChild: 0n,
                 rightChild: 0n,
                 isClone: Boolean(item.isClone),
-                originMainId: String(item.assignedNodeId),
-                directSponsorNodeId: String(res.sponsorNodeId || 1),
               };
-              const assignedBn = BigInt(item.assignedNodeId);
-              if (assignedBn > totalNodes) totalNodes = assignedBn;
-            }
-            for (const vClone of res.virtualClones || []) {
-              const pKey = String(vClone.targetParentId);
-              if (rankNodes[pKey]) {
-                if (vClone.isLeft) {
-                  rankNodes[pKey].leftChild = BigInt(vClone.cloneNodeId);
-                } else {
-                  rankNodes[pKey].rightChild = BigInt(vClone.cloneNodeId);
-                }
-              }
-              rankNodes[String(vClone.cloneNodeId)] = {
-                id: BigInt(vClone.cloneNodeId),
-                owner: vClone.owner,
-                directSponsor: res.sponsorAddress,
-                parentId: BigInt(vClone.targetParentId),
-                leftChild: 0n,
-                rightChild: 0n,
-                isClone: true,
-                originMainId: String(vClone.originMainId || vClone.cloneNodeId),
-                directSponsorNodeId: String(vClone.directSponsorNodeId || res.sponsorNodeId || 1),
-                cloneRound: Number(vClone.cloneRound || 1),
-              };
-              const cloneBn = BigInt(vClone.cloneNodeId);
-              if (cloneBn > totalNodes) totalNodes = cloneBn;
             }
           }
         }
@@ -931,78 +868,6 @@ export async function loadOnChainRank1State(
   };
 }
 
-async function ensureCloneQueueCheckedInSimulator(
-  signerOrProvider: ethers.Signer | ethers.Provider | null,
-  contractAddress: string,
-  onProgress?: (msg: string) => void,
-  reason = 'SIMULATOR_PRE_ID_CHECK',
-  allowOnChainFlush = false
-): Promise<void> {
-  onProgress?.('กำลังตรวจสอบคิวโคลนนิ่งก่อนคำนวณตำแหน่ง...');
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
-    try {
-      const res = await fetch('/api/matrix/ensure-clone-queue', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason }),
-        signal: controller.signal,
-      });
-      if (res.ok) {
-        const data = await res.json().catch(() => null);
-        if (data && typeof data.pendingAfter === 'number' && data.pendingAfter > 0 && allowOnChainFlush) {
-          throw new Error(
-            `ยังมีคิวโคลนนิ่งค้างอยู่ ${data.pendingAfter} รายการ กรุณารอเคลียร์คิวให้เสร็จก่อน`
-          );
-        }
-      }
-    } finally {
-      clearTimeout(timeoutId);
-    }
-  } catch (err: any) {
-    if (allowOnChainFlush && err?.message?.includes('ยังมีคิวโคลนนิ่งค้างอยู่')) {
-      throw err;
-    }
-  }
-
-  if (allowOnChainFlush && signerOrProvider && 'sendTransaction' in signerOrProvider) {
-    const contract = new ethers.Contract(contractAddress, CONTRACT_ABI, signerOrProvider);
-    if (
-      typeof contract.getPendingCloneCount === 'function' &&
-      typeof contract.processCloneQueue === 'function'
-    ) {
-      for (let round = 0; round < 10; round++) {
-        const pendingBn: bigint = await contract
-          .getPendingCloneCount()
-          .then((v: any) => BigInt(v || 0))
-          .catch(() => 0n);
-        if (pendingBn <= 0n) break;
-        const batchSize = pendingBn > 16n ? 16n : pendingBn;
-        onProgress?.(
-          `พบคิวโคลนนิ่งบนเชนค้างอยู่ ${pendingBn.toString()} รายการ กำลังเคลียร์คิวโคลนนิ่งก่อน (${round + 1})...`
-        );
-        const flushTx = await contract.processCloneQueue(batchSize);
-        await flushTx.wait();
-        await Promise.race([
-          fetch('/api/db/sync?rank=1&fast=1', { method: 'POST' }).catch(() => {}),
-          new Promise((resolve) => setTimeout(resolve, 2500)),
-        ]);
-      }
-
-      const finalPending: bigint = await contract
-        .getPendingCloneCount()
-        .then((v: any) => BigInt(v || 0))
-        .catch(() => 0n);
-      if (finalPending > 0n) {
-        throw new Error(
-          `ยังมีคิวโคลนนิ่งค้างอยู่บนเชน ${finalPending.toString()} รายการ กรุณารอเคลียร์คิวให้เสร็จก่อน`
-        );
-      }
-    }
-  }
-}
-
 // --- 5. ฟังก์ชันค้นหาตำแหน่งที่จะลงออโต้ (Auto-Placement Preview สำหรับแสดงบน UI แบบ Real-Time) ---
 export async function previewOffChainSimulation(
   providerOrSigner: ethers.Provider | ethers.Signer | null,
@@ -1010,8 +875,7 @@ export async function previewOffChainSimulation(
   sponsorNodeId: number,
   applicantsQueue: ApplicantItem[],
   onProgress: (msg: string) => void = () => {},
-  mode: PlacementMode = 'contract_round',
-  excludeTicketId?: string
+  mode: PlacementMode = 'contract_round'
 ) {
   let rankNodes: RankNodesMap = {};
   let ownerProfiles: Record<string, OwnerProfileCache> = {};
@@ -1021,36 +885,9 @@ export async function previewOffChainSimulation(
   let sponsorReason = 'Valid main sponsor ID';
   let sponsorAddress = CONTRACT_ADDRESS;
 
-  // เช็คคิวโคลนนิ่งฝั่ง Backend ก่อนโหลดผังมาจำลองทุกครั้ง (ไม่เปิดหน้าต่างกระเป๋าในโหมดพรีวิว)
-  try {
-    const statusRes = await fetch('/api/matrix/clone-queue-status').catch(() => null);
-    if (statusRes && statusRes.ok) {
-      const statusJson = await statusRes.json().catch(() => null);
-      if (
-        statusJson &&
-        (Number(statusJson.pendingOnChain || 0) > 0 || Boolean(statusJson.isBotProcessingQueue))
-      ) {
-        await ensureCloneQueueCheckedInSimulator(
-          providerOrSigner,
-          contractAddress,
-          onProgress,
-          'PREVIEW_SIMULATION',
-          false
-        );
-      }
-    }
-  } catch {
-    // Non-fatal in preview mode
-  }
-
   try {
     onProgress('กำลังค้นหาตำแหน่งว่างในผังไบนารี่แบบออโต้ (Auto-Placement Sync)...');
-    const loaded = await loadOnChainRank1State(
-      providerOrSigner,
-      contractAddress,
-      sponsorNodeId,
-      excludeTicketId
-    );
+    const loaded = await loadOnChainRank1State(providerOrSigner, contractAddress, sponsorNodeId);
     rankNodes = loaded.rankNodes;
     ownerProfiles = loaded.ownerProfiles;
     totalNodes = loaded.totalNodes;
@@ -1239,8 +1076,7 @@ export async function executeOffChainSimulationAndBatch(
   sponsorNodeId: number,
   applicantsQueue: ApplicantItem[],
   onProgress: (msg: string) => void = () => {},
-  mode: PlacementMode = 'contract_round',
-  excludeTicketId?: string
+  mode: PlacementMode = 'contract_round'
 ): Promise<{
   success: boolean;
   txHash?: string;
@@ -1256,15 +1092,6 @@ export async function executeOffChainSimulationAndBatch(
     const userAddress = await signer.getAddress();
     const contract = new ethers.Contract(contractAddress, CONTRACT_ABI, signer);
 
-    // 1. บังคับเช็คและเคลียร์คิวโคลนนิ่งก่อนคำนวณตำแหน่งสำหรับเปิด ID ทุกครั้ง
-    await ensureCloneQueueCheckedInSimulator(
-      signer,
-      contractAddress,
-      onProgress,
-      'EXECUTE_BATCH_PRE_SIM',
-      true
-    );
-
     onProgress(`กำลังค้นหาตำแหน่งว่างออโต้ใต้ Sponsor #${sponsorNodeId}...`);
     const simResult = await previewOffChainSimulation(
       signer,
@@ -1272,8 +1099,7 @@ export async function executeOffChainSimulationAndBatch(
       sponsorNodeId,
       applicantsQueue,
       onProgress,
-      mode,
-      excludeTicketId
+      mode
     );
 
     if (!simResult.sponsorIsValid) {
@@ -1283,12 +1109,16 @@ export async function executeOffChainSimulationAndBatch(
     const count = applicantsQueue.length;
     if (count === 0) throw new Error('จำนวนโหนดที่สมัครต้องมากกว่า 0');
 
+    const rankPrice: bigint = ethers.parseUnits(String(RANK_PRICES_USDT[0] || 5), 18);
+
     let usdtAddress: string = USDT_ADDRESS;
     try {
       usdtAddress = await contract.usdt();
     } catch {
       usdtAddress = USDT_ADDRESS;
     }
+
+    const totalCost = rankPrice * BigInt(count);
 
     onProgress('กำลังตรวจสอบยอด USDT และวงเงินอนุมัติ (Allowance)...');
     const usdtContract = new ethers.Contract(
@@ -1308,9 +1138,6 @@ export async function executeOffChainSimulationAndBatch(
     } catch {
       usdtDecimals = 18;
     }
-
-    const rankPrice: bigint = ethers.parseUnits(String(RANK_PRICES_USDT[0] || 5), usdtDecimals);
-    const totalCost = rankPrice * BigInt(count);
 
     const usdtBalance: bigint = await usdtContract.balanceOf(userAddress);
     if (usdtBalance < totalCost) {
@@ -1333,38 +1160,29 @@ export async function executeOffChainSimulationAndBatch(
       await approveTx.wait();
     }
 
-    // 2. เช็คคิวโคลนนิ่งและรีเฟรชการคำนวณตำแหน่งจากสถานะเชนล่าสุดอีกครั้งก่อนส่งธุรกรรมทุกครั้ง
-    try {
-      await ensureCloneQueueCheckedInSimulator(
-        signer,
-        contractAddress,
-        onProgress,
-        'EXECUTE_BATCH_PRE_TX',
-        true
-      );
-      onProgress(
-        `ถึงคิวส่งแล้ว! กำลังตรวจสอบตำแหน่งสายตรงและโคลนนิ่งของ Sponsor #${sponsorNodeId} ล่าสุด...`
-      );
-      const latestSim = await previewOffChainSimulation(
-        signer,
-        contractAddress,
-        sponsorNodeId,
-        applicantsQueue,
-        undefined,
-        mode,
-        excludeTicketId
-      );
-      if (latestSim.targetParentIds.length === count) {
-        simResult.targetParentIds = latestSim.targetParentIds;
-        simResult.targetParentIdsBigInt = latestSim.targetParentIdsBigInt;
-        simResult.isLefts = latestSim.isLefts;
-        simResult.stepLogs = latestSim.stepLogs;
+    // รีเฟรชการคำนวณตำแหน่งจากสถานะเชนล่าสุดอีกครั้งก่อนส่งธุรกรรม เพื่อให้มั่นใจว่าตรงกับรหัสหลักของผู้แนะนำ (#sponsorNodeId)
+    if (mode === 'contract_round') {
+      try {
+        onProgress(
+          `ถึงคิวส่งแล้ว! กำลังตรวจสอบตำแหน่งสายตรงและโคลนนิ่งของ Sponsor #${sponsorNodeId} ล่าสุด...`
+        );
+        const latestSim = await previewOffChainSimulation(
+          signer,
+          contractAddress,
+          sponsorNodeId,
+          applicantsQueue,
+          undefined,
+          mode
+        );
+        if (latestSim.targetParentIds.length === count) {
+          simResult.targetParentIds = latestSim.targetParentIds;
+          simResult.targetParentIdsBigInt = latestSim.targetParentIdsBigInt;
+          simResult.isLefts = latestSim.isLefts;
+          simResult.stepLogs = latestSim.stepLogs;
+        }
+      } catch (cpErr) {
+        console.warn('Notice re-verifying placement before sending batch:', cpErr);
       }
-    } catch (cpErr: any) {
-      if (cpErr?.message?.includes('ยังมีคิวโคลนนิ่งค้างอยู่')) {
-        throw cpErr;
-      }
-      console.warn('Notice re-verifying placement before sending batch:', cpErr);
     }
 
     const firstParent = simResult.targetParentIds[0];

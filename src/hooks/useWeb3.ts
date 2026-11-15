@@ -201,9 +201,6 @@ export function useWeb3() {
               currentMaxRank: Number(data.profile.currentMaxRank || 0),
               mainNodeIdRank1: String(data.profile.mainNodeIdRank1 || '0'),
               latestCloneIdRank1: String(data.profile.latestCloneIdRank1 || '0'),
-              latestCloneByRank: data.profile.latestCloneByRank || {},
-              latestCloneByMainIdAndRank:
-                data.profile.latestCloneByMainIdAndRank || data.latestCloneByMainIdAndRank || {},
               ownedMainIdsRank1: data.profile.ownedMainIdsRank1 || [],
               ownedCloneIdsRank1: data.profile.ownedCloneIdsRank1 || [],
               ownedAllIdsRank1: data.profile.ownedAllIdsRank1 || [],
@@ -313,40 +310,13 @@ export function useWeb3() {
       }
 
       const isRegisteredByNodes = ownedAllIdsRank1.length > 0;
-      const fallbackLatestByMainRank: Record<string, Record<number, string>> = {};
-      if (ownedMainIdsRank1.length > 0) {
-        await Promise.all(
-          ownedMainIdsRank1.map(async (mIdStr) => {
-            const mMap: Record<number, string> = {};
-            const mIdNum = Number(mIdStr);
-            await Promise.all(
-              Array.from({ length: 18 }, (_, i) => i + 1).map(async (rNum) => {
-                try {
-                  const lcBn = await matrixContract
-                    .getLatestCloneByMainIdAndRank(mIdNum, rNum)
-                    .catch(() => matrixContract.mainNodeLatestCloneId(rNum, mIdNum).catch(() => 0n));
-                  mMap[rNum] = String(Number(lcBn || 0n));
-                } catch {
-                  mMap[rNum] = '0';
-                }
-              })
-            );
-            fallbackLatestByMainRank[mIdStr] = mMap;
-          })
-        );
-      }
-      const primaryMainFallback = ownedMainIdsRank1[0] || ownedAllIdsRank1[0] || '0';
-      const primaryRankMapFallback = fallbackLatestByMainRank[primaryMainFallback] || {};
       setProfile({
         isRegistered: isRegisteredByNodes,
         sponsor: ethers.ZeroAddress,
         sponsorMainNodeId: isRegisteredByNodes ? '1' : '0',
         currentMaxRank: isRegisteredByNodes ? 1 : 0,
-        mainNodeIdRank1: primaryMainFallback,
-        latestCloneIdRank1:
-          primaryRankMapFallback[1] || ownedCloneIdsRank1[ownedCloneIdsRank1.length - 1] || '0',
-        latestCloneByRank: primaryRankMapFallback,
-        latestCloneByMainIdAndRank: fallbackLatestByMainRank,
+        mainNodeIdRank1: ownedMainIdsRank1[0] || ownedAllIdsRank1[0] || '0',
+        latestCloneIdRank1: ownedCloneIdsRank1[ownedCloneIdsRank1.length - 1] || '0',
         ownedMainIdsRank1,
         ownedCloneIdsRank1,
         ownedAllIdsRank1,
@@ -914,77 +884,6 @@ export function useWeb3() {
     }
   };
 
-  // --- Clone Queue Pre-Check Helper (บังคับตรวจสอบ/เคลียร์คิวโคลนนิ่งก่อนดำเนินการเกี่ยวกับ ID ทุกครั้ง) ---
-  const ensureCloneQueueCheckedBeforeIdAction = async (
-    matrixContract?: ethers.Contract | null,
-    reason = 'PRE_ID_ACTION'
-  ) => {
-    setTxState((prev) => ({
-      ...prev,
-      step: 'กำลังตรวจสอบคิวโคลนนิ่งก่อนดำเนินการ...',
-    }));
-
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8000);
-      try {
-        const res = await fetch('/api/matrix/ensure-clone-queue', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ reason }),
-          signal: controller.signal,
-        });
-        if (res.ok) {
-          const data = await res.json().catch(() => null);
-          if (data && typeof data.pendingAfter === 'number' && data.pendingAfter > 0) {
-            throw new Error(
-              `ยังมีคิวโคลนนิ่งค้างอยู่ ${data.pendingAfter} รายการ กรุณารอเคลียร์คิวให้เสร็จก่อน`
-            );
-          }
-        }
-      } finally {
-        clearTimeout(timeoutId);
-      }
-    } catch (err: any) {
-      if (err?.message?.includes('ยังมีคิวโคลนนิ่งค้างอยู่')) {
-        throw err;
-      }
-    }
-
-    if (matrixContract && typeof matrixContract.getPendingCloneCount === 'function') {
-      for (let round = 0; round < 10; round++) {
-        const pendingBn: bigint = await matrixContract
-          .getPendingCloneCount()
-          .then((v: any) => BigInt(v || 0))
-          .catch(() => 0n);
-        if (pendingBn <= 0n) break;
-        if (typeof matrixContract.processCloneQueue !== 'function') break;
-
-        const batchSize = pendingBn > 16n ? 16n : pendingBn;
-        setTxState((prev) => ({
-          ...prev,
-          step: `พบคิวโคลนนิ่งบนเชนค้างอยู่ ${pendingBn.toString()} รายการ กำลังเคลียร์คิวโคลนนิ่งก่อน (${round + 1})...`,
-        }));
-        const flushTx = await matrixContract.processCloneQueue(batchSize);
-        await flushTx.wait();
-        await Promise.race([
-          fetch('/api/db/sync?rank=1&fast=1', { method: 'POST' }).catch(() => {}),
-          new Promise((resolve) => setTimeout(resolve, 2500)),
-        ]);
-      }
-
-      const finalPending: bigint = await matrixContract
-        .getPendingCloneCount()
-        .then((v: any) => BigInt(v || 0))
-        .catch(() => 0n);
-      if (finalPending > 0n) {
-        throw new Error(
-          `ยังมีคิวโคลนนิ่งค้างอยู่บนเชน ${finalPending.toString()} รายการ กรุณารอเคลียร์คิวให้เสร็จก่อน`
-        );
-      }
-    }
-  };
-
   // --- FIFO Placement Queue (BullMQ + Redis / In-Memory Lock) Helpers ---
   const requestQueuePlacementReservation = async (params: {
     owner: string;
@@ -1174,7 +1073,6 @@ export function useWeb3() {
         if (!targetOwner) {
           throw new Error('กรุณาเข้าสู่ระบบกระเป๋าก่อนทำการสมัครสมาชิก');
         }
-        await ensureCloneQueueCheckedBeforeIdAction(null, 'REGISTER_FALLBACK');
         return await fallbackDatabaseRegister(targetOwner);
       }
 
@@ -1184,10 +1082,6 @@ export function useWeb3() {
 
       const matrixContract = new ethers.Contract(currentContract, MATRIX_ABI, signer);
       const usdtContract = new ethers.Contract(currentUsdt, USDT_ABI, signer);
-
-      // ตรวจสอบและเคลียร์คิวโคลนนิ่งก่อนเปิด ID ใหม่ทุกครั้ง
-      await ensureCloneQueueCheckedBeforeIdAction(matrixContract, 'REGISTER');
-
       const r1UnitPrice = RANK_PRICES_USDT[0] || 5;
       const modeToUse: PlacementMode = autoOptions?.mode || 'contract_round';
       const hasManualParent = Boolean(autoOptions?.targetParentId && Number(autoOptions.targetParentId) > 0);
@@ -1279,8 +1173,7 @@ export function useWeb3() {
             sponsorNodeId,
             [{ owner: userAddr }],
             undefined,
-            modeToUse,
-            activeTicket?.ticketId
+            modeToUse
           );
           if (sim.targetParentIds.length > 0) {
             autoParentId = Number(sim.targetParentIds[0]);
@@ -1483,10 +1376,9 @@ export function useWeb3() {
         err?.code === 'ACTION_REJECTED' ||
         err?.code === 4001 ||
         String(err?.message || '').toLowerCase().includes('user rejected');
-      const isCloneQueueBlocked = String(err?.message || '').includes('ยังมีคิวโคลนนิ่งค้างอยู่');
 
       const fallbackOwner = autoOptions?.owner || account || '';
-      if (!isUserRejected && !isCloneQueueBlocked && fallbackOwner) {
+      if (!isUserRejected && fallbackOwner) {
         try {
           return await fallbackDatabaseRegister(fallbackOwner);
         } catch (dbErr: any) {
@@ -1529,10 +1421,6 @@ export function useWeb3() {
 
       const matrixContract = new ethers.Contract(currentContract, MATRIX_ABI, signer);
       const usdtContract = new ethers.Contract(currentUsdt, USDT_ABI, signer);
-
-      // ตรวจสอบและเคลียร์คิวโคลนนิ่งก่อนสมัครแบบกลุ่ม (Batch Register) ทุกครั้ง
-      await ensureCloneQueueCheckedBeforeIdAction(matrixContract, 'REGISTER_BATCH');
-
       const r1UnitPrice = RANK_PRICES_USDT[0] || 5;
 
       const [usdtDecimalsRes, onChainR1Raw, currentAllowanceRes] = await Promise.all([
@@ -1787,9 +1675,6 @@ export function useWeb3() {
 
       const matrixContract = new ethers.Contract(currentContract, MATRIX_ABI, signer);
       const usdtContract = new ethers.Contract(currentUsdt, USDT_ABI, signer);
-
-      // ตรวจสอบและเคลียร์คิวโคลนนิ่งก่อนอัปเกรดแรงค์ (ซึ่งอาจแตก Auto ID / Extra ID) ทุกครั้ง
-      await ensureCloneQueueCheckedBeforeIdAction(matrixContract, 'UPGRADE_RANK');
 
       let usdtDecimals = 18;
       try {
@@ -2083,10 +1968,6 @@ export function useWeb3() {
       const { signer, userAddr } = await ensureWalletAndBscTestnet();
       const currentContract = contractAddressRef.current || CONTRACT_ADDRESS;
       const matrixContract = new ethers.Contract(currentContract, MATRIX_ABI, signer);
-
-      // ตรวจสอบและเคลียร์คิวโคลนนิ่งก่อนเกิด Auto New Main ID ทุกครั้ง
-      await ensureCloneQueueCheckedBeforeIdAction(matrixContract, 'AUTO_NEW_MAIN_ID');
-
       const totalBefore = Number(await matrixContract.totalNodesInRank(1).catch(() => 0n));
 
       const mIdNum = Number(targetMainId);
@@ -2178,10 +2059,6 @@ export function useWeb3() {
         const { signer, userAddr } = await ensureWalletAndBscTestnet();
         const currentContract = contractAddressRef.current || CONTRACT_ADDRESS;
         const matrixContract = new ethers.Contract(currentContract, MATRIX_ABI, signer);
-
-        // ตรวจสอบและเคลียร์คิวโคลนนิ่งก่อนเกิด Auto Extra ID ทุกครั้ง
-        await ensureCloneQueueCheckedBeforeIdAction(matrixContract, 'AUTO_EXTRA_ID');
-
         const totalBefore = Number(await matrixContract.totalNodesInRank(currentRank).catch(() => 0n));
 
         let tx: any;
@@ -2213,10 +2090,7 @@ export function useWeb3() {
         });
         const totalAfter = Number(await matrixContract.totalNodesInRank(currentRank).catch(() => BigInt(totalBefore)));
         createdNodesCount = Math.max(0, totalAfter - totalBefore);
-      } catch (chainErr: any) {
-        if (String(chainErr?.message || '').includes('ยังมีคิวโคลนนิ่งค้างอยู่')) {
-          throw chainErr;
-        }
+      } catch (chainErr) {
         console.warn('On-chain Auto Extra ID notice, reconciling via Database:', chainErr);
       }
 
@@ -2228,16 +2102,11 @@ export function useWeb3() {
 
       let dbCreatedCount = 0;
       let dbCreatedRank = currentRank;
-      if (apiRes) {
-        const apiJson = await apiRes.json().catch(() => null);
-        if (!apiRes.ok && apiJson?.error) {
-          throw new Error(String(apiJson.error));
-        }
-        if (apiRes.ok && apiJson) {
-          dbCreatedCount = Number(apiJson?.createdCount || 0);
-          if (Array.isArray(apiJson?.createdNodes) && apiJson.createdNodes.length > 0) {
-            dbCreatedRank = Number(apiJson.createdNodes[0].targetRank || currentRank);
-          }
+      if (apiRes && apiRes.ok) {
+        const apiJson = await apiRes.json();
+        dbCreatedCount = Number(apiJson?.createdCount || 0);
+        if (Array.isArray(apiJson?.createdNodes) && apiJson.createdNodes.length > 0) {
+          dbCreatedRank = Number(apiJson.createdNodes[0].targetRank || currentRank);
         }
       }
 
@@ -2292,11 +2161,6 @@ export function useWeb3() {
 
     try {
       const { signer, userAddr } = await ensureWalletAndBscTestnet();
-      const currentContract = contractAddressRef.current || CONTRACT_ADDRESS;
-
-      // ตรวจสอบและเคลียร์คิวโคลนนิ่งก่อนจองคิวและคำนวณตำแหน่ง Batch Register ทุกครั้ง
-      const preCheckContract = new ethers.Contract(currentContract, MATRIX_ABI, signer);
-      await ensureCloneQueueCheckedBeforeIdAction(preCheckContract, 'SIMULATE_AND_BATCH_REGISTER');
 
       try {
         setTxState((prev) => ({
@@ -2315,6 +2179,7 @@ export function useWeb3() {
         console.warn('Queue batch reservation notice:', qErr);
       }
 
+      const currentContract = contractAddressRef.current || CONTRACT_ADDRESS;
       const result = await executeOffChainSimulationAndBatch(
         signer,
         currentContract,
@@ -2324,8 +2189,7 @@ export function useWeb3() {
           setTxState((prev) => ({ ...prev, step: msg }));
           if (onStatusCallback) onStatusCallback(msg);
         },
-        mode,
-        activeBatchTicket?.ticketId
+        mode
       );
 
       if (result.success) {
@@ -2420,12 +2284,8 @@ export function useWeb3() {
   };
 
   const inspectRankData = useCallback(
-    async (rank: number, mainId?: number | string) => {
+    async (rank: number) => {
       const rankNum = Math.min(Math.max(Number(rank) || 1, 1), 18);
-      const targetMainIdStr =
-        mainId !== undefined && Number(mainId) > 0
-          ? String(Number(mainId))
-          : profile?.mainNodeIdRank1 || '1';
       const currentPriceNum = RANK_PRICES_USDT[rankNum - 1] ?? 5;
       const nextPriceNum = rankNum < 18 ? (RANK_PRICES_USDT[rankNum] ?? 0) : 0;
       const formatPrice = (val: number) =>
@@ -2437,7 +2297,7 @@ export function useWeb3() {
       // 1. Read from our Database first (/api/matrix/inspect-rank)
       try {
         const dbRes = await fetch(
-          `/api/matrix/inspect-rank?rank=${rankNum}&address=${account || ''}&mainId=${targetMainIdStr}&contract=${currentContract}`,
+          `/api/matrix/inspect-rank?rank=${rankNum}&address=${account || ''}&contract=${currentContract}`,
           { headers: { Accept: 'application/json' } }
         );
         if (dbRes.ok) {
@@ -2446,7 +2306,6 @@ export function useWeb3() {
             return {
               firstNodeId: String(dbJson.firstNodeId || '0'),
               latestNodeId: String(dbJson.latestNodeId || '0'),
-              latestCloneId: String(dbJson.latestCloneId || '0'),
               upgradeVaultBalance: String(dbJson.upgradeVaultBalance || '0.00'),
               rankPrice: String(dbJson.rankPrice || formattedCurrentPrice),
               nextRankPrice: String(dbJson.nextRankPrice || defaultNextPrice),
@@ -2459,16 +2318,10 @@ export function useWeb3() {
 
       // 2. Fallback to already-loaded profile vaults from Database
       const matchingVault = profile?.vaults?.find((v) => v.rank === rankNum);
-      const profileLatestClone =
-        profile?.latestCloneByMainIdAndRank?.[targetMainIdStr]?.[rankNum] ||
-        profile?.latestCloneByRank?.[rankNum] ||
-        matchingVault?.latestCloneId ||
-        (rankNum === 1 ? profile?.latestCloneIdRank1 || '0' : '0');
       if (matchingVault) {
         return {
           firstNodeId: matchingVault.firstNodeId || (rankNum === 1 ? profile?.mainNodeIdRank1 || '1' : '0'),
           latestNodeId: matchingVault.latestNodeId || (rankNum === 1 ? profile?.latestCloneIdRank1 || '0' : '0'),
-          latestCloneId: String(profileLatestClone),
           upgradeVaultBalance: matchingVault.balance || '0.00',
           rankPrice: formattedCurrentPrice,
           nextRankPrice: defaultNextPrice,
@@ -2484,12 +2337,7 @@ export function useWeb3() {
           targetAddr = String(node1.owner ?? node1[1] ?? '');
         }
         if (targetAddr && targetAddr !== ethers.ZeroAddress) {
-          const [rankInfo, lcBn] = await Promise.all([
-            matrixContract.getUserRankInfo(targetAddr, rankNum),
-            matrixContract
-              .getLatestCloneByMainIdAndRank(Number(targetMainIdStr) || 1, rankNum)
-              .catch(() => matrixContract.mainNodeLatestCloneId(rankNum, Number(targetMainIdStr) || 1).catch(() => 0n)),
-          ]);
+          const rankInfo = await matrixContract.getUserRankInfo(targetAddr, rankNum);
           let formattedVault = '0.00';
           const formattedNextPrice = defaultNextPrice;
 
@@ -2515,7 +2363,6 @@ export function useWeb3() {
           return {
             firstNodeId: rankInfo[0].toString(),
             latestNodeId: rankInfo[1].toString(),
-            latestCloneId: String(Number(lcBn || 0n)),
             upgradeVaultBalance: formattedVault,
             rankPrice: formattedCurrentPrice,
             nextRankPrice: formattedNextPrice,
@@ -2528,7 +2375,6 @@ export function useWeb3() {
       return {
         firstNodeId: rankNum === 1 ? profile?.mainNodeIdRank1 || '1' : '0',
         latestNodeId: rankNum === 1 ? profile?.latestCloneIdRank1 || '0' : '0',
-        latestCloneId: String(profileLatestClone),
         upgradeVaultBalance: '0.00',
         rankPrice: formattedCurrentPrice,
         nextRankPrice: defaultNextPrice,

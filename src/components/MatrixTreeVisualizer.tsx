@@ -192,7 +192,6 @@ interface MatrixTreeVisualizerProps {
   ownedWalletMainIds?: string[];
   ownedWalletAllIds?: string[];
   selectedMainId?: string;
-  selectedMainIdLatestCloneByRank?: Record<number, number>;
   onSelectMainId?: (mainId: string) => void;
 }
 
@@ -210,7 +209,6 @@ interface WalletOwnedIdOption {
   direct30TotalUsdt: number;
   level30TotalUsdt: number;
   vault35GrossTotalUsdt: number;
-  latestCloneByRank?: Record<number, number>;
 }
 
 const RPC_ENDPOINTS = [
@@ -674,7 +672,6 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
   ownedWalletMainIds = [],
   ownedWalletAllIds = [],
   selectedMainId = '1',
-  selectedMainIdLatestCloneByRank,
   onSelectMainId,
 }) => {
   const initialPostTxTargetRef = useRef<PostTxViewTarget | null | undefined>(undefined);
@@ -1100,31 +1097,6 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
   }, [botWalletEditInput, botWalletLiveData?.botWallet, fetchBotWalletHistory, systemPoolsData]);
   const [isRunningAllSellAuto, setIsRunningAllSellAuto] = useState<boolean>(false);
   const [allSellAutoMsg, setAllSellAutoMsg] = useState<string | null>(null);
-  const [allSellPoolsPgData, setAllSellPoolsPgData] = useState<any>(null);
-  const [isLoadingAllSellPoolsPg, setIsLoadingAllSellPoolsPg] = useState<boolean>(false);
-  const [selectedAllSellPoolTab, setSelectedAllSellPoolTab] = useState<0 | 1 | 2 | 3 | 4>(0);
-  const fetchAllSellPoolsHistory = useCallback(async (poolNum?: number) => {
-    setIsLoadingAllSellPoolsPg(true);
-    try {
-      const qs = poolNum && poolNum >= 1 && poolNum <= 4 ? `?poolNumber=${poolNum}` : '';
-      const res = await fetch(`/api/matrix/allsell-pools-history${qs}`);
-      if (res.ok) {
-        const json = await res.json();
-        if (json?.success) {
-          setAllSellPoolsPgData(json);
-        }
-      }
-    } catch {
-      // Fallback to systemPoolsData.allSellFourPools
-    } finally {
-      setIsLoadingAllSellPoolsPg(false);
-    }
-  }, []);
-  useEffect(() => {
-    if (isSystemPoolsModalOpen) {
-      fetchAllSellPoolsHistory();
-    }
-  }, [isSystemPoolsModalOpen, fetchAllSellPoolsHistory]);
   const [isAutoExtraAlertModalOpen, setIsAutoExtraAlertModalOpen] = useState<boolean>(false);
   const [autoExtraAlertTab, setAutoExtraAlertTab] = useState<
     'all' | 'auto' | 'extra' | 'pool' | 'mine'
@@ -1434,7 +1406,6 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         direct30TotalUsdt: Number(rep.direct30TotalUsdt || 0),
         level30TotalUsdt: Number(rep.level30TotalUsdt || 0),
         vault35GrossTotalUsdt: Number(rep.vault35GrossTotalUsdt || 0),
-        latestCloneByRank: rep.latestCloneByRank || {},
       });
     }
 
@@ -3898,92 +3869,73 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         // 1. Check if this node was spawned as an Auto New Main ID from Pool 2 (Rank 1..3 Vault >= 5 USDT)
         if (!n.isClone && !n.isExtraId && n.id > firstMainOfOwner) {
           const explicitSponsorId = onChainSponsorNodeMap.get(n.id) || 0;
-          const repForActiveNode = activeRank === 1 ? perIdReportsMapRef.current.get(n.id) : undefined;
           const isBackendTaggedAuto =
-            (activeRank === 1 &&
-              (onChainOriginTypeMap.get(n.id) === 'AUTO_NEW_MAIN' ||
-                snap1?.get(n.id)?.originType === 'AUTO_NEW_MAIN' ||
-                repForActiveNode?.nodeType === 'AUTO_ID' ||
-                repForActiveNode?.isAutoId === true)) ||
+            onChainOriginTypeMap.get(n.id) === 'AUTO_NEW_MAIN' ||
             Boolean((n as any).isSyntheticAutoMain);
-          const isBackendTaggedManual =
-            !isBackendTaggedAuto &&
-            ((activeRank === 1 &&
-              (onChainOriginTypeMap.get(n.id) === 'MANUAL_REGISTER' ||
-                snap1?.get(n.id)?.originType === 'MANUAL_REGISTER' ||
-                repForActiveNode?.nodeType === 'MANUAL_ID' ||
-                repForActiveNode?.isAutoId === false)) ||
-              (activeRank > 1 && onChainOriginTypeMap.get(n.id) === 'MANUAL_REGISTER'));
-
-          if (!isBackendTaggedManual) {
-            const priorMains = (ownerAllMainNodesMap.get(ownerKey) || []).filter((mId) => {
-              if (mId >= n.id) return false;
-              if (getMainIdWindow5Start(mId, n.owner) <= 1) return false;
-              const maxAllowedSpawns = crossRankAutoIdCount.get(mId) || 0;
-              const currentSpawns = mainNodeAutoIdSpawnCount.get(mId) || 0;
-              if (currentSpawns >= maxAllowedSpawns) return false;
-              // กฎเหล็กการจัดวางบนสัญญา (_findPlacementSpot): Auto ID ที่เกิดจาก mId จะต้องวางอยู่ใต้สายงาน/โคลนของ mId เท่านั้น
-              // ดังนั้น R1-#3 (ซึ่งวางอยู่ใต้ #1 ฝั่งขวา ไม่ได้อยู่ใต้ #2) จะไม่มีวันถูกมองเป็น Auto ID ของ #2 เด็ดขาด
-              if (!isPlacedUnderMainOrClonesActive(mId, n.id)) return false;
-              const mSpId = onChainSponsorNodeMap.get(mId) || 1;
-              return (
-                explicitSponsorId === 0 ||
-                mId === explicitSponsorId ||
-                explicitSponsorId === mSpId
-              );
-            });
-
-            let sourceMain = priorMains.find(
-              (mId) => (lineageAutoIdVault.get(mId) || 0) + 1e-9 >= rank1EntryPrice
+          const priorMains = (ownerAllMainNodesMap.get(ownerKey) || []).filter((mId) => {
+            if (mId >= n.id) return false;
+            if (getMainIdWindow5Start(mId, n.owner) <= 1) return false;
+            const maxAllowedSpawns = crossRankAutoIdCount.get(mId) || 0;
+            const currentSpawns = mainNodeAutoIdSpawnCount.get(mId) || 0;
+            if (currentSpawns >= maxAllowedSpawns) return false;
+            // กฎเหล็กการจัดวางบนสัญญา (_findPlacementSpot): Auto ID ที่เกิดจาก mId จะต้องวางอยู่ใต้สายงาน/โคลนของ mId เท่านั้น
+            // ดังนั้น R1-#3 (ซึ่งวางอยู่ใต้ #1 ฝั่งขวา ไม่ได้อยู่ใต้ #2) จะไม่มีวันถูกมองเป็น Auto ID ของ #2 เด็ดขาด
+            if (!isPlacedUnderMainOrClonesActive(mId, n.id)) return false;
+            const mSpId = onChainSponsorNodeMap.get(mId) || 1;
+            return (
+              explicitSponsorId === 0 ||
+              mId === explicitSponsorId ||
+              explicitSponsorId === mSpId
             );
-            if (sourceMain === undefined && activeRank === 1) {
-              sourceMain = priorMains.find((mId) => {
-                if (usedExtraR2To4ForMain.has(mId)) return false;
-                const minReqR1Id = extraVaultMinR1IdFromRanks2To4.get(mId) || mId;
-                if (n.id <= minReqR1Id) return false;
-                const r1Bal = lineageAutoIdVault.get(mId) || 0;
-                const extraBal = extraVaultFromRanks2To4.get(mId) || 0;
-                return r1Bal + extraBal + 1e-9 >= rank1EntryPrice;
-              });
-              if (sourceMain !== undefined) {
-                usedExtraR2To4ForMain.add(sourceMain);
-                const r1Bal = lineageAutoIdVault.get(sourceMain) || 0;
-                const extraBal = extraVaultFromRanks2To4.get(sourceMain) || 0;
-                lineageAutoIdVault.set(sourceMain, Number((r1Bal + extraBal).toFixed(4)));
-              }
-            }
-            if (sourceMain === undefined && isBackendTaggedAuto) {
-              const repSpawnedBy = Number(repForActiveNode?.spawnedByMainId || 0);
-              if (repSpawnedBy > 0) {
-                sourceMain = repSpawnedBy;
-              } else if (priorMains.length > 0) {
-                sourceMain =
-                  explicitSponsorId > 0 && priorMains.includes(explicitSponsorId)
-                    ? explicitSponsorId
-                    : priorMains[0];
-              } else {
-                sourceMain = explicitSponsorId > 0 ? explicitSponsorId : firstMainOfOwner;
-              }
-            }
+          });
 
+          let sourceMain = priorMains.find(
+            (mId) => (lineageAutoIdVault.get(mId) || 0) + 1e-9 >= rank1EntryPrice
+          );
+          if (sourceMain === undefined && activeRank === 1) {
+            sourceMain = priorMains.find((mId) => {
+              if (usedExtraR2To4ForMain.has(mId)) return false;
+              const minReqR1Id = extraVaultMinR1IdFromRanks2To4.get(mId) || mId;
+              if (n.id <= minReqR1Id) return false;
+              const r1Bal = lineageAutoIdVault.get(mId) || 0;
+              const extraBal = extraVaultFromRanks2To4.get(mId) || 0;
+              return r1Bal + extraBal + 1e-9 >= rank1EntryPrice;
+            });
             if (sourceMain !== undefined) {
-              autoMainNodeIds.add(n.id);
-              autoIdSourceMainMap.set(n.id, sourceMain);
-              mainNodeAutoIdSpawnCount.set(
-                sourceMain,
-                (mainNodeAutoIdSpawnCount.get(sourceMain) || 0) + 1
-              );
-              const spawnedList = nodeSpawnedAutoIds.get(sourceMain) || [];
-              if (!spawnedList.includes(n.id)) {
-                spawnedList.push(n.id);
-                nodeSpawnedAutoIds.set(sourceMain, spawnedList);
-              }
-              const currentAutoVault = lineageAutoIdVault.get(sourceMain) || 0;
-              lineageAutoIdVault.set(
-                sourceMain,
-                Math.max(0, Number((currentAutoVault - rank1EntryPrice).toFixed(4)))
-              );
+              usedExtraR2To4ForMain.add(sourceMain);
+              const r1Bal = lineageAutoIdVault.get(sourceMain) || 0;
+              const extraBal = extraVaultFromRanks2To4.get(sourceMain) || 0;
+              lineageAutoIdVault.set(sourceMain, Number((r1Bal + extraBal).toFixed(4)));
             }
+          }
+          if (sourceMain === undefined && isBackendTaggedAuto) {
+            if (priorMains.length > 0) {
+              sourceMain =
+                explicitSponsorId > 0 && priorMains.includes(explicitSponsorId)
+                  ? explicitSponsorId
+                  : priorMains[0];
+            } else {
+              sourceMain = explicitSponsorId > 0 ? explicitSponsorId : firstMainOfOwner;
+            }
+          }
+
+          if (sourceMain !== undefined) {
+            autoMainNodeIds.add(n.id);
+            autoIdSourceMainMap.set(n.id, sourceMain);
+            mainNodeAutoIdSpawnCount.set(
+              sourceMain,
+              (mainNodeAutoIdSpawnCount.get(sourceMain) || 0) + 1
+            );
+            const spawnedList = nodeSpawnedAutoIds.get(sourceMain) || [];
+            if (!spawnedList.includes(n.id)) {
+              spawnedList.push(n.id);
+              nodeSpawnedAutoIds.set(sourceMain, spawnedList);
+            }
+            const currentAutoVault = lineageAutoIdVault.get(sourceMain) || 0;
+            lineageAutoIdVault.set(
+              sourceMain,
+              Math.max(0, Number((currentAutoVault - rank1EntryPrice).toFixed(4)))
+            );
           }
         }
 
@@ -4309,79 +4261,63 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
 
           if (!sn.isClone && !sn.isExtraId && id1 > firstMain) {
             const explicitSpId = sn.directSponsorNodeId || 0;
-            const repForId1 = perIdReportsMapRef.current.get(id1);
-            const isSnapTaggedAuto =
-              sn.originType === 'AUTO_NEW_MAIN' ||
-              (activeRank === 1 && onChainOriginTypeMap.get(id1) === 'AUTO_NEW_MAIN') ||
-              repForId1?.nodeType === 'AUTO_ID' ||
-              repForId1?.isAutoId === true;
-            const isSnapTaggedManual =
-              !isSnapTaggedAuto &&
-              (sn.originType === 'MANUAL_REGISTER' ||
-                (activeRank === 1 && onChainOriginTypeMap.get(id1) === 'MANUAL_REGISTER') ||
-                repForId1?.nodeType === 'MANUAL_ID' ||
-                repForId1?.isAutoId === false);
-            if (!isSnapTaggedManual) {
-              // กฎเหล็ก Pool 2: รหัสหลักต้นทาง (m) จะสร้าง New Auto ID ได้ก็ต่อเมื่อพ้นกรอบ 5 rank ย้อนหลังแล้วเท่านั้น (window5Start > 1 คืออยู่ตั้งแต่ Rank 6 ขึ้นไป หรือเป็น Root #1)
-              const priorMains = (s1OwnerAllMains.get(oKey) || []).filter((m) => {
-                if (m >= id1) return false;
-                if (getMainIdWindow5Start(m, sn.owner) <= 1) return false;
-                const maxAllowed = crossRankAutoIdCount.get(m) || 0;
-                const curSpawns = s1AutoIdCountByMain.get(m) || 0;
-                if (curSpawns >= maxAllowed) return false;
-                // กฎเหล็กการจัดวางบนสัญญา (_findPlacementSpot): Auto ID ที่เกิดจาก m จะต้องวางอยู่ใต้สายงาน/โคลนของ m เท่านั้น
-                if (!isPlacedUnderMainOrClones1(m, id1)) return false;
-                const mSpId = snap1.get(m)?.directSponsorNodeId || 1;
-                return explicitSpId === 0 || m === explicitSpId || explicitSpId === mSpId;
+            const isSnapTaggedAuto = sn.originType === 'AUTO_NEW_MAIN';
+            // กฎเหล็ก Pool 2: รหัสหลักต้นทาง (m) จะสร้าง New Auto ID ได้ก็ต่อเมื่อพ้นกรอบ 5 rank ย้อนหลังแล้วเท่านั้น (window5Start > 1 คืออยู่ตั้งแต่ Rank 6 ขึ้นไป หรือเป็น Root #1)
+            const priorMains = (s1OwnerAllMains.get(oKey) || []).filter((m) => {
+              if (m >= id1) return false;
+              if (getMainIdWindow5Start(m, sn.owner) <= 1) return false;
+              const maxAllowed = crossRankAutoIdCount.get(m) || 0;
+              const curSpawns = s1AutoIdCountByMain.get(m) || 0;
+              if (curSpawns >= maxAllowed) return false;
+              // กฎเหล็กการจัดวางบนสัญญา (_findPlacementSpot): Auto ID ที่เกิดจาก m จะต้องวางอยู่ใต้สายงาน/โคลนของ m เท่านั้น
+              if (!isPlacedUnderMainOrClones1(m, id1)) return false;
+              const mSpId = snap1.get(m)?.directSponsorNodeId || 1;
+              return explicitSpId === 0 || m === explicitSpId || explicitSpId === mSpId;
+            });
+            let sourceMain = priorMains.find(
+              (m) => (s1AutoVaultSim.get(m) || 0) + 1e-9 >= r1Price
+            );
+            if (sourceMain === undefined) {
+              sourceMain = priorMains.find((m) => {
+                if (s1UsedExtraR2To3.has(m)) return false;
+                const minReqR1Id = extraVaultMinR1IdFromRanks2To4.get(m) || m;
+                if (id1 <= minReqR1Id) return false;
+                const r1Bal = s1AutoVaultSim.get(m) || 0;
+                const extraBal = extraVaultFromRanks2To4.get(m) || 0;
+                return r1Bal + extraBal + 1e-9 >= r1Price;
               });
-              let sourceMain = priorMains.find(
-                (m) => (s1AutoVaultSim.get(m) || 0) + 1e-9 >= r1Price
-              );
-              if (sourceMain === undefined) {
-                sourceMain = priorMains.find((m) => {
-                  if (s1UsedExtraR2To3.has(m)) return false;
-                  const minReqR1Id = extraVaultMinR1IdFromRanks2To4.get(m) || m;
-                  if (id1 <= minReqR1Id) return false;
-                  const r1Bal = s1AutoVaultSim.get(m) || 0;
-                  const extraBal = extraVaultFromRanks2To4.get(m) || 0;
-                  return r1Bal + extraBal + 1e-9 >= r1Price;
-                });
-                if (sourceMain !== undefined) {
-                  s1UsedExtraR2To3.add(sourceMain);
-                  s1AutoVaultSim.set(
-                    sourceMain,
-                    Number(
-                      ((s1AutoVaultSim.get(sourceMain) || 0) + (extraVaultFromRanks2To4.get(sourceMain) || 0)).toFixed(4)
-                    )
-                  );
-                }
-              }
-              if (sourceMain === undefined && isSnapTaggedAuto) {
-                const repSpawnedBy = Number(repForId1?.spawnedByMainId || 0);
-                if (repSpawnedBy > 0) {
-                  sourceMain = repSpawnedBy;
-                } else if (priorMains.length > 0) {
-                  sourceMain =
-                    explicitSpId > 0 && priorMains.includes(explicitSpId)
-                      ? explicitSpId
-                      : priorMains[0];
-                } else {
-                  sourceMain = explicitSpId > 0 ? explicitSpId : firstMain;
-                }
-              }
               if (sourceMain !== undefined) {
-                s1AutoIdSourceMap.set(id1, sourceMain);
-                s1AutoIdCountByMain.set(sourceMain, (s1AutoIdCountByMain.get(sourceMain) || 0) + 1);
-                const spList = s1SpawnedAutoIdsByMain.get(sourceMain) || [];
-                if (!spList.includes(id1)) {
-                  spList.push(id1);
-                  s1SpawnedAutoIdsByMain.set(sourceMain, spList);
-                }
+                s1UsedExtraR2To3.add(sourceMain);
                 s1AutoVaultSim.set(
                   sourceMain,
-                  Math.max(0, Number(((s1AutoVaultSim.get(sourceMain) || 0) - r1Price).toFixed(4)))
+                  Number(
+                    ((s1AutoVaultSim.get(sourceMain) || 0) + (extraVaultFromRanks2To4.get(sourceMain) || 0)).toFixed(4)
+                  )
                 );
               }
+            }
+            if (sourceMain === undefined && isSnapTaggedAuto) {
+              if (priorMains.length > 0) {
+                sourceMain =
+                  explicitSpId > 0 && priorMains.includes(explicitSpId)
+                    ? explicitSpId
+                    : priorMains[0];
+              } else {
+                sourceMain = explicitSpId > 0 ? explicitSpId : firstMain;
+              }
+            }
+            if (sourceMain !== undefined) {
+              s1AutoIdSourceMap.set(id1, sourceMain);
+              s1AutoIdCountByMain.set(sourceMain, (s1AutoIdCountByMain.get(sourceMain) || 0) + 1);
+              const spList = s1SpawnedAutoIdsByMain.get(sourceMain) || [];
+              if (!spList.includes(id1)) {
+                spList.push(id1);
+                s1SpawnedAutoIdsByMain.set(sourceMain, spList);
+              }
+              s1AutoVaultSim.set(
+                sourceMain,
+                Math.max(0, Number(((s1AutoVaultSim.get(sourceMain) || 0) - r1Price).toFixed(4)))
+              );
             }
           }
 
@@ -4595,19 +4531,6 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         const effectiveR1MainId = isExtraOrigin
           ? 0
           : r1MainId || (activeRank === 1 ? n.id : originMainId);
-        const r1OriginTypeAuth =
-          (activeRank === 1 ? onChainOriginTypeMap.get(effectiveR1MainId) : undefined) ||
-          snap1?.get(effectiveR1MainId)?.originType;
-        const r1ReportAuth = effectiveR1MainId > 0 ? perIdReportsMapRef.current.get(effectiveR1MainId) : undefined;
-        const isAuthoritativelyAuto =
-          r1OriginTypeAuth === 'AUTO_NEW_MAIN' ||
-          r1ReportAuth?.nodeType === 'AUTO_ID' ||
-          r1ReportAuth?.isAutoId === true;
-        const isAuthoritativelyManual =
-          !isAuthoritativelyAuto &&
-          (r1OriginTypeAuth === 'MANUAL_REGISTER' ||
-            r1ReportAuth?.nodeType === 'MANUAL_ID' ||
-            r1ReportAuth?.isAutoId === false);
 
         enrichedMap.set(n.id, {
           id: n.id,
@@ -4626,9 +4549,10 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             !n.isClone &&
             !n.isExtraId &&
             effectiveR1MainId > 1 &&
-            !isAuthoritativelyManual &&
-            (isAuthoritativelyAuto ||
-              s1AutoIdSourceMap.has(effectiveR1MainId) ||
+            (s1AutoIdSourceMap.has(effectiveR1MainId) ||
+              onChainOriginTypeMap.get(effectiveR1MainId) === 'AUTO_NEW_MAIN' ||
+              snap1?.get(effectiveR1MainId)?.originType === 'AUTO_NEW_MAIN' ||
+              perIdReportsMapRef.current.get(effectiveR1MainId)?.nodeType === 'AUTO_ID' ||
               (activeRank === 1 && autoMainNodeIds.has(n.id))),
           originMainId,
           r1MainId,
@@ -4643,13 +4567,10 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             s1SpawnedAutoIdsByMain.get(effectiveR1MainId) ||
             nodeSpawnedAutoIds.get(originMainId) ||
             [],
-          spawnedByMainId: isAuthoritativelyManual
-            ? undefined
-            : s1AutoIdSourceMap.get(effectiveR1MainId) ||
-              autoIdSourceMainMap.get(n.id) ||
-              (isAuthoritativelyAuto && Number(r1ReportAuth?.spawnedByMainId || 0) > 0
-                ? Number(r1ReportAuth.spawnedByMainId)
-                : undefined),
+          spawnedByMainId:
+            s1AutoIdSourceMap.get(effectiveR1MainId) ||
+            autoIdSourceMainMap.get(n.id) ||
+            undefined,
           directUplineNodeId,
           directRewardThisNode: nodeDirectBonusMap.get(n.id) || 0,
           unilevelRewardThisNode: nodeUnilevelBonusMap.get(n.id) || 0,
@@ -9033,21 +8954,6 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                                     Vault +{item.vault35GrossTotalUsdt.toFixed(1)}U
                                   </span>
                                 </div>
-                                {(() => {
-                                  const lcForItem =
-                                    Number(item.latestCloneByRank?.[selectedRank] || 0) ||
-                                    (Number(item.originMainId) === Number(selectedMainId)
-                                      ? Number(selectedMainIdLatestCloneByRank?.[selectedRank] || 0)
-                                      : 0);
-                                  if ((item.category === 'MAIN' || item.category === 'AUTO') && lcForItem > 0) {
-                                    return (
-                                      <div className="text-[9.5px] font-mono text-cyan-700 dark:text-cyan-300 font-bold">
-                                        🧬 โคลนนิ่งล่าสุดใน R{selectedRank}: #{lcForItem}
-                                      </div>
-                                    );
-                                  }
-                                  return null;
-                                })()}
                               </button>
                             );
                           })}
@@ -10353,26 +10259,6 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                           +{modalNode.vaultBalance.toFixed(2)} USDT
                         </span>
                       </div>
-                      {(() => {
-                        const latestCloneInThisRank =
-                          Number(mainReport?.latestCloneByRank?.[modalNode.rank] || 0) ||
-                          (Number(targetMainId) === Number(selectedMainId)
-                            ? Number(selectedMainIdLatestCloneByRank?.[modalNode.rank] || 0)
-                            : 0) ||
-                          clonesList
-                            .filter((c: any) => Number(c.rank) === Number(modalNode.rank))
-                            .reduce((maxId: number, c: any) => Math.max(maxId, Number(c.id || 0)), 0);
-                        return (
-                          <div className="flex items-center justify-between">
-                            <span className="text-slate-300">
-                              โคลนนิ่งล่าสุดของ Main #{targetMainId} (R{modalNode.rank}):
-                            </span>
-                            <span className="font-extrabold text-cyan-300">
-                              {latestCloneInThisRank > 0 ? `#${latestCloneInThisRank}` : 'ยังไม่มี'}
-                            </span>
-                          </div>
-                        );
-                      })()}
 
                       {/* 15-Level Breakdown inside Box 2 */}
                       {(() => {
@@ -11000,9 +10886,6 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                         <span>
                           <strong className="text-amber-300">R{rn.rank}-#{rn.nodeId}</strong> (ใต้ #{rn.parentId}{' '}
                           {rn.side})
-                          {Number(rn.latestCloneId || 0) > 0 && (
-                            <span className="ml-1.5 text-cyan-300">• โคลนล่าสุด #{rn.latestCloneId}</span>
-                          )}
                         </span>
                         <span>
                           Vault: <strong className="text-emerald-400">{rn.nodeVault.toFixed(2)}U</strong>
@@ -12427,10 +12310,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                     const data = await res.json();
                     if (data.success) {
                       setAllSellAutoMsg(data.message || 'ตัดรอบจ่าย AllSell อัตโนมัติสำเร็จ!');
-                      const [refreshRes] = await Promise.all([
-                        fetch('/api/matrix/per-id-history'),
-                        fetchAllSellPoolsHistory(),
-                      ]);
+                      const refreshRes = await fetch('/api/matrix/per-id-history');
                       const refreshJson = await refreshRes.json();
                       if (refreshJson?.success && refreshJson.systemPools) {
                         setSystemPoolsData(refreshJson.systemPools);
@@ -12591,19 +12471,9 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
 
                           <div className="pt-2 border-t border-slate-800 space-y-1 text-[10.5px]">
                             <div className="flex items-center justify-between">
-                              <span className="text-slate-400">ยอดเข้ากองนี้สะสม (25%):</span>
+                              <span className="text-slate-400">ยอดกองนี้ (25%):</span>
                               <span className="font-extrabold text-emerald-400">
                                 +{Number(pool.poolTotalUsdt || 0).toFixed(2)} USDT
-                              </span>
-                            </div>
-                            <div className="flex items-center justify-between">
-                              <span className="text-slate-400">จ่ายออกแล้ว / คงเหลือรอจ่าย:</span>
-                              <span className="font-bold text-slate-200">
-                                <span className="text-amber-300">{Number(pool.poolPaidUsdt || 0).toFixed(2)}</span>
-                                {' / '}
-                                <span className="text-cyan-300">
-                                  {Number(pool.poolRemainingUsdt ?? pool.poolTotalUsdt ?? 0).toFixed(2)} U
-                                </span>
                               </span>
                             </div>
                             <div className="flex items-center justify-between">
@@ -12623,195 +12493,9 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                                   : 'รอผู้ผ่านเงื่อนไข'}
                               </span>
                             </div>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setSelectedAllSellPoolTab(pool.poolNumber as 1 | 2 | 3 | 4);
-                                setSystemPoolsModalTab('allsell');
-                                fetchAllSellPoolsHistory();
-                              }}
-                              className="w-full mt-1 px-2 py-1 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-200 border border-cyan-500/35 text-[10px] font-bold cursor-pointer transition"
-                            >
-                              🗄️ ดูประวัติกองที่ {pool.poolNumber} ใน PostgreSQL
-                            </button>
                           </div>
                         </div>
                       ))}
-                    </div>
-
-                    {/* ประวัติ AllSell แยกตามกองที่ 1–4 จาก PostgreSQL */}
-                    <div className="rounded-xl bg-slate-950/95 border border-cyan-500/30 p-3 space-y-2.5 text-[11px]">
-                      <div className="flex items-center justify-between flex-wrap gap-2 border-b border-slate-800 pb-2">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-extrabold text-cyan-300 text-xs">
-                            🗄️ ประวัติ AllSell แยกตามแต่ละกอง (PostgreSQL)
-                          </span>
-                          <span className="px-2 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/35 text-emerald-300 text-[10px] font-bold">
-                            {allSellPoolsPgData?.source === 'POSTGRESQL' ? '🐘 PostgreSQL Connected' : '💾 Live Store'}
-                          </span>
-                        </div>
-                        <button
-                          type="button"
-                          disabled={isLoadingAllSellPoolsPg}
-                          onClick={() => fetchAllSellPoolsHistory()}
-                          className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-cyan-300 border border-slate-700 text-[10.5px] font-bold cursor-pointer disabled:opacity-50"
-                        >
-                          {isLoadingAllSellPoolsPg ? '⏳ กำลังโหลด...' : '🔄 รีเฟรชจาก DB'}
-                        </button>
-                      </div>
-
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        {[
-                          { num: 0, label: '📊 ทุกกอง (1–4)' },
-                          { num: 1, label: 'กองที่ 1 (r-11)' },
-                          { num: 2, label: 'กองที่ 2 (r-14)' },
-                          { num: 3, label: 'กองที่ 3 (r-16)' },
-                          { num: 4, label: 'กองที่ 4 (r-18)' },
-                        ].map((tab) => (
-                          <button
-                            key={`allsell-pg-tab-${tab.num}`}
-                            type="button"
-                            onClick={() => setSelectedAllSellPoolTab(tab.num as 0 | 1 | 2 | 3 | 4)}
-                            className={`px-2.5 py-1 rounded-lg text-[10.5px] font-bold border transition cursor-pointer ${
-                              selectedAllSellPoolTab === tab.num
-                                ? 'bg-cyan-600 text-white border-cyan-400 shadow'
-                                : 'bg-slate-900/80 text-slate-300 border-slate-800 hover:text-white'
-                            }`}
-                          >
-                            {tab.label}
-                          </button>
-                        ))}
-                      </div>
-
-                      {(() => {
-                        const pgPoolsList: any[] = Array.isArray(allSellPoolsPgData?.pools)
-                          ? allSellPoolsPgData.pools
-                          : fourPoolsList.map((p: any) => ({
-                              poolNumber: p.poolNumber,
-                              titleTh: p.titleTh,
-                              cumulativeInflowUsdt: Number(p.poolTotalUsdt || 0),
-                              totalDistributedUsdt: Number(p.poolPaidUsdt || 0),
-                              remainingCarriedOverUsdt: Number(p.poolRemainingUsdt ?? p.poolTotalUsdt ?? 0),
-                              cycles: p.recentPoolCycles || [],
-                              inflows: [],
-                              payouts: [],
-                            }));
-                        const visiblePools =
-                          selectedAllSellPoolTab === 0
-                            ? pgPoolsList
-                            : pgPoolsList.filter((p) => Number(p.poolNumber) === selectedAllSellPoolTab);
-
-                        return (
-                          <div
-                            className={`grid gap-2.5 ${
-                              selectedAllSellPoolTab === 0 ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1'
-                            }`}
-                          >
-                            {visiblePools.map((pgPoolItem: any) => {
-                              const cycles: any[] = Array.isArray(pgPoolItem.cycles) ? pgPoolItem.cycles : [];
-                              const inflows: any[] = Array.isArray(pgPoolItem.inflows) ? pgPoolItem.inflows : [];
-                              const payouts: any[] = Array.isArray(pgPoolItem.payouts) ? pgPoolItem.payouts : [];
-                              return (
-                                <div
-                                  key={`pg-pool-hist-${pgPoolItem.poolNumber}`}
-                                  className="rounded-xl bg-slate-900/85 border border-slate-800 p-2.5 space-y-2"
-                                >
-                                  <div className="flex items-center justify-between flex-wrap gap-1 border-b border-slate-800 pb-1.5">
-                                    <span className="font-extrabold text-amber-300 text-[11px]">
-                                      {pgPoolItem.titleTh}
-                                    </span>
-                                    <div className="flex items-center gap-2 text-[10px]">
-                                      <span className="text-emerald-400 font-bold">
-                                        เข้าสะสม: +{Number(pgPoolItem.cumulativeInflowUsdt || 0).toFixed(2)} U
-                                      </span>
-                                      <span className="text-amber-300 font-bold">
-                                        จ่ายแล้ว: {Number(pgPoolItem.totalDistributedUsdt || 0).toFixed(2)} U
-                                      </span>
-                                      <span className="text-cyan-300 font-bold">
-                                        คงเหลือ: {Number(pgPoolItem.remainingCarriedOverUsdt || 0).toFixed(2)} U
-                                      </span>
-                                    </div>
-                                  </div>
-
-                                  <div className="space-y-1">
-                                    <div className="text-[10px] text-cyan-300 font-bold">
-                                      รอบตัดจ่ายของกองนี้ ({cycles.length} รอบ) · ยอดเข้า 25% ({pgPoolItem.inflowsCount ?? inflows.length} รายการ) · โอนจ่าย ({pgPoolItem.payoutsCount ?? payouts.length} รายการ)
-                                    </div>
-
-                                    {cycles.length === 0 && inflows.length === 0 && payouts.length === 0 ? (
-                                      <div className="text-[10px] text-slate-500 py-2 text-center bg-slate-950/60 rounded-lg border border-slate-800/70">
-                                        ยังไม่มีประวัติรอบตัดจ่ายหรือยอดเข้าของกองที่ {pgPoolItem.poolNumber} ใน PostgreSQL
-                                      </div>
-                                    ) : (
-                                      <div className="max-h-44 overflow-y-auto space-y-1 pr-1">
-                                        {cycles.slice(0, 10).map((cy: any, cIdx: number) => (
-                                          <div
-                                            key={`pg-cy-${pgPoolItem.poolNumber}-${cIdx}`}
-                                            className="rounded-lg bg-slate-950/90 border border-slate-800 px-2 py-1.5 text-[10px] space-y-0.5"
-                                          >
-                                            <div className="flex items-center justify-between gap-1">
-                                              <span className="text-amber-300 font-bold">
-                                                [{cy.cycleLabelTh || cy.cycleKey}]
-                                              </span>
-                                              <span
-                                                className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
-                                                  cy.status === 'PAID'
-                                                    ? 'bg-emerald-500/20 text-emerald-300'
-                                                    : 'bg-slate-800 text-slate-300'
-                                                }`}
-                                              >
-                                                {cy.status === 'PAID' ? 'จ่ายแล้ว' : 'ยกยอดสะสม'}
-                                              </span>
-                                            </div>
-                                            <div className="text-slate-300">{cy.noteTh}</div>
-                                            <div className="flex items-center justify-between text-[9.5px] text-slate-400">
-                                              <span>
-                                                พร้อมจ่าย: {Number(cy.poolAvailableUsdt || 0).toFixed(2)} U · จ่ายจริง:{' '}
-                                                {Number(cy.poolDistributedUsdt || 0).toFixed(2)} U · ยกยอด:{' '}
-                                                {Number(cy.poolCarriedOverUsdt || 0).toFixed(2)} U
-                                              </span>
-                                              <span className="text-cyan-400">{formatModalRowTime(cy.executedAt)}</span>
-                                            </div>
-                                          </div>
-                                        ))}
-
-                                        {payouts.slice(0, 10).map((pay: any, pIdx: number) => (
-                                          <div
-                                            key={`pg-pay-${pgPoolItem.poolNumber}-${pIdx}`}
-                                            className="rounded-lg bg-emerald-950/25 border border-emerald-500/30 px-2 py-1 text-[10px] flex items-center justify-between gap-2"
-                                          >
-                                            <span className="text-emerald-200 truncate">
-                                              💸 โอนให้ Main #{pay.mainId} ({String(pay.recipientWallet || '').slice(0, 6)}...
-                                              {String(pay.recipientWallet || '').slice(-4)})
-                                            </span>
-                                            <span className="text-emerald-300 font-bold shrink-0">
-                                              +{Number(pay.amountUsdt || 0).toFixed(2)} U
-                                            </span>
-                                          </div>
-                                        ))}
-
-                                        {inflows.slice(0, 8).map((inf: any, iIdx: number) => (
-                                          <div
-                                            key={`pg-inf-${pgPoolItem.poolNumber}-${iIdx}`}
-                                            className="rounded-lg bg-slate-950/75 border border-cyan-500/20 px-2 py-1 text-[10px] flex items-center justify-between gap-2"
-                                          >
-                                            <span className="text-slate-300 truncate">
-                                              📥 [Rank {inf.rank}] ส่วนแบ่ง 25% จาก R{inf.rank}-#{inf.fromNodeId} (Main #{inf.fromMainId})
-                                            </span>
-                                            <span className="text-cyan-300 font-bold shrink-0">
-                                              +{Number(inf.poolShareUsdt || 0).toFixed(2)} U
-                                            </span>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        );
-                      })()}
                     </div>
                   </div>
                 );
