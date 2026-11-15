@@ -296,7 +296,7 @@ const DEFAULT_SYSTEM_CONFIG = {
   contractAddress:
     process.env.OVERRIDE_CONTRACT_ADDRESS ||
     process.env.CONTRACT_ADDRESS ||
-    '0x4F47842E535001A43376f65cFdc05469dBF0bB99',
+    '0x8d460FB2037831Cb2715c301420cA6357994411e',
   usdtAddress: process.env.USDT_ADDRESS || '0x05f24E1F598DF1aE8d0B424ce978f8ea33bB752b',
   chainId: Number(process.env.CHAIN_ID || 97),
   networkName: process.env.NETWORK_NAME || 'BNB Smart Chain Testnet',
@@ -350,6 +350,7 @@ const SERVER_LEGACY_CONTRACTS = new Set([
   '0x8b2ef84f543f5c1dfa8240a1853d63efe66006eb',
   '0xb3832d4cc6dae0b24f1e6660d7c85dcc1f005cd1',
   '0x376cdcf45d6cabe49867b4527bb87b7e988f0a78',
+  '0x4f47842e535001a43376f65cfdc05469dbf0bb99',
 ]);
 
 const SERVER_LEGACY_USDT = new Set([
@@ -3168,7 +3169,7 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
           if (r > 1) {
             if (lcNode && !lcNode.isClone && !lcNode.isExtraId) {
               const r1Orig = lcNode.originMainId || 0;
-              if (r1Orig > mNode.id && r1Orig < 1_000_000) {
+              if (r1Orig > mNode.id && r1Orig < 1_000_000_000) {
                 if (extraMinR1Id === mNode.id || r1Orig < extraMinR1Id) {
                   extraMinR1Id = r1Orig;
                 }

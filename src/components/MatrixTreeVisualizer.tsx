@@ -3444,7 +3444,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             const lcNode = snapR.get(sn.leftChild);
             if (lcNode?.isAdminFreeUpgrade) continue;
             const lcOrigMain = lcNode
-              ? lcNode.originMainId > 0 && lcNode.originMainId < 1_000_000
+              ? lcNode.originMainId > 0 && lcNode.originMainId < 1_000_000_000
                 ? lcNode.originMainId
                 : getCorrespondingMainIdInRank(r, lcNode.id, lcNode.owner, 1)
               : 0;
@@ -3517,12 +3517,12 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                 if (r > 1) {
                   if (lcNode && !lcNode.isClone && !lcNode.isExtraId) {
                     const r1Orig =
-                      lcNode.originMainId > 0 && lcNode.originMainId < 1_000_000
+                      lcNode.originMainId > 0 && lcNode.originMainId < 1_000_000_000
                         ? lcNode.originMainId
                         : getCorrespondingMainIdInRank(r, lcNode.id, lcNode.owner, 1);
                     if (
                       r1Orig > r1Id &&
-                      r1Orig < 1_000_000 &&
+                      r1Orig < 1_000_000_000 &&
                       (extraMinR1Id === r1Id || r1Orig < extraMinR1Id)
                     ) {
                       extraMinR1Id = r1Orig;
@@ -4807,7 +4807,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
 
         // คำนวณ 3 Pools (รวมยอดเก่าคงเหลือด้วยก่อนสร้าง Extra ID และกรณี EXTRA ID มีเม็ดซ้าย: Vault 35% ส่งกลับไปที่ New Extra ID Pool ของ directSponsor):
         const poolMainKey = isExtraLineage
-          ? activeRank * 1000000 + node.originMainId
+          ? activeRank * 1_000_000_000 + node.originMainId
           : targetMainId;
         const extraLeftVaultForSponsor = isExtraLineage
           ? 0
