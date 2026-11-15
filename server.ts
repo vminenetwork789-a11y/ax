@@ -296,7 +296,7 @@ const DEFAULT_SYSTEM_CONFIG = {
   contractAddress:
     process.env.OVERRIDE_CONTRACT_ADDRESS ||
     process.env.CONTRACT_ADDRESS ||
-    '0x8d460FB2037831Cb2715c301420cA6357994411e',
+    '0x6d85e1D8F1628eADf0baF25D3ab6C3C7bC16743f',
   usdtAddress: process.env.USDT_ADDRESS || '0x05f24E1F598DF1aE8d0B424ce978f8ea33bB752b',
   chainId: Number(process.env.CHAIN_ID || 97),
   networkName: process.env.NETWORK_NAME || 'BNB Smart Chain Testnet',
@@ -351,6 +351,7 @@ const SERVER_LEGACY_CONTRACTS = new Set([
   '0xb3832d4cc6dae0b24f1e6660d7c85dcc1f005cd1',
   '0x376cdcf45d6cabe49867b4527bb87b7e988f0a78',
   '0x4f47842e535001a43376f65cfdc05469dbf0bb99',
+  '0x8d460fb2037831cb2715c301420ca6357994411e',
 ]);
 
 const SERVER_LEGACY_USDT = new Set([
@@ -11171,6 +11172,59 @@ async function startApp() {
   app.post('/api/admin/clear-cache', handleClearCacheRequest);
   app.post('/api/matrix/clear-cache', handleClearCacheRequest);
   app.post('/api/clear-cache', handleClearCacheRequest);
+
+  app.post('/api/db/wipe', async (_req: Request, res: Response) => {
+    try {
+      rankSyncTimestamps.clear();
+      if (pgSyncTimer) {
+        clearTimeout(pgSyncTimer);
+        pgSyncTimer = null;
+      }
+      matrixDB = createEmptyMatrixDB(CONTRACT_ADDRESS, USDT_ADDRESS);
+      allSellAutoStore = {
+        autoEnabled: true,
+        lastExecutedCycleKey: null,
+        lastExecutedAt: null,
+        history: [],
+      };
+      for (const f of [MATRIX_DB_FILE_PATH, ALLSELL_PAYOUT_FILE_PATH]) {
+        try {
+          if (fs.existsSync(f)) fs.unlinkSync(f);
+        } catch {
+          // ignore
+        }
+      }
+      if (pgPool && pgConnected) {
+        await pgPool.query(
+          `TRUNCATE TABLE accounts, wallets, matrix_levels, matrix_nodes, income_channels, activities, matrix_db_snapshots, allsell_auto_config, allsell_payout_cycles, allsell_payout_transfers, allsell_inflows`
+        );
+        pgTablesCount = {
+          accounts: 0,
+          matrix_levels: 0,
+          income_channels: 0,
+          activities: 0,
+          wallets: 0,
+          matrix_nodes: 0,
+          allsell_inflows: 0,
+          allsell_payout_cycles: 0,
+          allsell_payout_transfers: 0,
+          allsell_auto_config: 0,
+        };
+      }
+      await syncAllMatrixDatabase(CONTRACT_ADDRESS, true);
+      await syncAllMatrixDBToPostgres();
+      res.json({
+        success: true,
+        contractAddress: CONTRACT_ADDRESS,
+        tableCounts: pgTablesCount,
+        lastSyncedBlock: matrixDB.lastSyncedBlock,
+        totalNodesRank1: matrixDB.rankCounts[1] || (matrixDB.nodesByRank[1]?.length ?? 1),
+        message: '🧹 ลบข้อมูลในฐานข้อมูลทั้งหมดและซิงค์ Smart Contract ใหม่เรียบร้อยแล้ว',
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || String(err) });
+    }
+  });
 
   // ==========================================
   // ADMIN SERVER-SIDE ON-CHAIN CONTRACT EXECUTOR
