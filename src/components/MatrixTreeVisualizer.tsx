@@ -3707,9 +3707,6 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
       // Helper to resolve the exact Sponsor Main Node ID using Clone Lineage (originMainIdMap)
       const resolveSponsorNodeIdForNode = (nodeId: number, sponsorAddr: string): number => {
         const snap1 = multiRankSnapshots.get(1);
-        if (autoIdSourceMainMap.has(nodeId)) {
-          return autoIdSourceMainMap.get(nodeId)!;
-        }
         if (extraIdSourceMainMap.has(nodeId)) {
           return extraIdSourceMainMap.get(nodeId)!;
         }
@@ -3742,15 +3739,23 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             if (originMain === 1) {
               return 1;
             }
-            if (autoIdSourceMainMap.has(originMain)) {
-              return autoIdSourceMainMap.get(originMain)!;
-            }
             if (extraIdSourceMainMap.has(originMain)) {
               return extraIdSourceMainMap.get(originMain)!;
             }
             const onChainOriginSponsor = onChainSponsorNodeMap.get(originMain) || 0;
             if (onChainOriginSponsor > 0) {
               return onChainOriginSponsor;
+            }
+            if (autoIdSourceMainMap.has(originMain)) {
+              const autoSource = autoIdSourceMainMap.get(originMain)!;
+              if (autoSource === 1) return 1;
+              const autoSourceSp = onChainSponsorNodeMap.get(autoSource) || 0;
+              if (autoSourceSp > 0) return autoSourceSp;
+              const srcNode = rawNodes.get(autoSource);
+              return resolveSponsorNodeIdForNode(
+                autoSource,
+                srcNode?.directSponsor || sponsorAddr
+              );
             }
             const originNode = rawNodes.get(originMain);
             const effectiveSponsorAddr =
@@ -3819,6 +3824,14 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         const directOnChainSponsor = onChainSponsorNodeMap.get(nodeId) || 0;
         if (directOnChainSponsor > 0) {
           return directOnChainSponsor;
+        }
+        if (autoIdSourceMainMap.has(nodeId)) {
+          const autoSource = autoIdSourceMainMap.get(nodeId)!;
+          if (autoSource === 1) return 1;
+          const autoSourceSp = onChainSponsorNodeMap.get(autoSource) || 0;
+          if (autoSourceSp > 0) return autoSourceSp;
+          const srcNode = rawNodes.get(autoSource);
+          return resolveSponsorNodeIdForNode(autoSource, srcNode?.directSponsor || sponsorAddr);
         }
 
         if (!sponsorAddr || sponsorAddr === ethers.ZeroAddress) return 0;
@@ -4595,20 +4608,22 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
           } else {
             directUplineNodeId = resolveSponsorNodeIdForNode(n.id, n.directSponsor);
           }
-        } else if (autoIdSourceMainMap.has(n.id)) {
-          directUplineNodeId = autoIdSourceMainMap.get(n.id)!;
         } else if (n.isExtraId || extraIdSourceMainMap.has(n.id)) {
           const extraSpR1 =
             extraIdSourceMainMap.get(n.id) ||
             resolveExtraSpawnerInR1(activeRank, n) ||
             1;
           directUplineNodeId = extraSpR1 > 0 ? extraSpR1 : 1;
+        } else if (autoIdSourceMainMap.has(n.id)) {
+          const autoSp =
+            onChainSponsorNodeMap.get(n.id) ||
+            resolveSponsorNodeIdForNode(n.id, n.directSponsor) ||
+            1;
+          directUplineNodeId = autoSp > 0 ? autoSp : 1;
         } else if (n.isClone) {
           const originEnriched = enrichedMap.get(originMainId);
           if (originEnriched && originEnriched.directUplineNodeId > 0) {
             directUplineNodeId = originEnriched.directUplineNodeId;
-          } else if (autoIdSourceMainMap.has(originMainId)) {
-            directUplineNodeId = autoIdSourceMainMap.get(originMainId)!;
           } else if (extraIdSourceMainMap.has(originMainId)) {
             const extraSpR1 = extraIdSourceMainMap.get(originMainId)!;
             directUplineNodeId = extraSpR1 > 0 ? extraSpR1 : 1;
@@ -7024,7 +7039,9 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                   : node.isExtraId
                   ? 'Extra ID'
                   : node.isAutoMainId
-                  ? 'Auto ID'
+                  ? node.spawnedByMainId && node.spawnedByMainId > 0
+                    ? `Auto ID (จาก #${node.spawnedByMainId})`
+                    : 'Auto ID'
                   : 'Main ID'}
               </span>
             </div>
@@ -9856,6 +9873,17 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                         #{modalNode.directUplineNodeId || mainReport?.directSponsorNodeId || 1}
                       </strong>
                     </span>
+                    {modalNode.isAutoMainId && (modalNode.spawnedByMainId || mainReport?.spawnedByMainId) ? (
+                      <>
+                        <span>•</span>
+                        <span>
+                          แตกจาก:{' '}
+                          <strong className="text-amber-200">
+                            Main #{modalNode.spawnedByMainId || mainReport?.spawnedByMainId}
+                          </strong>
+                        </span>
+                      </>
+                    ) : null}
                     <span>•</span>
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/35 font-bold">
                       <Clock className="w-3 h-3 text-cyan-400" />

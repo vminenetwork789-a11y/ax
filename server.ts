@@ -7684,17 +7684,18 @@ async function startApp() {
           const side: 'LEFT' | 'RIGHT' | 'ROOT' =
             r1Node.parentId === 0 ? 'ROOT' : pNode && pNode.leftChild === r1Node.id ? 'LEFT' : 'RIGHT';
           if (spReport) {
-              spReport.autoIdsSpawned.push({
+            spReport.autoIdsSpawned.push({
               id: r1Node.id,
               rank: 1,
               label: `Auto ID #${r1Node.id} (R1-#${r1Node.id})`,
               type: 'AUTO_ID',
               parentId: r1Node.parentId,
               side,
-              directSponsorNodeId: spId,
+              directSponsorNodeId: r1Node.directSponsorNodeId || 1,
+              spawnedByMainId: spId,
               owner: r1Node.owner,
               timestamp: computeNodeTimestamp(1, r1Node.id),
-            });
+            } as any);
           }
         }
       }
