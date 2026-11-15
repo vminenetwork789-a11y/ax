@@ -30,6 +30,10 @@ import {
   Crown,
   Dna,
   History,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  Table2,
 } from 'lucide-react';
 
 interface AdminControlCenterProps {
@@ -68,7 +72,7 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
   onClose,
 }) => {
   const [activeSection, setActiveSection] = useState<
-    'all' | 'owner' | 'autopools' | 'allsell' | 'database' | 'members' | 'transactions'
+    'all' | 'owner' | 'autopools' | 'allsell' | 'database' | 'db_explorer' | 'members' | 'transactions'
   >('all');
   const [execMode, setExecMode] = useState<'server_key' | 'web3_wallet'>(
     typeof window !== 'undefined' && (window as any).ethereum ? 'web3_wallet' : 'server_key'
@@ -133,6 +137,10 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
   });
   const [memberSearch, setMemberSearch] = useState<string>('');
   const [memberStatusTab, setMemberStatusTab] = useState<'all' | 'main' | 'auto' | 'extra' | 'clone'>('all');
+  const [memberSortBy, setMemberSortBy] = useState<
+    'idNumber' | 'statusKey' | 'rank' | 'upgradeRankPool' | 'newAutoIdPool' | 'newExtraIdPool'
+  >('idNumber');
+  const [memberSortDir, setMemberSortDir] = useState<'asc' | 'desc'>('asc');
   const [memberPage, setMemberPage] = useState<number>(1);
 
   // 8. Transaction Hashes Directory State
@@ -142,7 +150,20 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
     'all' | 'REGISTER' | 'UPGRADE' | 'AUTO_EXTRA' | 'CLONE_BOT' | 'ADMIN' | 'ALLSELL'
   >('all');
   const [txSearch, setTxSearch] = useState<string>('');
+  const [txSortBy, setTxSortBy] = useState<'timestamp' | 'actionType' | 'amountUsdt' | 'blockNumber'>('timestamp');
+  const [txSortDir, setTxSortDir] = useState<'asc' | 'desc'>('desc');
   const [txPage, setTxPage] = useState<number>(1);
+
+  // 9. PostgreSQL Database Explorer State
+  const [dbTable, setDbTable] = useState<string>('matrix_nodes');
+  const [dbSearchInput, setDbSearchInput] = useState<string>('');
+  const [dbSearchQuery, setDbSearchQuery] = useState<string>('');
+  const [dbSortBy, setDbSortBy] = useState<string>('');
+  const [dbSortDir, setDbSortDir] = useState<'asc' | 'desc'>('asc');
+  const [dbPage, setDbPage] = useState<number>(1);
+  const [dbPageSize, setDbPageSize] = useState<number>(25);
+  const [dbLoading, setDbLoading] = useState<boolean>(false);
+  const [dbData, setDbData] = useState<any | null>(null);
 
   const handleCopy = (text: string) => {
     if (!text) return;
@@ -206,6 +227,43 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
       setTxSyncing(false);
     }
   };
+
+  const fetchDbRecords = useCallback(async () => {
+    setDbLoading(true);
+    try {
+      const qs = new URLSearchParams({
+        table: dbTable,
+        page: String(dbPage),
+        pageSize: String(dbPageSize),
+      });
+      if (dbSearchQuery.trim()) qs.set('search', dbSearchQuery.trim());
+      if (dbSortBy) qs.set('sortBy', dbSortBy);
+      if (dbSortBy) qs.set('sortDir', dbSortDir);
+      const res = await fetch(`/api/admin/db-records?${qs.toString()}`);
+      const json = await res.json();
+      setDbData(json);
+    } catch (err: any) {
+      setDbData((prev: any) => ({
+        ...(prev || {}),
+        success: false,
+        error: err?.message || 'ไม่สามารถดึงข้อมูลจาก PostgreSQL ได้',
+      }));
+    } finally {
+      setDbLoading(false);
+    }
+  }, [dbTable, dbPage, dbPageSize, dbSearchQuery, dbSortBy, dbSortDir]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDbSearchQuery(dbSearchInput);
+      setDbPage(1);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [dbSearchInput]);
+
+  useEffect(() => {
+    fetchDbRecords();
+  }, [fetchDbRecords, contractAddress]);
 
   useEffect(() => {
     fetchAdminOverview();
@@ -663,19 +721,49 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
     total: allAdminIdRows.length,
   };
 
-  const filteredAdminIdRows = allAdminIdRows.filter((row) => {
-    if (memberStatusTab !== 'all' && row.statusKey !== memberStatusTab) return false;
-    if (!memberSearch.trim()) return true;
-    const q = memberSearch.trim().toLowerCase().replace(/^#/, '');
-    return (
-      String(row.idNumber) === q ||
-      row.displayId.toLowerCase().includes(q) ||
-      String(row.owner || '').toLowerCase().includes(q) ||
-      String(row.directSponsorNodeId) === q ||
-      String(row.spawnedByMainId) === q ||
-      `r${row.rank}` === q
-    );
-  });
+  const filteredAdminIdRows = allAdminIdRows
+    .filter((row) => {
+      if (memberStatusTab !== 'all' && row.statusKey !== memberStatusTab) return false;
+      if (!memberSearch.trim()) return true;
+      const q = memberSearch.trim().toLowerCase().replace(/^#/, '');
+      return (
+        String(row.idNumber) === q ||
+        row.displayId.toLowerCase().includes(q) ||
+        String(row.owner || '').toLowerCase().includes(q) ||
+        String(row.directSponsorNodeId) === q ||
+        String(row.spawnedByMainId) === q ||
+        `r${row.rank}` === q
+      );
+    })
+    .sort((a, b) => {
+      const dir = memberSortDir === 'asc' ? 1 : -1;
+      if (memberSortBy === 'statusKey') {
+        return a.statusKey.localeCompare(b.statusKey) * dir || (a.idNumber - b.idNumber);
+      }
+      if (memberSortBy === 'rank') {
+        return (a.rank - b.rank) * dir || (a.idNumber - b.idNumber);
+      }
+      if (memberSortBy === 'upgradeRankPool') {
+        return (a.upgradeRankPool - b.upgradeRankPool) * dir || (a.idNumber - b.idNumber);
+      }
+      if (memberSortBy === 'newAutoIdPool') {
+        return (a.newAutoIdPool - b.newAutoIdPool) * dir || (a.idNumber - b.idNumber);
+      }
+      if (memberSortBy === 'newExtraIdPool') {
+        return (a.newExtraIdPool - b.newExtraIdPool) * dir || (a.idNumber - b.idNumber);
+      }
+      return (a.idNumber - b.idNumber) * dir;
+    });
+
+  const toggleMemberSort = (col: typeof memberSortBy) => {
+    if (memberSortBy === col) {
+      setMemberSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setMemberSortBy(col);
+      setMemberSortDir(col === 'idNumber' || col === 'statusKey' ? 'asc' : 'desc');
+    }
+    setMemberPage(1);
+  };
 
   const ADMIN_ID_PAGE_SIZE = 25;
   const memberTotalPages = Math.max(1, Math.ceil(filteredAdminIdRows.length / ADMIN_ID_PAGE_SIZE));
@@ -714,11 +802,14 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={fetchAdminOverview}
-            disabled={loadingOverview}
+            onClick={() => {
+              fetchAdminOverview();
+              fetchDbRecords();
+            }}
+            disabled={loadingOverview || dbLoading}
             className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-medium text-slate-200 transition cursor-pointer whitespace-nowrap"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${loadingOverview ? 'animate-spin text-emerald-400' : ''}`} />
+            <RefreshCw className={`w-3.5 h-3.5 ${loadingOverview || dbLoading ? 'animate-spin text-emerald-400' : ''}`} />
             <span>{language === 'th' ? 'รีเฟรชข้อมูล Admin' : 'Refresh Admin Data'}</span>
           </button>
 
@@ -897,6 +988,7 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
             { id: 'database', label: '4. สัญญา & ซิงค์ Database' },
             { id: 'members', label: '5. ข้อมูล ID ทั้ง 4 สถานะ (Main/Auto/Extra/โคลน)' },
             { id: 'transactions', label: `6. รหัสธุรกรรม (${txLogs.length})` },
+            { id: 'db_explorer', label: '7. ข้อมูลจริงในฐานข้อมูล DB (ค้นหา/จัดเรียง)' },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -1976,18 +2068,39 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
               </p>
             </div>
 
-            <div className="relative w-full sm:w-72">
-              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                value={memberSearch}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative w-full sm:w-64">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={memberSearch}
+                  onChange={(e) => {
+                    setMemberSearch(e.target.value);
+                    setMemberPage(1);
+                  }}
+                  placeholder="ค้นหา #ID, R1..R18 หรือ Wallet 0x..."
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-8 pr-3 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+              <select
+                value={`${memberSortBy}:${memberSortDir}`}
                 onChange={(e) => {
-                  setMemberSearch(e.target.value);
+                  const [col, dir] = e.target.value.split(':') as [typeof memberSortBy, 'asc' | 'desc'];
+                  setMemberSortBy(col);
+                  setMemberSortDir(dir);
                   setMemberPage(1);
                 }}
-                placeholder="ค้นหา #ID, R1..R18 หรือ Wallet 0x..."
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-8 pr-3 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-emerald-500"
-              />
+                className="bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-emerald-500"
+              >
+                <option value="idNumber:asc">เรียงตาม ID: น้อย → มาก</option>
+                <option value="idNumber:desc">เรียงตาม ID: มาก → น้อย</option>
+                <option value="rank:desc">เรียงตาม Rank: สูง → ต่ำ</option>
+                <option value="rank:asc">เรียงตาม Rank: ต่ำ → สูง</option>
+                <option value="upgradeRankPool:desc">เรียงตาม Vault: มาก → น้อย</option>
+                <option value="newAutoIdPool:desc">เรียงตาม Auto Pool: มาก → น้อย</option>
+                <option value="newExtraIdPool:desc">เรียงตาม Extra Pool: มาก → น้อย</option>
+                <option value="statusKey:asc">เรียงตามสถานะ: A → Z</option>
+              </select>
             </div>
           </div>
 
@@ -2089,14 +2202,92 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
             <table className="w-full text-left border-collapse text-xs">
               <thead>
                 <tr className="border-b border-slate-800 text-slate-400">
-                  <th className="py-2.5 px-3">รหัส ID</th>
-                  <th className="py-2.5 px-3">ชุดสถานะ</th>
+                  <th className="py-2.5 px-3">
+                    <button
+                      type="button"
+                      onClick={() => toggleMemberSort('idNumber')}
+                      className="inline-flex items-center gap-1 hover:text-white cursor-pointer"
+                    >
+                      <span>รหัส ID</span>
+                      {memberSortBy === 'idNumber' ? (
+                        memberSortDir === 'asc' ? <ArrowUp className="w-3 h-3 text-emerald-400" /> : <ArrowDown className="w-3 h-3 text-emerald-400" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 opacity-50" />
+                      )}
+                    </button>
+                  </th>
+                  <th className="py-2.5 px-3">
+                    <button
+                      type="button"
+                      onClick={() => toggleMemberSort('statusKey')}
+                      className="inline-flex items-center gap-1 hover:text-white cursor-pointer"
+                    >
+                      <span>ชุดสถานะ</span>
+                      {memberSortBy === 'statusKey' ? (
+                        memberSortDir === 'asc' ? <ArrowUp className="w-3 h-3 text-emerald-400" /> : <ArrowDown className="w-3 h-3 text-emerald-400" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 opacity-50" />
+                      )}
+                    </button>
+                  </th>
                   <th className="py-2.5 px-3">เจ้าของ (Wallet)</th>
                   <th className="py-2.5 px-3">อัพไลน์ / ผู้แนะนำ</th>
-                  <th className="py-2.5 px-3">Rank / รายละเอียด</th>
-                  <th className="py-2.5 px-3 text-right">Upgrade / Vault</th>
-                  <th className="py-2.5 px-3 text-right">Auto ID Pool</th>
-                  <th className="py-2.5 px-3 text-right">Extra ID Pool</th>
+                  <th className="py-2.5 px-3">
+                    <button
+                      type="button"
+                      onClick={() => toggleMemberSort('rank')}
+                      className="inline-flex items-center gap-1 hover:text-white cursor-pointer"
+                    >
+                      <span>Rank / รายละเอียด</span>
+                      {memberSortBy === 'rank' ? (
+                        memberSortDir === 'asc' ? <ArrowUp className="w-3 h-3 text-emerald-400" /> : <ArrowDown className="w-3 h-3 text-emerald-400" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 opacity-50" />
+                      )}
+                    </button>
+                  </th>
+                  <th className="py-2.5 px-3 text-right">
+                    <button
+                      type="button"
+                      onClick={() => toggleMemberSort('upgradeRankPool')}
+                      className="inline-flex items-center gap-1 hover:text-white cursor-pointer ml-auto"
+                    >
+                      <span>Upgrade / Vault</span>
+                      {memberSortBy === 'upgradeRankPool' ? (
+                        memberSortDir === 'asc' ? <ArrowUp className="w-3 h-3 text-emerald-400" /> : <ArrowDown className="w-3 h-3 text-emerald-400" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 opacity-50" />
+                      )}
+                    </button>
+                  </th>
+                  <th className="py-2.5 px-3 text-right">
+                    <button
+                      type="button"
+                      onClick={() => toggleMemberSort('newAutoIdPool')}
+                      className="inline-flex items-center gap-1 hover:text-white cursor-pointer ml-auto"
+                    >
+                      <span>Auto ID Pool</span>
+                      {memberSortBy === 'newAutoIdPool' ? (
+                        memberSortDir === 'asc' ? <ArrowUp className="w-3 h-3 text-emerald-400" /> : <ArrowDown className="w-3 h-3 text-emerald-400" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 opacity-50" />
+                      )}
+                    </button>
+                  </th>
+                  <th className="py-2.5 px-3 text-right">
+                    <button
+                      type="button"
+                      onClick={() => toggleMemberSort('newExtraIdPool')}
+                      className="inline-flex items-center gap-1 hover:text-white cursor-pointer ml-auto"
+                    >
+                      <span>Extra ID Pool</span>
+                      {memberSortBy === 'newExtraIdPool' ? (
+                        memberSortDir === 'asc' ? <ArrowUp className="w-3 h-3 text-emerald-400" /> : <ArrowDown className="w-3 h-3 text-emerald-400" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 opacity-50" />
+                      )}
+                    </button>
+                  </th>
                   <th className="py-2.5 px-3 text-right">จัดการด่วน</th>
                 </tr>
               </thead>
@@ -2288,26 +2479,52 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
         };
 
         const qTx = txSearch.trim().toLowerCase();
-        const filteredTxLogs = txLogs.filter((t) => {
-          if (txTypeFilter === 'REGISTER' && t.actionType !== 'REGISTER' && t.actionType !== 'BATCH_REGISTER') return false;
-          if (txTypeFilter === 'UPGRADE' && t.actionType !== 'UPGRADE' && t.actionType !== 'ADMIN_UPGRADE') return false;
-          if (txTypeFilter === 'AUTO_EXTRA' && t.actionType !== 'AUTO_ID' && t.actionType !== 'EXTRA_ID') return false;
-          if (txTypeFilter === 'CLONE_BOT' && t.actionType !== 'CLONE_BOT') return false;
-          if (txTypeFilter === 'ADMIN' && t.actionType !== 'ADMIN_ACTION' && t.actionType !== 'ADMIN_UPGRADE') return false;
-          if (txTypeFilter === 'ALLSELL' && t.actionType !== 'ALLSELL_PAYOUT') return false;
+        const filteredTxLogs = txLogs
+          .filter((t) => {
+            if (txTypeFilter === 'REGISTER' && t.actionType !== 'REGISTER' && t.actionType !== 'BATCH_REGISTER') return false;
+            if (txTypeFilter === 'UPGRADE' && t.actionType !== 'UPGRADE' && t.actionType !== 'ADMIN_UPGRADE') return false;
+            if (txTypeFilter === 'AUTO_EXTRA' && t.actionType !== 'AUTO_ID' && t.actionType !== 'EXTRA_ID') return false;
+            if (txTypeFilter === 'CLONE_BOT' && t.actionType !== 'CLONE_BOT') return false;
+            if (txTypeFilter === 'ADMIN' && t.actionType !== 'ADMIN_ACTION' && t.actionType !== 'ADMIN_UPGRADE') return false;
+            if (txTypeFilter === 'ALLSELL' && t.actionType !== 'ALLSELL_PAYOUT') return false;
 
-          if (!qTx) return true;
-          return (
-            String(t.txHash || '').toLowerCase().includes(qTx) ||
-            String(t.userAddress || '').toLowerCase().includes(qTx) ||
-            String(t.title || '').toLowerCase().includes(qTx) ||
-            String(t.details || '').toLowerCase().includes(qTx) ||
-            String(t.mainNodeId || '').includes(qTx) ||
-            String(t.nodeId || '').includes(qTx) ||
-            String(t.blockNumber || '').includes(qTx) ||
-            String(t.actionType || '').toLowerCase().includes(qTx)
-          );
-        });
+            if (!qTx) return true;
+            return (
+              String(t.txHash || '').toLowerCase().includes(qTx) ||
+              String(t.userAddress || '').toLowerCase().includes(qTx) ||
+              String(t.title || '').toLowerCase().includes(qTx) ||
+              String(t.details || '').toLowerCase().includes(qTx) ||
+              String(t.mainNodeId || '').includes(qTx) ||
+              String(t.nodeId || '').includes(qTx) ||
+              String(t.blockNumber || '').includes(qTx) ||
+              String(t.actionType || '').toLowerCase().includes(qTx)
+            );
+          })
+          .sort((a, b) => {
+            const dir = txSortDir === 'asc' ? 1 : -1;
+            if (txSortBy === 'amountUsdt') {
+              return (Number(a.amountUsdt || 0) - Number(b.amountUsdt || 0)) * dir;
+            }
+            if (txSortBy === 'blockNumber') {
+              return (Number(a.blockNumber || 0) - Number(b.blockNumber || 0)) * dir;
+            }
+            if (txSortBy === 'actionType') {
+              return String(a.actionType || '').localeCompare(String(b.actionType || '')) * dir;
+            }
+            const tA = new Date(a.timestamp || 0).getTime() || 0;
+            const tB = new Date(b.timestamp || 0).getTime() || 0;
+            return (tA - tB) * dir;
+          });
+
+        const toggleTxSort = (col: typeof txSortBy) => {
+          if (txSortBy === col) {
+            setTxSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+          } else {
+            setTxSortBy(col);
+            setTxSortDir(col === 'actionType' ? 'asc' : 'desc');
+          }
+          setTxPage(1);
+        };
 
         const txTotalPages = Math.max(1, Math.ceil(filteredTxLogs.length / TX_PAGE_SIZE));
         const safeTxPage = Math.min(txPage, txTotalPages);
@@ -2361,7 +2578,7 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
                   <span>{txSyncing ? 'กำลังดึงจากเชน...' : 'ดึง Tx Hash ล่าสุดจากเชน'}</span>
                 </button>
 
-                <div className="relative w-full sm:w-72">
+                <div className="relative w-full sm:w-64">
                   <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
                     type="text"
@@ -2374,6 +2591,25 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-1.5 text-xs text-white focus:outline-none focus:border-cyan-500"
                   />
                 </div>
+
+                <select
+                  value={`${txSortBy}:${txSortDir}`}
+                  onChange={(e) => {
+                    const [col, dir] = e.target.value.split(':') as [typeof txSortBy, 'asc' | 'desc'];
+                    setTxSortBy(col);
+                    setTxSortDir(dir);
+                    setTxPage(1);
+                  }}
+                  className="bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-cyan-500"
+                >
+                  <option value="timestamp:desc">ล่าสุดก่อน</option>
+                  <option value="timestamp:asc">เก่าสุดก่อน</option>
+                  <option value="amountUsdt:desc">จำนวนเงิน: มาก → น้อย</option>
+                  <option value="amountUsdt:asc">จำนวนเงิน: น้อย → มาก</option>
+                  <option value="blockNumber:desc">Block: สูง → ต่ำ</option>
+                  <option value="blockNumber:asc">Block: ต่ำ → สูง</option>
+                  <option value="actionType:asc">ประเภท: A → Z</option>
+                </select>
               </div>
             </div>
 
@@ -2411,10 +2647,49 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
               <table className="w-full text-left border-collapse text-xs font-mono">
                 <thead>
                   <tr className="border-b border-slate-800 text-slate-400">
-                    <th className="py-2.5 px-3">เวลา / Block</th>
-                    <th className="py-2.5 px-3">ประเภท</th>
+                    <th className="py-2.5 px-3">
+                      <button
+                        type="button"
+                        onClick={() => toggleTxSort('timestamp')}
+                        className="inline-flex items-center gap-1 hover:text-white cursor-pointer"
+                      >
+                        <span>เวลา / Block</span>
+                        {txSortBy === 'timestamp' ? (
+                          txSortDir === 'asc' ? <ArrowUp className="w-3 h-3 text-cyan-400" /> : <ArrowDown className="w-3 h-3 text-cyan-400" />
+                        ) : (
+                          <ArrowUpDown className="w-3 h-3 opacity-50" />
+                        )}
+                      </button>
+                    </th>
+                    <th className="py-2.5 px-3">
+                      <button
+                        type="button"
+                        onClick={() => toggleTxSort('actionType')}
+                        className="inline-flex items-center gap-1 hover:text-white cursor-pointer"
+                      >
+                        <span>ประเภท</span>
+                        {txSortBy === 'actionType' ? (
+                          txSortDir === 'asc' ? <ArrowUp className="w-3 h-3 text-cyan-400" /> : <ArrowDown className="w-3 h-3 text-cyan-400" />
+                        ) : (
+                          <ArrowUpDown className="w-3 h-3 opacity-50" />
+                        )}
+                      </button>
+                    </th>
                     <th className="py-2.5 px-3">รายละเอียดธุรกรรม</th>
-                    <th className="py-2.5 px-3 text-right">จำนวน</th>
+                    <th className="py-2.5 px-3 text-right">
+                      <button
+                        type="button"
+                        onClick={() => toggleTxSort('amountUsdt')}
+                        className="inline-flex items-center gap-1 hover:text-white cursor-pointer ml-auto"
+                      >
+                        <span>จำนวน</span>
+                        {txSortBy === 'amountUsdt' ? (
+                          txSortDir === 'asc' ? <ArrowUp className="w-3 h-3 text-cyan-400" /> : <ArrowDown className="w-3 h-3 text-cyan-400" />
+                        ) : (
+                          <ArrowUpDown className="w-3 h-3 opacity-50" />
+                        )}
+                      </button>
+                    </th>
                     <th className="py-2.5 px-3">กระเป๋า (Wallet)</th>
                     <th className="py-2.5 px-3">รหัสธุรกรรม (Tx Hash)</th>
                     <th className="py-2.5 px-3 text-right">แหล่งที่มา / ตรวจสอบ</th>
@@ -2564,6 +2839,385 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
                 </button>
               </div>
             )}
+          </div>
+        );
+      })()}
+
+      {/* =====================================================================
+          SECTION 7: LIVE POSTGRESQL DATABASE EXPLORER (SEARCHABLE & SORTABLE)
+         ===================================================================== */}
+      {showSection('db_explorer') && (() => {
+        const tableList: Array<{ name: string; labelTh: string }> = dbData?.tables || [
+          { name: 'matrix_nodes', labelTh: 'โหนด Matrix (matrix_nodes)' },
+          { name: 'accounts', labelTh: 'บัญชีสมาชิก (accounts)' },
+          { name: 'wallets', labelTh: 'กระเป๋า (wallets)' },
+          { name: 'matrix_levels', labelTh: 'สรุป Rank 1–18 (matrix_levels)' },
+          { name: 'income_channels', labelTh: 'ช่องทางรายได้ (income_channels)' },
+          { name: 'activities', labelTh: 'กิจกรรม (activities)' },
+          { name: 'allsell_inflows', labelTh: 'รายรับ AllSell 4% (allsell_inflows)' },
+          { name: 'allsell_payout_cycles', labelTh: 'รอบตัดจ่าย AllSell (allsell_payout_cycles)' },
+          { name: 'allsell_payout_transfers', labelTh: 'รายการโอน AllSell (allsell_payout_transfers)' },
+          { name: 'allsell_auto_config', labelTh: 'ตั้งค่า Auto AllSell (allsell_auto_config)' },
+          { name: 'matrix_db_snapshots', labelTh: 'Snapshot สัญญา (matrix_db_snapshots)' },
+        ];
+        const columns: Array<{ key: string; label: string; type: string }> = dbData?.columns || [];
+        const rows: any[] = Array.isArray(dbData?.rows) ? dbData.rows : [];
+        const counts: Record<string, number> = dbData?.tableCounts || {};
+        const currentSortBy = dbSortBy || dbData?.sortBy || '';
+        const currentSortDir: 'asc' | 'desc' = dbSortBy ? dbSortDir : (dbData?.sortDir || 'asc');
+        const dbTotalPages = Math.max(1, Number(dbData?.totalPages || 1));
+        const dbSafePage = Math.min(dbPage, dbTotalPages);
+
+        const handleDbSortClick = (colKey: string) => {
+          if (currentSortBy === colKey) {
+            setDbSortBy(colKey);
+            setDbSortDir(currentSortDir === 'asc' ? 'desc' : 'asc');
+          } else {
+            setDbSortBy(colKey);
+            setDbSortDir('asc');
+          }
+          setDbPage(1);
+        };
+
+        const renderDbCell = (col: { key: string; type: string }, val: any) => {
+          if (val === null || val === undefined || val === '') {
+            return <span className="text-slate-600">-</span>;
+          }
+          if (col.type === 'boolean') {
+            return val ? (
+              <span className="px-2 py-0.5 rounded bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-[10px] font-bold">
+                TRUE
+              </span>
+            ) : (
+              <span className="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-400 text-[10px]">
+                FALSE
+              </span>
+            );
+          }
+          if (col.type === 'usdt') {
+            const num = Number(val);
+            return (
+              <span className="text-emerald-400 font-bold">
+                {Number.isFinite(num) ? `${num.toFixed(2)} U` : String(val)}
+              </span>
+            );
+          }
+          if (col.type === 'number') {
+            return <span className="text-amber-300 font-semibold">{String(val)}</span>;
+          }
+          if (col.type === 'date') {
+            const d = new Date(val);
+            const label = Number.isNaN(d.getTime())
+              ? String(val)
+              : d.toLocaleString('th-TH', {
+                  day: '2-digit',
+                  month: '2-digit',
+                  year: '2-digit',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  second: '2-digit',
+                });
+            return (
+              <span className="text-slate-300 whitespace-nowrap" title={String(val)}>
+                {label}
+              </span>
+            );
+          }
+          if (col.type === 'address' || col.type === 'hash') {
+            const s = String(val);
+            if (!s.startsWith('0x') || s.length < 14) {
+              return <span className="text-slate-300">{s}</span>;
+            }
+            const short = `${s.slice(0, 8)}...${s.slice(-6)}`;
+            const bscPath = col.type === 'hash' && s.length === 66 ? `tx/${s}` : `address/${s}`;
+            return (
+              <div className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                <span className={col.type === 'hash' ? 'text-cyan-300' : 'text-sky-300'} title={s}>
+                  {short}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleCopy(s)}
+                  className="text-slate-500 hover:text-white cursor-pointer"
+                  title="คัดลอก"
+                >
+                  {copiedText === s ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                </button>
+                {(col.type === 'address' || s.length === 66) && (
+                  <a
+                    href={`https://testnet.bscscan.com/${bscPath}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-slate-500 hover:text-cyan-300"
+                    title="เปิดดูบน BscScan"
+                  >
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                )}
+              </div>
+            );
+          }
+          const strVal = String(val);
+          return (
+            <span className="text-slate-200 max-w-[260px] truncate inline-block align-bottom" title={strVal}>
+              {strVal}
+            </span>
+          );
+        };
+
+        return (
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4">
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 border-b border-slate-800 pb-3">
+              <div>
+                <h2 className="text-base font-bold text-white flex items-center gap-2">
+                  <Table2 className="w-4 h-4 text-emerald-400" />
+                  <span>หมวดที่ 7: ข้อมูลจริงในฐานข้อมูล PostgreSQL (Database Explorer)</span>
+                </h2>
+                <p className="text-xs text-slate-400 mt-0.5 flex flex-wrap items-center gap-2">
+                  <span>
+                    ฐานข้อมูล:{' '}
+                    <strong className="font-mono text-emerald-300">
+                      {dbData?.database || 'FractalFlow18'} ({dbData?.host || '-'}:{dbData?.port || '-'})
+                    </strong>
+                  </span>
+                  <span
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                      dbData?.connected
+                        ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                        : 'bg-rose-500/15 border-rose-500/40 text-rose-300'
+                    }`}
+                  >
+                    {dbData?.connected ? 'CONNECTED' : 'DISCONNECTED'}
+                  </span>
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="relative w-full sm:w-64">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={dbSearchInput}
+                    onChange={(e) => setDbSearchInput(e.target.value)}
+                    placeholder="ค้นหาในตารางนี้ (ID, Wallet, Tx, ชื่อ...)"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-8 pr-7 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-emerald-500"
+                  />
+                  {dbSearchInput && (
+                    <button
+                      type="button"
+                      onClick={() => setDbSearchInput('')}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white cursor-pointer"
+                      title="ล้างคำค้นหา"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {columns.length > 0 && (
+                  <div className="flex items-center gap-1">
+                    <select
+                      value={currentSortBy}
+                      onChange={(e) => {
+                        setDbSortBy(e.target.value);
+                        setDbPage(1);
+                      }}
+                      className="bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-emerald-500"
+                    >
+                      {columns.map((c) => (
+                        <option key={c.key} value={c.key}>
+                          เรียงตาม: {c.label}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDbSortBy(currentSortBy);
+                        setDbSortDir(currentSortDir === 'asc' ? 'desc' : 'asc');
+                        setDbPage(1);
+                      }}
+                      className="px-2.5 py-1.5 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-xs font-mono text-emerald-300 inline-flex items-center gap-1 cursor-pointer"
+                      title="สลับทิศทางการจัดเรียง"
+                    >
+                      {currentSortDir === 'asc' ? (
+                        <>
+                          <ArrowUp className="w-3.5 h-3.5" />
+                          <span>ASC</span>
+                        </>
+                      ) : (
+                        <>
+                          <ArrowDown className="w-3.5 h-3.5" />
+                          <span>DESC</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                )}
+
+                <select
+                  value={dbPageSize}
+                  onChange={(e) => {
+                    setDbPageSize(Number(e.target.value));
+                    setDbPage(1);
+                  }}
+                  className="bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs font-mono text-slate-200"
+                >
+                  <option value={15}>15 แถว/หน้า</option>
+                  <option value={25}>25 แถว/หน้า</option>
+                  <option value={50}>50 แถว/หน้า</option>
+                  <option value={100}>100 แถว/หน้า</option>
+                </select>
+
+                <button
+                  type="button"
+                  onClick={fetchDbRecords}
+                  disabled={dbLoading}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-300 text-xs font-bold cursor-pointer disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${dbLoading ? 'animate-spin' : ''}`} />
+                  <span>รีเฟรช DB</span>
+                </button>
+              </div>
+            </div>
+
+            {/* PostgreSQL Table Selector Pills */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              {tableList.map((tbl) => {
+                const countVal = counts[tbl.name];
+                const isSelected = dbTable === tbl.name;
+                return (
+                  <button
+                    key={tbl.name}
+                    type="button"
+                    onClick={() => {
+                      setDbTable(tbl.name);
+                      setDbSortBy('');
+                      setDbPage(1);
+                    }}
+                    className={`px-3 py-1.5 rounded-xl border text-xs font-semibold transition cursor-pointer inline-flex items-center gap-1.5 ${
+                      isSelected
+                        ? 'bg-emerald-500 text-slate-950 border-emerald-400 font-bold'
+                        : 'bg-slate-950 border-slate-800 text-slate-300 hover:bg-slate-800 hover:text-white'
+                    }`}
+                  >
+                    <span className="font-mono">{tbl.name}</span>
+                    {typeof countVal === 'number' && (
+                      <span
+                        className={`px-1.5 py-0.2 rounded-md text-[10px] font-mono ${
+                          isSelected ? 'bg-slate-950/20 text-slate-950' : 'bg-slate-800 text-amber-300'
+                        }`}
+                      >
+                        {countVal}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            {dbData?.error && (
+              <div className="rounded-xl bg-rose-950/50 border border-rose-500/40 px-4 py-2.5 text-xs text-rose-200">
+                ⚠️ {dbData.error}
+              </div>
+            )}
+
+            {/* Live Table Grid */}
+            <div className="overflow-x-auto border border-slate-800 rounded-xl bg-slate-950/60">
+              <table className="w-full text-left border-collapse text-xs font-mono">
+                <thead>
+                  <tr className="border-b border-slate-800 bg-slate-950 text-slate-400">
+                    {columns.map((col) => {
+                      const isSorted = currentSortBy === col.key;
+                      const isRight = col.type === 'number' || col.type === 'usdt';
+                      return (
+                        <th key={col.key} className={`py-2.5 px-3 whitespace-nowrap ${isRight ? 'text-right' : ''}`}>
+                          <button
+                            type="button"
+                            onClick={() => handleDbSortClick(col.key)}
+                            className={`inline-flex items-center gap-1 hover:text-white cursor-pointer ${
+                              isSorted ? 'text-emerald-300 font-bold' : ''
+                            }`}
+                          >
+                            <span>{col.label}</span>
+                            {isSorted ? (
+                              currentSortDir === 'asc' ? (
+                                <ArrowUp className="w-3 h-3 text-emerald-400" />
+                              ) : (
+                                <ArrowDown className="w-3 h-3 text-emerald-400" />
+                              )
+                            ) : (
+                              <ArrowUpDown className="w-3 h-3 opacity-40" />
+                            )}
+                          </button>
+                        </th>
+                      );
+                    })}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60 tabular-nums">
+                  {rows.map((row, idx) => (
+                    <tr key={row.id || row.address || row.contract_address || row.rank || idx} className="hover:bg-slate-800/40">
+                      {columns.map((col) => {
+                        const isRight = col.type === 'number' || col.type === 'usdt';
+                        return (
+                          <td key={col.key} className={`py-2 px-3 whitespace-nowrap ${isRight ? 'text-right' : ''}`}>
+                            {renderDbCell(col, row[col.key])}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                  {!dbLoading && rows.length === 0 && (
+                    <tr>
+                      <td colSpan={Math.max(1, columns.length)} className="py-8 text-center text-slate-500 font-sans">
+                        {dbSearchQuery
+                          ? `ไม่พบข้อมูลที่ตรงกับ "${dbSearchQuery}" ในตาราง ${dbTable}`
+                          : `ยังไม่มีข้อมูลในตาราง ${dbTable}`}
+                      </td>
+                    </tr>
+                  )}
+                  {dbLoading && rows.length === 0 && (
+                    <tr>
+                      <td colSpan={Math.max(1, columns.length)} className="py-8 text-center text-slate-400 font-sans">
+                        กำลังโหลดข้อมูลจาก PostgreSQL...
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Footer & Pagination */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-2 text-xs font-mono">
+              <span className="text-slate-400">
+                ตาราง <strong className="text-white">{dbTable}</strong> • พบ{' '}
+                <strong className="text-emerald-300">{dbData?.totalRows ?? rows.length}</strong> รายการ
+                {dbSearchQuery ? ` (กรองจาก "${dbSearchQuery}")` : ''}
+              </span>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={dbSafePage <= 1 || dbLoading}
+                  onClick={() => setDbPage((p) => Math.max(1, p - 1))}
+                  className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
+                >
+                  ◀ ก่อนหน้า
+                </button>
+                <span className="text-slate-400">
+                  หน้า <strong className="text-amber-300">{dbSafePage}</strong> / {dbTotalPages}
+                </span>
+                <button
+                  type="button"
+                  disabled={dbSafePage >= dbTotalPages || dbLoading}
+                  onClick={() => setDbPage((p) => Math.min(dbTotalPages, p + 1))}
+                  className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
+                >
+                  ถัดไป ▶
+                </button>
+              </div>
+            </div>
           </div>
         );
       })()}

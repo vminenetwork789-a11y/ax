@@ -872,6 +872,7 @@ async function refreshPgTableCounts() {
       'allsell_payout_cycles',
       'allsell_payout_transfers',
       'allsell_auto_config',
+      'matrix_db_snapshots',
     ];
     const counts: Record<string, number> = {};
     for (const t of tables) {
@@ -11172,6 +11173,379 @@ async function startApp() {
   app.post('/api/admin/clear-cache', handleClearCacheRequest);
   app.post('/api/matrix/clear-cache', handleClearCacheRequest);
   app.post('/api/clear-cache', handleClearCacheRequest);
+
+  app.get('/api/admin/db-records', async (req: Request, res: Response) => {
+    try {
+      const requestedTable = String(req.query.table || 'matrix_nodes').trim();
+      const search = String(req.query.search || '').trim();
+      const page = Math.max(1, parseInt(String(req.query.page || '1'), 10) || 1);
+      const pageSize = Math.min(100, Math.max(5, parseInt(String(req.query.pageSize || '25'), 10) || 25));
+
+      interface DbColDef {
+        key: string;
+        label: string;
+        type: 'text' | 'number' | 'usdt' | 'boolean' | 'date' | 'address' | 'hash';
+        selectExpr?: string;
+      }
+      interface DbTableDef {
+        labelTh: string;
+        defaultSort: string;
+        defaultDir: 'asc' | 'desc';
+        secondaryOrder?: string;
+        columns: DbColDef[];
+        searchExprs: string[];
+      }
+
+      const DB_TABLES: Record<string, DbTableDef> = {
+        matrix_nodes: {
+          labelTh: 'โหนด Matrix ทั้งหมด (matrix_nodes)',
+          defaultSort: 'rank',
+          defaultDir: 'asc',
+          secondaryOrder: 'node_id ASC',
+          columns: [
+            { key: 'id', label: 'Node Key', type: 'text' },
+            { key: 'rank', label: 'Rank', type: 'number' },
+            { key: 'node_id', label: 'Node ID', type: 'number' },
+            { key: 'label', label: 'ป้ายชื่อ', type: 'text' },
+            { key: 'category', label: 'ประเภท', type: 'text' },
+            { key: 'parent_id', label: 'Parent', type: 'text' },
+            { key: 'sponsor_id', label: 'Sponsor', type: 'text' },
+            { key: 'owner', label: 'เจ้าของ (Wallet)', type: 'address' },
+            { key: 'left_child', label: 'ลูกซ้าย', type: 'number' },
+            { key: 'right_child', label: 'ลูกขวา', type: 'number' },
+            { key: 'is_clone', label: 'Clone', type: 'boolean' },
+            { key: 'is_extra_id', label: 'Extra', type: 'boolean' },
+            { key: 'is_admin_free_upgrade', label: 'Admin Free', type: 'boolean' },
+            { key: 'personal_volume_usdt', label: 'Vault (U)', type: 'usdt' },
+            { key: 'created_at', label: 'สร้างเมื่อ', type: 'date' },
+          ],
+          searchExprs: [
+            'id',
+            'label',
+            'category',
+            'parent_id',
+            'sponsor_id',
+            'COALESCE(owner, \'\')',
+            'CAST(rank AS TEXT)',
+            'CAST(node_id AS TEXT)',
+          ],
+        },
+        accounts: {
+          labelTh: 'บัญชีสมาชิก (accounts)',
+          defaultSort: 'main_node_id',
+          defaultDir: 'asc',
+          columns: [
+            { key: 'id', label: 'Account ID', type: 'text' },
+            { key: 'main_node_id', label: 'Main ID', type: 'number' },
+            { key: 'owner', label: 'เจ้าของ (Wallet)', type: 'address' },
+            { key: 'current_max_rank', label: 'Max Rank', type: 'number' },
+            { key: 'sponsor_main_node_id', label: 'Sponsor ID', type: 'number' },
+            { key: 'sponsor_address', label: 'Sponsor Wallet', type: 'address' },
+            { key: 'updated_at', label: 'อัปเดตล่าสุด', type: 'date' },
+          ],
+          searchExprs: [
+            'id',
+            'owner',
+            'COALESCE(sponsor_address, \'\')',
+            'CAST(COALESCE(main_node_id, 0) AS TEXT)',
+            'CAST(COALESCE(current_max_rank, 1) AS TEXT)',
+            'CAST(COALESCE(sponsor_main_node_id, 0) AS TEXT)',
+          ],
+        },
+        wallets: {
+          labelTh: 'กระเป๋าผู้ใช้งาน (wallets)',
+          defaultSort: 'total_rewards_usdt',
+          defaultDir: 'desc',
+          columns: [
+            { key: 'address', label: 'Wallet Address', type: 'address' },
+            { key: 'total_nodes', label: 'จำนวนโหนด', type: 'number' },
+            { key: 'max_rank', label: 'Max Rank', type: 'number' },
+            { key: 'total_rewards_usdt', label: 'รางวัลรวม (U)', type: 'usdt' },
+            { key: 'updated_at', label: 'อัปเดตล่าสุด', type: 'date' },
+          ],
+          searchExprs: [
+            'address',
+            'CAST(total_nodes AS TEXT)',
+            'CAST(max_rank AS TEXT)',
+            'CAST(total_rewards_usdt AS TEXT)',
+          ],
+        },
+        matrix_levels: {
+          labelTh: 'สรุป Rank 1–18 (matrix_levels)',
+          defaultSort: 'rank',
+          defaultDir: 'asc',
+          columns: [
+            { key: 'rank', label: 'Rank', type: 'number' },
+            { key: 'price_usdt', label: 'ราคา (USDT)', type: 'usdt' },
+            { key: 'total_nodes', label: 'จำนวนโหนด', type: 'number' },
+            { key: 'updated_at', label: 'อัปเดตล่าสุด', type: 'date' },
+          ],
+          searchExprs: [
+            'CAST(rank AS TEXT)',
+            'CAST(price_usdt AS TEXT)',
+            'CAST(total_nodes AS TEXT)',
+          ],
+        },
+        income_channels: {
+          labelTh: 'ช่องทางรายได้ (income_channels)',
+          defaultSort: 'created_at',
+          defaultDir: 'desc',
+          secondaryOrder: 'id DESC',
+          columns: [
+            { key: 'id', label: 'Log ID', type: 'text' },
+            { key: 'rank', label: 'Rank', type: 'number' },
+            { key: 'reward_type', label: 'ประเภทรางวัล', type: 'text' },
+            { key: 'from_node_id', label: 'จากโหนด', type: 'number' },
+            { key: 'to_node_id', label: 'ถึงโหนด', type: 'number' },
+            { key: 'recipient', label: 'ผู้รับ (Wallet)', type: 'address' },
+            { key: 'amount_usdt', label: 'จำนวน (U)', type: 'usdt' },
+            { key: 'tx_hash', label: 'Tx Hash', type: 'hash' },
+            { key: 'block_number', label: 'Block', type: 'number' },
+            { key: 'is_admin_free_upgrade', label: 'Admin Free', type: 'boolean' },
+            { key: 'created_at', label: 'บันทึกเมื่อ', type: 'date' },
+          ],
+          searchExprs: [
+            'id',
+            'reward_type',
+            'recipient',
+            'COALESCE(tx_hash, \'\')',
+            'CAST(rank AS TEXT)',
+            'CAST(from_node_id AS TEXT)',
+            'CAST(to_node_id AS TEXT)',
+          ],
+        },
+        activities: {
+          labelTh: 'ประวัติกิจกรรม (activities)',
+          defaultSort: 'date_time',
+          defaultDir: 'desc',
+          secondaryOrder: 'created_at DESC',
+          columns: [
+            { key: 'id', label: 'Activity ID', type: 'text' },
+            { key: 'date_time', label: 'วันเวลา', type: 'text' },
+            { key: 'type', label: 'ประเภท', type: 'text' },
+            { key: 'title', label: 'หัวข้อ', type: 'text' },
+            { key: 'detail', label: 'รายละเอียด', type: 'text' },
+            { key: 'amount_display', label: 'ยอดเงิน', type: 'text' },
+            { key: 'status', label: 'สถานะ', type: 'text' },
+            { key: 'tx_hash', label: 'Tx Hash', type: 'hash' },
+          ],
+          searchExprs: [
+            'id',
+            'date_time',
+            'type',
+            'title',
+            'detail',
+            'amount_display',
+            'status',
+            'COALESCE(tx_hash, \'\')',
+          ],
+        },
+        allsell_inflows: {
+          labelTh: 'รายรับ AllSell 4% (allsell_inflows)',
+          defaultSort: 'event_time',
+          defaultDir: 'desc',
+          columns: [
+            { key: 'id', label: 'Inflow ID', type: 'text' },
+            { key: 'contract_address', label: 'Contract', type: 'address' },
+            { key: 'rank', label: 'Rank', type: 'number' },
+            { key: 'from_node_id', label: 'From Node', type: 'number' },
+            { key: 'from_main_id', label: 'Main ID', type: 'number' },
+            { key: 'from_node_type', label: 'ที่มา', type: 'text' },
+            { key: 'parent_id', label: 'Parent ID', type: 'number' },
+            { key: 'amount_usdt', label: 'AllSell 4% (U)', type: 'usdt' },
+            { key: 'recipient', label: 'กระเป๋า AllSell', type: 'address' },
+            { key: 'tx_hash', label: 'Tx Hash', type: 'hash' },
+            { key: 'block_number', label: 'Block', type: 'number' },
+            { key: 'event_time', label: 'เวลาเหตุการณ์', type: 'date' },
+          ],
+          searchExprs: [
+            'id',
+            'contract_address',
+            'from_node_type',
+            'recipient',
+            'note',
+            'COALESCE(tx_hash, \'\')',
+            'CAST(rank AS TEXT)',
+            'CAST(from_node_id AS TEXT)',
+            'CAST(from_main_id AS TEXT)',
+          ],
+        },
+        allsell_payout_cycles: {
+          labelTh: 'รอบตัดจ่าย AllSell (allsell_payout_cycles)',
+          defaultSort: 'executed_at',
+          defaultDir: 'desc',
+          columns: [
+            { key: 'id', label: 'Cycle ID', type: 'text' },
+            { key: 'contract_address', label: 'Contract', type: 'address' },
+            { key: 'cycle_key', label: 'รหัสรอบ', type: 'text' },
+            { key: 'cycle_label_th', label: 'ชื่อรอบ', type: 'text' },
+            { key: 'trigger_type', label: 'โหมด', type: 'text' },
+            { key: 'total_allsell_pool_usdt', label: 'กองทุนรวม (U)', type: 'usdt' },
+            { key: 'total_distributed_usdt', label: 'จ่ายออกจริง (U)', type: 'usdt' },
+            { key: 'carried_over_usdt', label: 'ยกยอด (U)', type: 'usdt' },
+            { key: 'qualified_recipients_count', label: 'ผู้รับ', type: 'number' },
+            { key: 'note_th', label: 'หมายเหตุ', type: 'text' },
+            { key: 'executed_at', label: 'เวลารัน', type: 'date' },
+          ],
+          searchExprs: [
+            'id',
+            'contract_address',
+            'cycle_key',
+            'cycle_label_th',
+            'trigger_type',
+            'COALESCE(note_th, \'\')',
+          ],
+        },
+        allsell_payout_transfers: {
+          labelTh: 'รายการโอน AllSell (allsell_payout_transfers)',
+          defaultSort: 'executed_at',
+          defaultDir: 'desc',
+          columns: [
+            { key: 'id', label: 'Transfer ID', type: 'text' },
+            { key: 'cycle_key', label: 'รอบ', type: 'text' },
+            { key: 'pool_number', label: 'กองที่', type: 'number' },
+            { key: 'pool_title_th', label: 'ชื่อกอง', type: 'text' },
+            { key: 'main_id', label: 'Main ID', type: 'number' },
+            { key: 'recipient_wallet', label: 'ผู้รับ (Wallet)', type: 'address' },
+            { key: 'amount_usdt', label: 'จำนวน (U)', type: 'usdt' },
+            { key: 'mode', label: 'โหมด', type: 'text' },
+            { key: 'tx_hash', label: 'Tx Hash', type: 'hash' },
+            { key: 'executed_at', label: 'เวลาโอน', type: 'date' },
+          ],
+          searchExprs: [
+            'id',
+            'cycle_id',
+            'contract_address',
+            'cycle_key',
+            'pool_title_th',
+            'recipient_wallet',
+            'tx_hash',
+            'mode',
+            'CAST(main_id AS TEXT)',
+          ],
+        },
+        allsell_auto_config: {
+          labelTh: 'ตั้งค่า Auto AllSell (allsell_auto_config)',
+          defaultSort: 'updated_at',
+          defaultDir: 'desc',
+          columns: [
+            { key: 'id', label: 'Config ID', type: 'text' },
+            { key: 'auto_enabled', label: 'Auto เปิดอยู่', type: 'boolean' },
+            { key: 'last_executed_cycle_key', label: 'รอบล่าสุด', type: 'text' },
+            { key: 'last_executed_at', label: 'รันล่าสุดเมื่อ', type: 'date' },
+            { key: 'updated_at', label: 'อัปเดตล่าสุด', type: 'date' },
+          ],
+          searchExprs: [
+            'id',
+            'COALESCE(last_executed_cycle_key, \'\')',
+            'COALESCE(last_executed_at, \'\')',
+          ],
+        },
+        matrix_db_snapshots: {
+          labelTh: 'Snapshot สัญญา (matrix_db_snapshots)',
+          defaultSort: 'updated_at',
+          defaultDir: 'desc',
+          columns: [
+            { key: 'contract_address', label: 'Contract Address', type: 'address' },
+            { key: 'last_synced_block', label: 'Last Synced Block', type: 'number' },
+            { key: 'updated_at', label: 'อัปเดตล่าสุด', type: 'date' },
+          ],
+          searchExprs: [
+            'contract_address',
+            'CAST(COALESCE(last_synced_block, 0) AS TEXT)',
+          ],
+        },
+      };
+
+      const tableName = Object.prototype.hasOwnProperty.call(DB_TABLES, requestedTable)
+        ? requestedTable
+        : 'matrix_nodes';
+      const tableDef = DB_TABLES[tableName];
+
+      const validColSet = new Set(tableDef.columns.map((c) => c.key));
+      const reqSortBy = String(req.query.sortBy || tableDef.defaultSort).trim();
+      const sortBy = validColSet.has(reqSortBy) ? reqSortBy : tableDef.defaultSort;
+      const reqSortDir = String(req.query.sortDir || tableDef.defaultDir).toLowerCase();
+      const sortDir = reqSortDir === 'asc' ? 'ASC' : 'DESC';
+
+      const tableMeta = Object.entries(DB_TABLES).map(([name, def]) => ({
+        name,
+        labelTh: def.labelTh,
+      }));
+
+      if (!pgPool || !pgConnected || !pgSchemaReady) {
+        return res.json({
+          success: false,
+          connected: false,
+          host: PG_ENDPOINT_INFO.host,
+          port: PG_ENDPOINT_INFO.port,
+          database: PG_ENDPOINT_INFO.database,
+          table: tableName,
+          tables: tableMeta,
+          tableCounts: pgTablesCount,
+          columns: tableDef.columns,
+          rows: [],
+          totalRows: 0,
+          page: 1,
+          pageSize,
+          totalPages: 1,
+          sortBy,
+          sortDir: sortDir.toLowerCase(),
+          error: pgLastError || 'PostgreSQL ยังไม่ได้เชื่อมต่อ',
+        });
+      }
+
+      const selectCols = tableDef.columns.map((c) => c.selectExpr || c.key).join(', ');
+      const whereClause = search
+        ? `WHERE (${tableDef.searchExprs.map((expr) => `${expr} ILIKE $1`).join(' OR ')})`
+        : '';
+      const queryParams: any[] = search ? [`%${search}%`] : [];
+      const orderByClause = tableDef.secondaryOrder && sortBy === tableDef.defaultSort
+        ? `ORDER BY ${sortBy} ${sortDir} NULLS LAST, ${tableDef.secondaryOrder}`
+        : `ORDER BY ${sortBy} ${sortDir} NULLS LAST`;
+
+      const countSql = `SELECT COUNT(*)::int AS total FROM ${tableName} ${whereClause}`;
+      const countRes = await pgPool.query(countSql, queryParams);
+      const totalRows = Number(countRes.rows[0]?.total ?? 0);
+      const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+      const safePage = Math.min(page, totalPages);
+      const offset = (safePage - 1) * pageSize;
+
+      const dataParams = [...queryParams, pageSize, offset];
+      const limitIdx = queryParams.length + 1;
+      const offsetIdx = queryParams.length + 2;
+      const dataSql = `SELECT ${selectCols} FROM ${tableName} ${whereClause} ${orderByClause} LIMIT $${limitIdx} OFFSET $${offsetIdx}`;
+      const dataRes = await pgPool.query(dataSql, dataParams);
+
+      await refreshPgTableCounts();
+
+      return res.json({
+        success: true,
+        connected: pgConnected,
+        host: PG_ENDPOINT_INFO.host,
+        port: PG_ENDPOINT_INFO.port,
+        database: PG_ENDPOINT_INFO.database,
+        table: tableName,
+        tableLabelTh: tableDef.labelTh,
+        tables: tableMeta,
+        tableCounts: pgTablesCount,
+        columns: tableDef.columns,
+        rows: dataRes.rows,
+        totalRows,
+        page: safePage,
+        pageSize,
+        totalPages,
+        sortBy,
+        sortDir: sortDir.toLowerCase(),
+      });
+    } catch (err: any) {
+      res.status(500).json({
+        success: false,
+        connected: pgConnected,
+        error: err?.message || String(err),
+      });
+    }
+  });
 
   app.post('/api/db/wipe', async (_req: Request, res: Response) => {
     try {
