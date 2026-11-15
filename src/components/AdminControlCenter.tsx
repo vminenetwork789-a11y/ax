@@ -2164,6 +2164,11 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
                         <div>
                           ผู้แนะนำ: <strong>#{row.directSponsorNodeId}</strong>
                         </div>
+                        {row.statusKey === 'auto' && row.spawnedByMainId > 0 && (
+                          <div className="text-[10px] text-amber-300 font-semibold">
+                            แตกจาก: Main #{row.spawnedByMainId}
+                          </div>
+                        )}
                         <div className="text-[10px] text-slate-400">
                           อัพไลน์: {row.parentId === 0 ? 'Root (#0)' : `#${row.parentId} (${row.side})`}
                         </div>

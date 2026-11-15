@@ -296,7 +296,7 @@ const DEFAULT_SYSTEM_CONFIG = {
   contractAddress:
     process.env.OVERRIDE_CONTRACT_ADDRESS ||
     process.env.CONTRACT_ADDRESS ||
-    '0xB3832D4cc6daE0B24f1e6660d7C85dcc1F005Cd1',
+    '0x376cDCf45D6CaBe49867B4527Bb87b7e988f0a78',
   usdtAddress: process.env.USDT_ADDRESS || '0x05f24E1F598DF1aE8d0B424ce978f8ea33bB752b',
   chainId: Number(process.env.CHAIN_ID || 97),
   networkName: process.env.NETWORK_NAME || 'BNB Smart Chain Testnet',
@@ -348,6 +348,7 @@ const SERVER_LEGACY_CONTRACTS = new Set([
   '0xd3e4e4d7f367e563756d82989bb930b0261eb2ba',
   '0x49a754084903678b7d46ff2934edb037cd1ab518',
   '0x8b2ef84f543f5c1dfa8240a1853d63efe66006eb',
+  '0xb3832d4cc6dae0b24f1e6660d7c85dcc1f005cd1',
 ]);
 
 const SERVER_LEGACY_USDT = new Set([
@@ -1229,6 +1230,8 @@ export interface IndexedTreeNode {
   isLocalUpgrade?: boolean;
   isAdminFreeUpgrade?: boolean;
   originType?: 'MANUAL_REGISTER' | 'AUTO_MAIN' | 'AUTO_NEW_MAIN' | 'AUTO_EXTRA' | 'CLONE';
+  confirmedOriginType?: 'MANUAL_REGISTER' | 'AUTO_NEW_MAIN';
+  autoSourceMainId?: number;
   createdAt?: string;
 }
 
@@ -2994,6 +2997,8 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
       n.originType = 'CLONE';
     } else if (n.isExtraId) {
       n.originType = 'AUTO_EXTRA';
+    } else if (n.confirmedOriginType === 'AUTO_NEW_MAIN') {
+      n.originType = 'AUTO_NEW_MAIN';
     } else {
       n.originType = 'MANUAL_REGISTER';
     }
@@ -3032,6 +3037,26 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
       curr = pNode.parentId;
     }
     return false;
+  };
+
+  // Returns placement distance (depth / specificity): smaller means direct child of mId or clone of mId; mId === 1 has lowest specificity when another owned eligible Main ID sits directly above targetId
+  const getSpecificityScoreR1 = (mId: number, targetId: number): number => {
+    if (targetId <= mId) return 999999;
+    let curr = byIdR1.get(targetId)?.parentId || 0;
+    let steps = 0;
+    const visited = new Set<number>();
+    while (curr > 0 && !visited.has(curr)) {
+      visited.add(curr);
+      steps++;
+      if (curr === mId) return steps;
+      const pNode = byIdR1.get(curr);
+      if (!pNode) break;
+      if (pNode.isClone && (pNode.originMainId || pNode.id) === mId) {
+        return steps;
+      }
+      curr = pNode.parentId;
+    }
+    return mId === 1 ? 100000 : 999999;
   };
 
   // Compute expected Auto ID spawns and extra Rank 2..3 Pool 2 vaults per Rank 1 Main ID
@@ -3177,7 +3202,11 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
 
   for (const n of sortedR1) {
     if (!n.isClone && !n.isExtraId) {
-      n.originType = n.isSyntheticExtra ? 'AUTO_NEW_MAIN' : 'MANUAL_REGISTER';
+      if (n.isSyntheticExtra || n.confirmedOriginType === 'AUTO_NEW_MAIN') {
+        n.originType = 'AUTO_NEW_MAIN';
+      } else {
+        n.originType = 'MANUAL_REGISTER';
+      }
     }
   }
 
@@ -3192,22 +3221,61 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
       if (n.isSyntheticExtra) {
         const synSource = n.directSponsorNodeId > 0 ? n.directSponsorNodeId : firstMain;
         n.originType = 'AUTO_NEW_MAIN';
+        n.autoSourceMainId = synSource;
         autoMainSourceMap.set(n.id, synSource);
         spawnedCountByMain.set(synSource, (spawnedCountByMain.get(synSource) || 0) + 1);
+      } else if (n.confirmedOriginType === 'AUTO_NEW_MAIN') {
+        // Confirmed from on-chain AutoNewMainIdCreated transaction receipt
+        let sourceMain =
+          n.autoSourceMainId && n.autoSourceMainId > 0 && n.autoSourceMainId < n.id
+            ? n.autoSourceMainId
+            : 0;
+        if (!sourceMain) {
+          const candMains = (ownerAllMainsMap.get(oKey) || [])
+            .filter((mId) => {
+              if (mId >= n.id) return false;
+              if (getMainWindow5Start(mId) <= 1) return false;
+              return isPlacedUnderMainOrClonesR1(mId, n.id);
+            })
+            .sort((a, b) => {
+              const sa = getSpecificityScoreR1(a, n.id);
+              const sb = getSpecificityScoreR1(b, n.id);
+              if (sa !== sb) return sa - sb;
+              const remA = (expectedAutoSpawnsByMain.get(a) || 0) - (spawnedCountByMain.get(a) || 0);
+              const remB = (expectedAutoSpawnsByMain.get(b) || 0) - (spawnedCountByMain.get(b) || 0);
+              if ((remB > 0) !== (remA > 0)) return remB > 0 ? 1 : -1;
+              return b - a;
+            });
+          sourceMain = candMains[0] || (n.directSponsorNodeId > 0 ? n.directSponsorNodeId : firstMain);
+        }
+        n.originType = 'AUTO_NEW_MAIN';
+        n.autoSourceMainId = sourceMain;
+        autoMainSourceMap.set(n.id, sourceMain);
+        spawnedCountByMain.set(sourceMain, (spawnedCountByMain.get(sourceMain) || 0) + 1);
+        simAutoVaultByMain.set(
+          sourceMain,
+          Math.max(0, Number(((simAutoVaultByMain.get(sourceMain) || 0) - r1EntryPrice).toFixed(4)))
+        );
+      } else if (n.confirmedOriginType === 'MANUAL_REGISTER') {
+        // Confirmed from on-chain UserRegistered / BatchRegistered (never misclassify as Auto ID)
+        n.originType = 'MANUAL_REGISTER';
+        delete n.autoSourceMainId;
       } else if (n.id > firstMain) {
         const explicitSpId = n.directSponsorNodeId || 0;
-        const priorMains = (ownerAllMainsMap.get(oKey) || []).filter((mId) => {
-          if (mId >= n.id) return false;
-          if (getMainWindow5Start(mId) <= 1) return false;
-          const maxSpawns = expectedAutoSpawnsByMain.get(mId) || 0;
-          const curSpawns = spawnedCountByMain.get(mId) || 0;
-          if (curSpawns >= maxSpawns) return false;
-          // กฎเหล็กการจัดวางบนสัญญา (_findPlacementSpot): Auto ID ที่เกิดจาก mId จะต้องวางอยู่ใต้สายงาน/โคลนของ mId เท่านั้น
-          if (!isPlacedUnderMainOrClonesR1(mId, n.id)) return false;
-          const mNode = byIdR1.get(mId);
-          const mSpId = mNode?.directSponsorNodeId || 1;
-          return explicitSpId === 0 || explicitSpId === mId || explicitSpId === mSpId;
-        });
+        const priorMains = (ownerAllMainsMap.get(oKey) || [])
+          .filter((mId) => {
+            if (mId >= n.id) return false;
+            if (getMainWindow5Start(mId) <= 1) return false;
+            const maxSpawns = expectedAutoSpawnsByMain.get(mId) || 0;
+            const curSpawns = spawnedCountByMain.get(mId) || 0;
+            if (curSpawns >= maxSpawns) return false;
+            // กฎเหล็กการจัดวางบนสัญญา (_findPlacementSpot): Auto ID ที่เกิดจาก mId จะต้องวางอยู่ใต้สายงาน/โคลนของ mId เท่านั้น
+            if (!isPlacedUnderMainOrClonesR1(mId, n.id)) return false;
+            const mNode = byIdR1.get(mId);
+            const mSpId = mNode?.directSponsorNodeId || 1;
+            return explicitSpId === 0 || explicitSpId === mId || explicitSpId === mSpId;
+          })
+          .sort((a, b) => getSpecificityScoreR1(a, n.id) - getSpecificityScoreR1(b, n.id) || b - a);
 
         let sourceMain = priorMains.find(
           (mId) => (simAutoVaultByMain.get(mId) || 0) + 1e-6 >= r1EntryPrice
@@ -3235,6 +3303,7 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
 
         if (sourceMain !== undefined) {
           n.originType = 'AUTO_NEW_MAIN';
+          n.autoSourceMainId = sourceMain;
           autoMainSourceMap.set(n.id, sourceMain);
           spawnedCountByMain.set(sourceMain, (spawnedCountByMain.get(sourceMain) || 0) + 1);
           simAutoVaultByMain.set(
@@ -4498,7 +4567,7 @@ async function startEventListener(): Promise<void> {
       }
     );
 
-    wsBotContract.on('AutoNewMainIdCreated', (user: string, count: bigint, _vaultDiff: bigint, payload: any) => {
+    wsBotContract.on('AutoNewMainIdCreated', async (user: string, count: bigint, _vaultDiff: bigint, payload: any) => {
       const txHash = payload?.log?.transactionHash || payload?.transactionHash;
       const blockNumber = payload?.log?.blockNumber || payload?.blockNumber;
       recordRealTransactionLog({
@@ -4511,6 +4580,9 @@ async function startEventListener(): Promise<void> {
         blockNumber,
         source: 'ONCHAIN_EVENT',
       });
+      if (txHash && isRealTxHash(txHash) && triggerMatrixDatabaseSync) {
+        triggerMatrixDatabaseSync(CONTRACT_ADDRESS, true).catch(() => {});
+      }
     });
 
     wsBotContract.on('AutoExtraIdCreated', (user: string, rank: bigint, nodeId: bigint, payload: any) => {
@@ -5685,6 +5757,25 @@ async function startApp() {
         const localUpgradedNodes = realExisting.filter(
           (n) => n.isLocalUpgrade || n.isAdminFreeUpgrade
         );
+        const preservedMetaById = new Map<
+          number,
+          {
+            createdAt?: string;
+            isAdminFreeUpgrade?: boolean;
+            confirmedOriginType?: 'MANUAL_REGISTER' | 'AUTO_NEW_MAIN';
+            autoSourceMainId?: number;
+          }
+        >();
+        for (const existing of realExisting) {
+          if (existing && existing.id > 0) {
+            preservedMetaById.set(existing.id, {
+              createdAt: existing.createdAt,
+              isAdminFreeUpgrade: existing.isAdminFreeUpgrade,
+              confirmedOriginType: existing.confirmedOriginType,
+              autoSourceMainId: existing.autoSourceMainId,
+            });
+          }
+        }
 
         const maxFetch = Math.max(totalNodes, 1);
         const mergedMap = new Map<number, IndexedTreeNode>();
@@ -5924,10 +6015,26 @@ async function startApp() {
           );
           for (const item of chunkResults) {
             if (item) {
+              const prevMeta = preservedMetaById.get(item.id);
               const prevExisting = mergedMap.get(item.id);
-              item.createdAt = prevExisting?.createdAt || new Date().toISOString();
-              if (prevExisting?.isAdminFreeUpgrade || knownAdminFreeNodeKeys.has(`${rankNum}:${item.id}`)) {
+              item.createdAt = prevExisting?.createdAt || prevMeta?.createdAt || new Date().toISOString();
+              if (
+                prevExisting?.isAdminFreeUpgrade ||
+                prevMeta?.isAdminFreeUpgrade ||
+                knownAdminFreeNodeKeys.has(`${rankNum}:${item.id}`)
+              ) {
                 item.isAdminFreeUpgrade = true;
+              }
+              const confirmedOrigin = prevExisting?.confirmedOriginType || prevMeta?.confirmedOriginType;
+              const savedAutoSrc = prevExisting?.autoSourceMainId || prevMeta?.autoSourceMainId;
+              if (confirmedOrigin && rankNum === 1 && !item.isClone && !item.isExtraId) {
+                item.confirmedOriginType = confirmedOrigin;
+                if (confirmedOrigin === 'AUTO_NEW_MAIN') {
+                  item.originType = 'AUTO_NEW_MAIN';
+                  if (savedAutoSrc && savedAutoSrc > 0) item.autoSourceMainId = savedAutoSrc;
+                } else {
+                  item.originType = 'MANUAL_REGISTER';
+                }
               }
               mergedMap.set(item.id, item);
               newlyFetchedNodes.push(item);
@@ -5956,10 +6063,28 @@ async function startApp() {
             );
             for (const pItem of refreshedNodes) {
               if (pItem) {
+                const prevMeta = preservedMetaById.get(pItem.id);
                 const prevExisting = mergedMap.get(pItem.id);
-                if (prevExisting?.createdAt) pItem.createdAt = prevExisting.createdAt;
-                if (prevExisting?.isAdminFreeUpgrade || knownAdminFreeNodeKeys.has(`${rankNum}:${pItem.id}`)) {
+                if (prevExisting?.createdAt || prevMeta?.createdAt) {
+                  pItem.createdAt = prevExisting?.createdAt || prevMeta?.createdAt;
+                }
+                if (
+                  prevExisting?.isAdminFreeUpgrade ||
+                  prevMeta?.isAdminFreeUpgrade ||
+                  knownAdminFreeNodeKeys.has(`${rankNum}:${pItem.id}`)
+                ) {
                   pItem.isAdminFreeUpgrade = true;
+                }
+                const confirmedOrigin = prevExisting?.confirmedOriginType || prevMeta?.confirmedOriginType;
+                const savedAutoSrc = prevExisting?.autoSourceMainId || prevMeta?.autoSourceMainId;
+                if (confirmedOrigin && rankNum === 1 && !pItem.isClone && !pItem.isExtraId) {
+                  pItem.confirmedOriginType = confirmedOrigin;
+                  if (confirmedOrigin === 'AUTO_NEW_MAIN') {
+                    pItem.originType = 'AUTO_NEW_MAIN';
+                    if (savedAutoSrc && savedAutoSrc > 0) pItem.autoSourceMainId = savedAutoSrc;
+                  } else {
+                    pItem.originType = 'MANUAL_REGISTER';
+                  }
                 }
                 mergedMap.set(pItem.id, pItem);
               }
@@ -6113,9 +6238,18 @@ async function startApp() {
           'event RankUpgraded(address indexed user, uint8 fromRank, uint8 toRank, uint256 newNodeId, bool isAutoUpgrade)',
           'event AutoNewMainIdCreated(address indexed user, uint256 count, uint256 vaultDiff)',
           'event AutoExtraIdCreated(address indexed user, uint8 indexed rank, uint256 nodeId)',
+          'event RewardDistributed(uint256 indexed fromNodeId, uint256 indexed toNodeId, address indexed recipient, uint8 rank, string rewardType, uint256 amount)',
         ];
+        const logIface = new ethers.Interface(eventAbi);
         const contract = new ethers.Contract(targetContract, eventAbi, provider);
-        const startBlock = Math.max(0, latestBlock - lookbackBlocks);
+        const hasUnconfirmedR1Nodes = () =>
+          (matrixDB.nodesByRank[1] || []).some(
+            (n) => !n.isClone && !n.isExtraId && !n.isSyntheticExtra && n.id > 1 && !n.confirmedOriginType
+          );
+        const effectiveLookback = hasUnconfirmedR1Nodes()
+          ? Math.max(lookbackBlocks, 150000)
+          : lookbackBlocks;
+        const startBlock = Math.max(0, latestBlock - effectiveLookback);
         const chunkSize = 4800; // Safe chunk under BSC Testnet 5000-block getLogs limit
         const blockTimeCache = new Map<number, string>();
 
@@ -6133,10 +6267,190 @@ async function startApp() {
           }
         };
 
-            const beforeLen = (matrixDB.transactionLogs || []).length;
+        const beforeLen = (matrixDB.transactionLogs || []).length;
         let newlyTaggedAdminNodes = false;
+        let newlyTaggedAutoNodes = false;
+        const targetContractLower = targetContract.toLowerCase();
 
-        // Scan newest chunks first (up to ~35,000 blocks)
+        // Helper: determine the most specific eligible Rank 1 Main ID of `ownerLower` under which `autoNodeId` was placed
+        const resolveAutoSourceInR1Tree = (autoNodeId: number, ownerLower: string, preferredCandidates: number[] = []): number => {
+          const r1List = matrixDB.nodesByRank[1] || [];
+          const byId = new Map<number, IndexedTreeNode>();
+          for (const rn of r1List) byId.set(rn.id, rn);
+
+          const isMainRankEligible = (mId: number): boolean => {
+            if (mId === 1) return true;
+            for (let r = 6; r <= 18; r++) {
+              if ((matrixDB.nodesByRank[r] || []).some((x) => !x.isClone && !x.isExtraId && x.originMainId === mId)) {
+                return true;
+              }
+            }
+            return false;
+          };
+
+          const getDepthUnderMainOrClone = (mId: number): number => {
+            if (autoNodeId <= mId) return 999999;
+            let curr = byId.get(autoNodeId)?.parentId || 0;
+            let steps = 0;
+            const visited = new Set<number>();
+            while (curr > 0 && !visited.has(curr)) {
+              visited.add(curr);
+              steps++;
+              if (curr === mId) return steps;
+              const pNode = byId.get(curr);
+              if (!pNode) break;
+              if (pNode.isClone && (pNode.originMainId || pNode.id) === mId) return steps;
+              curr = pNode.parentId;
+            }
+            return mId === 1 ? 100000 : 999999;
+          };
+
+          for (const pref of preferredCandidates) {
+            if (pref > 0 && pref < autoNodeId) {
+              const pNode = byId.get(pref);
+              if (
+                pNode &&
+                !pNode.isClone &&
+                !pNode.isExtraId &&
+                (pNode.owner || '').toLowerCase() === ownerLower &&
+                isMainRankEligible(pref) &&
+                getDepthUnderMainOrClone(pref) < 999999
+              ) {
+                return pref;
+              }
+            }
+          }
+
+          const candidates = r1List
+            .filter(
+              (m) =>
+                !m.isClone &&
+                !m.isExtraId &&
+                m.id < autoNodeId &&
+                (m.owner || '').toLowerCase() === ownerLower &&
+                isMainRankEligible(m.id) &&
+                getDepthUnderMainOrClone(m.id) < 999999
+            )
+            .sort((a, b) => getDepthUnderMainOrClone(a.id) - getDepthUnderMainOrClone(b.id) || b.id - a.id);
+
+          return candidates[0]?.id || 1;
+        };
+
+        // Helper: tag all Rank 1 non-clone non-extra NodeCreated events in an AutoNewMainIdCreated receipt
+        const inspectAndTagAutoIdTx = async (txHash: string): Promise<boolean> => {
+          const r1List = matrixDB.nodesByRank[1] || [];
+          const receipt = await Promise.race([
+            provider.getTransactionReceipt(txHash),
+            new Promise<null>((resolve) => setTimeout(() => resolve(null), 6000)),
+          ]).catch(() => null);
+          if (!receipt?.logs) return false;
+
+          let changed = false;
+          const unconsumedR1ByOwner = new Map<string, number[]>();
+          const upgradeCandidatesByOwner = new Map<string, number[]>();
+
+          const resolveR1MainFromRankNode = (rNum: number, nId: number): number => {
+            if (nId <= 0) return 0;
+            const rList = matrixDB.nodesByRank[rNum] || [];
+            const found = rList.find((x) => x.id === nId);
+            if (found) {
+              return found.isClone || rNum > 1 ? found.originMainId || found.id : found.id;
+            }
+            return rNum === 1 ? nId : 0;
+          };
+
+          for (const log of receipt.logs) {
+            if (String(log.address || '').toLowerCase() !== targetContractLower) continue;
+            let parsed: ethers.LogDescription | null = null;
+            try {
+              parsed = logIface.parseLog(log);
+            } catch {
+              parsed = null;
+            }
+            if (!parsed) continue;
+
+            if (parsed.name === 'NodeCreated') {
+              const rNum = Number(parsed.args.rank || 0);
+              const nId = Number(parsed.args.nodeId || 0);
+              const ownerLower = String(parsed.args.owner || '').toLowerCase();
+              const isClone = Boolean(parsed.args.isClone);
+              const isExtra = Boolean(parsed.args.isExtraId);
+              if (rNum === 1 && nId > 1 && !isClone && !isExtra) {
+                const list = unconsumedR1ByOwner.get(ownerLower) || [];
+                list.push(nId);
+                unconsumedR1ByOwner.set(ownerLower, list);
+              } else if (rNum >= 2 && nId > 0 && !isClone && !isExtra) {
+                const origR1 = resolveR1MainFromRankNode(rNum, nId);
+                if (origR1 > 0) {
+                  const uList = upgradeCandidatesByOwner.get(ownerLower) || [];
+                  uList.push(origR1);
+                  upgradeCandidatesByOwner.set(ownerLower, uList);
+                }
+              }
+            } else if (parsed.name === 'RewardDistributed') {
+              const rewardType = String(parsed.args.rewardType || '');
+              if (rewardType === 'UPGRADE_VAULT') {
+                const rNum = Number(parsed.args.rank || 1);
+                const toNodeId = Number(parsed.args.toNodeId || 0);
+                const recLower = String(parsed.args.recipient || '').toLowerCase();
+                const origR1 = resolveR1MainFromRankNode(rNum, toNodeId);
+                if (origR1 > 0 && recLower) {
+                  const uList = upgradeCandidatesByOwner.get(recLower) || [];
+                  uList.push(origR1);
+                  upgradeCandidatesByOwner.set(recLower, uList);
+                }
+              }
+            } else if (parsed.name === 'RankUpgraded') {
+              const userLower = String(parsed.args.user || '').toLowerCase();
+              const toR = Number(parsed.args.toRank || 2);
+              const newNId = Number(parsed.args.newNodeId || 0);
+              const origR1 = resolveR1MainFromRankNode(toR, newNId);
+              if (origR1 > 0) {
+                const uList = upgradeCandidatesByOwner.get(userLower) || [];
+                uList.push(origR1);
+                upgradeCandidatesByOwner.set(userLower, uList);
+              }
+            } else if (parsed.name === 'AutoNewMainIdCreated') {
+              const userLower = String(parsed.args.user || '').toLowerCase();
+              const cnt = Math.max(1, Number(parsed.args.count || 1));
+              const cands = unconsumedR1ByOwner.get(userLower) || [];
+              const autoNodeIds = cands.splice(Math.max(0, cands.length - cnt), cnt);
+              unconsumedR1ByOwner.set(userLower, cands);
+              const prefList = (upgradeCandidatesByOwner.get(userLower) || []).slice().reverse();
+
+              for (const autoId of autoNodeIds) {
+                const dbNode = r1List.find((n) => n.id === autoId);
+                if (!dbNode || dbNode.isClone || dbNode.isExtraId) continue;
+                const srcMain = resolveAutoSourceInR1Tree(autoId, userLower, prefList);
+                if (dbNode.confirmedOriginType !== 'AUTO_NEW_MAIN' || dbNode.autoSourceMainId !== srcMain) {
+                  dbNode.confirmedOriginType = 'AUTO_NEW_MAIN';
+                  dbNode.originType = 'AUTO_NEW_MAIN';
+                  dbNode.autoSourceMainId = srcMain;
+                  changed = true;
+                }
+              }
+            }
+          }
+
+          // Any remaining R1 !isClone && !isExtra NodeCreated in this tx not consumed by AutoNewMainIdCreated is a manual register
+          for (const remIds of unconsumedR1ByOwner.values()) {
+            for (const manualId of remIds) {
+              const dbNode = r1List.find((n) => n.id === manualId);
+              if (dbNode && !dbNode.isClone && !dbNode.isExtraId) {
+                if (dbNode.confirmedOriginType !== 'MANUAL_REGISTER' || dbNode.autoSourceMainId) {
+                  dbNode.confirmedOriginType = 'MANUAL_REGISTER';
+                  dbNode.originType = 'MANUAL_REGISTER';
+                  delete dbNode.autoSourceMainId;
+                  changed = true;
+                }
+              }
+            }
+          }
+
+          return changed;
+        };
+
+        // Scan newest chunks first
         for (let toBlk = latestBlock; toBlk >= startBlock; toBlk -= chunkSize) {
           const fromBlk = Math.max(startBlock, toBlk - chunkSize + 1);
           try {
@@ -6148,6 +6462,41 @@ async function startApp() {
               contract.queryFilter(contract.filters.AutoNewMainIdCreated(), fromBlk, toBlk).catch(() => []),
               contract.queryFilter(contract.filters.AutoExtraIdCreated(), fromBlk, toBlk).catch(() => []),
             ]);
+
+            const autoTxHashSet = new Set<string>(
+              autoLogs
+                .map((l: any) => String(l?.transactionHash || '').toLowerCase())
+                .filter((h) => isRealTxHash(h))
+            );
+
+            // Inspect any AutoNewMainIdCreated tx receipts so the exact R1 Auto ID(s) & source Main ID are confirmed
+            if (autoTxHashSet.size > 0) {
+              for (const autoHash of autoTxHashSet) {
+                const tagged = await inspectAndTagAutoIdTx(autoHash);
+                if (tagged) newlyTaggedAutoNodes = true;
+              }
+            }
+
+            // Confirm all R1 non-clone non-extra nodes from pure UserRegistered/BatchRegistered txs as MANUAL_REGISTER
+            const r1NodesInDb = matrixDB.nodesByRank[1] || [];
+            for (const nl of nodeLogs as any[]) {
+              const rNum = Number(nl?.args?.rank || 0);
+              const nId = Number(nl?.args?.nodeId || 0);
+              const isClone = Boolean(nl?.args?.isClone);
+              const isExtra = Boolean(nl?.args?.isExtraId);
+              const txHashLower = String(nl?.transactionHash || '').toLowerCase();
+              if (rNum === 1 && nId > 1 && !isClone && !isExtra && txHashLower && !autoTxHashSet.has(txHashLower)) {
+                const dbNode = r1NodesInDb.find((n) => n.id === nId);
+                if (dbNode && !dbNode.isClone && !dbNode.isExtraId) {
+                  if (dbNode.confirmedOriginType !== 'MANUAL_REGISTER' || dbNode.autoSourceMainId) {
+                    dbNode.confirmedOriginType = 'MANUAL_REGISTER';
+                    dbNode.originType = 'MANUAL_REGISTER';
+                    delete dbNode.autoSourceMainId;
+                    newlyTaggedAutoNodes = true;
+                  }
+                }
+              }
+            }
 
             // Inspect unseen Rank 2+ / RankUpgraded transactions so on-chain adminUpgradeRank* txs are accurately flagged
             const rank2PlusHashes = Array.from(
@@ -6236,6 +6585,8 @@ async function startApp() {
                   if (isAdminTx && rNum >= 2) {
                     if (markNodeAsAdminFreeUpgrade(rNum, nId)) newlyTaggedAdminNodes = true;
                   }
+                  const dbR1Node = rNum === 1 ? r1NodesInDb.find((n) => n.id === nId) : undefined;
+                  const isConfirmedAuto = rNum === 1 && !isClone && !isExtra && dbR1Node?.confirmedOriginType === 'AUTO_NEW_MAIN';
                   recordRealTransactionLog({
                     txHash,
                     actionType: isAdminTx && rNum >= 2
@@ -6244,6 +6595,8 @@ async function startApp() {
                       ? 'EXTRA_ID'
                       : isClone
                       ? 'CLONE_BOT'
+                      : isConfirmedAuto
+                      ? 'AUTO_ID'
                       : rNum === 1
                       ? 'REGISTER'
                       : 'UPGRADE',
@@ -6255,10 +6608,13 @@ async function startApp() {
                       ? `สร้าง Extra ID R${rNum}-#${nId}`
                       : isClone
                       ? `สร้างโคลนนิ่ง R${rNum}-#${nId}`
+                      : isConfirmedAuto
+                      ? `แตก Auto ID #${nId} (จาก Main #${dbR1Node?.autoSourceMainId || 1})`
                       : rNum === 1
                       ? `สร้างโหนด R1-#${nId}`
                       : `สร้างโหนด R${rNum}-#${nId}`,
                     userAddress: String(args.owner || ''),
+                    mainNodeId: isConfirmedAuto ? dbR1Node?.autoSourceMainId || 1 : undefined,
                     nodeId: nId,
                     rank: rNum,
                     amountUsdt: isAdminTx && rNum >= 2 ? 0 : RANK_PRICES_USDT[rNum - 1] || 0,
@@ -6266,6 +6622,8 @@ async function startApp() {
                     source: 'ONCHAIN_EVENT',
                     details: isAdminTx && rNum >= 2
                       ? `Parent #${Number(args.parentId || 0)} [${args.isLeft ? 'LEFT' : 'RIGHT'}] • Admin Free (0 ค่าคอม)`
+                      : isConfirmedAuto
+                      ? `Parent #${Number(args.parentId || 0)} [${args.isLeft ? 'LEFT' : 'RIGHT'}] • Spawned by Main #${dbR1Node?.autoSourceMainId || 1}`
                       : `Parent #${Number(args.parentId || 0)} [${args.isLeft ? 'LEFT' : 'RIGHT'}]`,
                     timestamp: ts,
                   });
@@ -6329,9 +6687,13 @@ async function startApp() {
             // Ignore single-chunk RPC limits and proceed to next chunk
           }
           if (fromBlk <= 0) break;
+          // Stop scanning further back once every R1 Main ID is confirmed AND we've scanned at least `lookbackBlocks`
+          if (!hasUnconfirmedR1Nodes() && latestBlock - fromBlk >= lookbackBlocks) {
+            break;
+          }
         }
 
-        if (newlyTaggedAdminNodes) {
+        if (newlyTaggedAdminNodes || newlyTaggedAutoNodes) {
           reconcileAutoExtraIdsAcrossRanks();
           rebuildDatabaseRewardLogsFromNodes();
           rebuildDatabaseUpgradeLogsFromNodes();
@@ -6469,14 +6831,19 @@ async function startApp() {
           }
         }
 
+        const hasUnconfirmedR1 = (matrixDB.nodesByRank[1] || []).some(
+          (n) => !n.isClone && !n.isExtraId && !n.isSyntheticExtra && n.id > 1 && !n.confirmedOriginType
+        );
+        if (force || hasUnconfirmedR1) {
+          await syncRecentOnChainTxHashes(targetContract, 35000).catch(() => {});
+        } else if (Date.now() - lastChainTxSyncAt > 45000 || (matrixDB.transactionLogs || []).length === 0) {
+          syncRecentOnChainTxHashes(targetContract, 35000).catch(() => {});
+        }
         reconcileAutoExtraIdsAcrossRanks();
         rebuildDatabaseRewardLogsFromNodes();
         rebuildDatabaseUpgradeLogsFromNodes();
         matrixDB.lastSyncedAt = new Date().toISOString();
         saveMatrixDBToDisk();
-        if (force || Date.now() - lastChainTxSyncAt > 45000 || (matrixDB.transactionLogs || []).length === 0) {
-          syncRecentOnChainTxHashes(targetContract, 35000).catch(() => {});
-        }
         syncAllMatrixDBToPostgres().catch(() => {});
       } catch (err) {
         console.warn('[MatrixDB Full Sync] Notice:', err);
@@ -7111,7 +7478,7 @@ async function startApp() {
 
         const origMainId = r1Node.isClone ? (r1Node.originMainId || r1Node.id) : r1Node.id;
         const spawnedByMainId = isAutoMain
-          ? autoMainSourceMap.get(r1Node.id) || r1Node.directSponsorNodeId || 1
+          ? r1Node.autoSourceMainId || autoMainSourceMap.get(r1Node.id) || r1Node.directSponsorNodeId || 1
           : r1Node.isClone
           ? origMainId
           : 0;
@@ -7310,7 +7677,8 @@ async function startApp() {
           !r1Node.isExtraId &&
           (autoMainSourceMap.has(r1Node.id) || r1Node.originType === 'AUTO_NEW_MAIN');
         if (isAutoMain) {
-          const spId = autoMainSourceMap.get(r1Node.id) || r1Node.directSponsorNodeId || 1;
+          const spId =
+            r1Node.autoSourceMainId || autoMainSourceMap.get(r1Node.id) || r1Node.directSponsorNodeId || 1;
           const spReport = reportsMap.get(spId);
           const pNode = r1Nodes.find((x) => x.id === r1Node.parentId);
           const side: 'LEFT' | 'RIGHT' | 'ROOT' =
@@ -10136,7 +10504,9 @@ async function startApp() {
         return {
           mainId: m.id,
           isAutoId,
-          spawnedByMainId: isAutoId ? autoMainSourceMap.get(m.id) || m.directSponsorNodeId || 1 : 0,
+          spawnedByMainId: isAutoId
+            ? m.autoSourceMainId || autoMainSourceMap.get(m.id) || m.directSponsorNodeId || 1
+            : 0,
           owner: m.owner,
           directSponsorNodeId: m.directSponsorNodeId || 1,
           directSponsor: m.directSponsor,
