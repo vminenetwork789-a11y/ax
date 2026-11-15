@@ -158,6 +158,7 @@ function broadcastAllMatrixUpdates() {
       lastSyncedAt: matrixDB.lastSyncedAt,
       rankCounts: matrixDB.rankCounts,
       nodesByRank: matrixDB.nodesByRank,
+      latestCloneByMainIdAndRank: matrixDB.latestCloneByMainIdAndRank || {},
       contractAddress: CONTRACT_ADDRESS,
       transactions,
       rewardLogs: matrixDB.rewardLogs || [],
@@ -302,6 +303,7 @@ async function ensurePostgresSchema() {
       current_max_rank INTEGER DEFAULT 1,
       sponsor_address TEXT,
       sponsor_main_node_id INTEGER,
+      latest_clone_by_rank JSONB NOT NULL DEFAULT '{}'::jsonb,
       updated_at TIMESTAMPTZ DEFAULT NOW()
     );
     CREATE TABLE IF NOT EXISTS wallets (
@@ -430,6 +432,18 @@ async function ensurePostgresSchema() {
     );
     CREATE INDEX IF NOT EXISTS idx_allsell_pool_payouts_contract_pool
       ON allsell_pool_payouts (LOWER(contract_address), pool_number, executed_at DESC);
+    CREATE TABLE IF NOT EXISTS main_id_latest_clones (
+      id TEXT PRIMARY KEY,
+      main_id INTEGER NOT NULL,
+      rank INTEGER NOT NULL,
+      latest_clone_id INTEGER NOT NULL DEFAULT 0,
+      total_clones INTEGER NOT NULL DEFAULT 0,
+      owner TEXT,
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_main_id_latest_clones_main_rank
+      ON main_id_latest_clones (main_id, rank);
+    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS latest_clone_by_rank JSONB NOT NULL DEFAULT '{}'::jsonb;
     ALTER TABLE matrix_nodes ADD COLUMN IF NOT EXISTS rank INTEGER NOT NULL DEFAULT 1;
     ALTER TABLE matrix_nodes ADD COLUMN IF NOT EXISTS node_id INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE matrix_nodes ADD COLUMN IF NOT EXISTS owner TEXT;
@@ -761,7 +775,7 @@ async function clearPostgresTables() {
       await ensurePostgresSchema();
     }
     await pgPool.query(
-      `TRUNCATE TABLE accounts, wallets, matrix_levels, matrix_nodes, income_channels, activities, matrix_db_snapshots, allsell_pool_inflows, allsell_pool_history, allsell_pool_payouts RESTART IDENTITY CASCADE;`
+      `TRUNCATE TABLE accounts, wallets, matrix_levels, matrix_nodes, income_channels, activities, matrix_db_snapshots, main_id_latest_clones, allsell_pool_inflows, allsell_pool_history, allsell_pool_payouts RESTART IDENTITY CASCADE;`
     );
     pgTablesCount = {
       accounts: 0,
@@ -770,6 +784,7 @@ async function clearPostgresTables() {
       activities: 0,
       wallets: 0,
       matrix_nodes: 0,
+      main_id_latest_clones: 0,
       allsell_pool_inflows: 0,
       allsell_pool_history: 0,
       allsell_pool_payouts: 0
@@ -813,10 +828,12 @@ async function hydrateMatrixDBFromPostgres() {
           ...snap,
           nodesByRank: snap.nodesByRank || matrixDB.nodesByRank,
           rankCounts: snap.rankCounts || matrixDB.rankCounts,
+          latestCloneByMainIdAndRank: snap.latestCloneByMainIdAndRank || matrixDB.latestCloneByMainIdAndRank || {},
           transactionLogs: Array.isArray(snap.transactionLogs) && snap.transactionLogs.length >= (matrixDB.transactionLogs || []).length ? snap.transactionLogs : matrixDB.transactionLogs,
           upgradeLogs: Array.isArray(snap.upgradeLogs) && snap.upgradeLogs.length >= (matrixDB.upgradeLogs || []).length ? snap.upgradeLogs : matrixDB.upgradeLogs
         };
         reconcileAutoExtraIdsAcrossRanks();
+        rebuildLatestCloneByMainIdAndRank();
         rebuildDatabaseRewardLogsFromNodes();
         rebuildDatabaseUpgradeLogsFromNodes();
         saveMatrixDBToDisk(true);
@@ -882,6 +899,7 @@ async function refreshPgTableCounts() {
       "activities",
       "wallets",
       "matrix_nodes",
+      "main_id_latest_clones",
       "allsell_pool_inflows",
       "allsell_pool_history",
       "allsell_pool_payouts"
@@ -1004,6 +1022,10 @@ async function syncAllMatrixDBToPostgres() {
             );
           }
         }
+        const {
+          latestCloneByMainIdAndRank: latestCloneMap,
+          cloneCountByMainIdAndRank: cloneCountMap
+        } = rebuildLatestCloneByMainIdAndRank();
         const r1Nodes = matrixDB.nodesByRank[1] || [];
         const maxRankByMain = /* @__PURE__ */ new Map();
         for (let r = 1; r <= 18; r++) {
@@ -1014,16 +1036,20 @@ async function syncAllMatrixDBToPostgres() {
             }
           }
         }
+        const activeLatestCloneRowIds = [];
         for (const n of r1Nodes) {
+          const perRankLatest = !n.isClone && !n.isExtraId ? latestCloneMap[n.id] || {} : {};
+          const perRankCounts = !n.isClone && !n.isExtraId ? cloneCountMap[n.id] || {} : {};
           await client.query(
-            `INSERT INTO accounts (id, owner, main_node_id, current_max_rank, sponsor_address, sponsor_main_node_id, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, NOW())
+            `INSERT INTO accounts (id, owner, main_node_id, current_max_rank, sponsor_address, sponsor_main_node_id, latest_clone_by_rank, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, NOW())
              ON CONFLICT (id) DO UPDATE SET
                owner = EXCLUDED.owner,
                main_node_id = EXCLUDED.main_node_id,
                current_max_rank = EXCLUDED.current_max_rank,
                sponsor_address = EXCLUDED.sponsor_address,
                sponsor_main_node_id = EXCLUDED.sponsor_main_node_id,
+               latest_clone_by_rank = EXCLUDED.latest_clone_by_rank,
                updated_at = NOW()`,
             [
               `main-${n.id}`,
@@ -1031,8 +1057,37 @@ async function syncAllMatrixDBToPostgres() {
               n.id,
               maxRankByMain.get(n.id) || 1,
               n.directSponsor || "",
-              Number(n.directSponsorNodeId || 0)
+              Number(n.directSponsorNodeId || 0),
+              JSON.stringify(perRankLatest)
             ]
+          );
+          if (!n.isClone && !n.isExtraId) {
+            const mainMaxR = n.id === 1 ? 18 : maxRankByMain.get(n.id) || 1;
+            for (let r = 1; r <= 18; r++) {
+              const lcId = Number(perRankLatest[r] || 0);
+              const lcCount = Number(perRankCounts[r] || 0);
+              if (r > mainMaxR && lcId === 0 && lcCount === 0) continue;
+              const rowId = `m${n.id}-r${r}`;
+              activeLatestCloneRowIds.push(rowId);
+              await client.query(
+                `INSERT INTO main_id_latest_clones (id, main_id, rank, latest_clone_id, total_clones, owner, updated_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, NOW())
+                 ON CONFLICT (id) DO UPDATE SET
+                   latest_clone_id = EXCLUDED.latest_clone_id,
+                   total_clones = EXCLUDED.total_clones,
+                   owner = EXCLUDED.owner,
+                   updated_at = NOW()`,
+                [rowId, n.id, r, lcId, lcCount, n.owner || ""]
+              );
+            }
+          }
+        }
+        if (activeLatestCloneRowIds.length === 0) {
+          await client.query(`DELETE FROM main_id_latest_clones`);
+        } else {
+          await client.query(
+            `DELETE FROM main_id_latest_clones WHERE NOT (id = ANY($1::text[]))`,
+            [activeLatestCloneRowIds]
           );
         }
         for (const r of matrixDB.rewardLogs || []) {
@@ -1404,6 +1459,7 @@ function createEmptyMatrixDB(contractAddr = CONTRACT_ADDRESS, usdtAddr = USDT_AD
     rankCounts: defaultCounts,
     nodesByRank: {},
     userRankVaults: {},
+    latestCloneByMainIdAndRank: {},
     rewardLogs: [],
     upgradeLogs: [],
     transactionLogs: []
@@ -1442,6 +1498,7 @@ function loadMatrixDBFromDisk() {
         const loaded = {
           ...createEmptyMatrixDB(CONTRACT_ADDRESS, USDT_ADDRESS),
           ...parsed,
+          latestCloneByMainIdAndRank: parsed.latestCloneByMainIdAndRank || {},
           upgradeLogs: Array.isArray(parsed.upgradeLogs) ? parsed.upgradeLogs : [],
           transactionLogs: Array.isArray(parsed.transactionLogs) ? parsed.transactionLogs : []
         };
@@ -1582,6 +1639,7 @@ async function inspectAndTagAdminUpgradeTx(txHash, provider, preFetchedReceipt) 
   }
 }
 function saveMatrixDBToDisk(immediate = false) {
+  rebuildLatestCloneByMainIdAndRank();
   broadcastAllMatrixUpdates();
   schedulePostgresSync(immediate);
   const writeNow = () => {
@@ -2513,6 +2571,80 @@ function reconcileRankTreeLinks(nodes) {
   }
   return nodes;
 }
+function rebuildLatestCloneByMainIdAndRank() {
+  const latestMap = {};
+  const countMap = {};
+  const r1Nodes = matrixDB?.nodesByRank?.[1] || [];
+  const mainIdsSet = /* @__PURE__ */ new Set();
+  const ownerMainsMap = /* @__PURE__ */ new Map();
+  for (const n of r1Nodes) {
+    if (!n.isClone && !n.isExtraId && n.id > 0) {
+      mainIdsSet.add(n.id);
+      const ok = String(n.owner || "").toLowerCase();
+      if (ok) {
+        const list = ownerMainsMap.get(ok) || [];
+        list.push(n.id);
+        ownerMainsMap.set(ok, list);
+      }
+      latestMap[n.id] = {};
+      countMap[n.id] = {};
+      for (let r = 1; r <= 18; r++) {
+        latestMap[n.id][r] = 0;
+        countMap[n.id][r] = 0;
+      }
+    }
+  }
+  for (let r = 1; r <= 18; r++) {
+    const rNodes = [...matrixDB?.nodesByRank?.[r] || []].sort((a, b) => a.id - b.id);
+    if (rNodes.length === 0) continue;
+    const nonCloneById = /* @__PURE__ */ new Map();
+    for (const n of rNodes) {
+      if (!n.isClone) {
+        nonCloneById.set(n.id, n);
+        if (!n.isExtraId && n.originMainId > 0 && !mainIdsSet.has(n.originMainId)) {
+          mainIdsSet.add(n.originMainId);
+          latestMap[n.originMainId] = {};
+          countMap[n.originMainId] = {};
+          for (let rr = 1; rr <= 18; rr++) {
+            latestMap[n.originMainId][rr] = 0;
+            countMap[n.originMainId][rr] = 0;
+          }
+        }
+      }
+    }
+    for (const n of rNodes) {
+      if (!n.isClone) continue;
+      let resolvedMainId = 0;
+      if (n.originMainId > 0 && mainIdsSet.has(n.originMainId)) {
+        resolvedMainId = n.originMainId;
+      } else if (n.originMainId > 0 && nonCloneById.has(n.originMainId)) {
+        const srcNode = nonCloneById.get(n.originMainId);
+        if (srcNode.originMainId > 0 && mainIdsSet.has(srcNode.originMainId)) {
+          resolvedMainId = srcNode.originMainId;
+        }
+      }
+      if (!resolvedMainId) {
+        const ok = String(n.owner || "").toLowerCase();
+        const ownerMains = ownerMainsMap.get(ok) || [];
+        if (ownerMains.length > 0) {
+          resolvedMainId = ownerMains[0];
+        }
+      }
+      if (!resolvedMainId || !latestMap[resolvedMainId]) {
+        continue;
+      }
+      if (n.id > (latestMap[resolvedMainId][r] || 0)) {
+        latestMap[resolvedMainId][r] = n.id;
+      }
+      countMap[resolvedMainId][r] = (countMap[resolvedMainId][r] || 0) + 1;
+    }
+  }
+  matrixDB.latestCloneByMainIdAndRank = latestMap;
+  return {
+    latestCloneByMainIdAndRank: latestMap,
+    cloneCountByMainIdAndRank: countMap
+  };
+}
 function findExtraIdPlacementInRankNodes(rNodes, sponsorMainId) {
   const byId = /* @__PURE__ */ new Map();
   for (const n of rNodes) byId.set(n.id, n);
@@ -3252,6 +3384,7 @@ function reconcileAutoExtraIdsAcrossRanks() {
       }
     }
   }
+  rebuildLatestCloneByMainIdAndRank();
   return createdExtraNodes;
 }
 async function createMatrixNodeData(params) {
@@ -3376,12 +3509,25 @@ async function getUserProfileWithVaults(owner) {
       }
       const sponsorAddr = firstMain.directSponsor || ethers.ZeroAddress;
       const sponsorMainId = firstMain.directSponsorNodeId > 0 ? String(firstMain.directSponsorNodeId) : "1";
+      const { latestCloneByMainIdAndRank } = rebuildLatestCloneByMainIdAndRank();
+      const primaryMainId = firstMain.id;
+      const ownedMainIdNumbers = ownedR1.filter((n) => !n.isClone && !n.isExtraId).map((n) => n.id);
+      const latestCloneByMainIdForUser = {};
+      for (const mId of ownedMainIdNumbers) {
+        const mMap = {};
+        for (let r = 1; r <= 18; r++) {
+          mMap[r] = String(latestCloneByMainIdAndRank[mId]?.[r] || 0);
+        }
+        latestCloneByMainIdForUser[String(mId)] = mMap;
+      }
+      const primaryLatestCloneByRank = latestCloneByMainIdForUser[String(primaryMainId)] || {};
       const dbVaults = Array.from({ length: 18 }, (_, idx) => {
         const r = idx + 1;
         const rNodes = (matrixDB.nodesByRank[r] || []).filter((n) => n.owner.toLowerCase() === key);
         const rMains = rNodes.filter((n) => !n.isClone && !n.isExtraId);
         const firstId = rMains[0]?.id ?? rNodes[0]?.id ?? 0;
         const latestId = rNodes[rNodes.length - 1]?.id ?? 0;
+        const latestCloneForMainRank = Number(latestCloneByMainIdAndRank[primaryMainId]?.[r] || 0);
         const reconciledBal = rMains[0] ? Number(rMains[0].nodeVault || 0) : matrixDB.userRankVaults[key]?.[r] ?? 0;
         return {
           id: `v-db-${owner}-${r}`,
@@ -3390,6 +3536,7 @@ async function getUserProfileWithVaults(owner) {
           balance: reconciledBal.toFixed(2),
           firstNodeId: String(firstId),
           latestNodeId: String(latestId),
+          latestCloneId: String(latestCloneForMainRank),
           updatedAt: matrixDB.lastSyncedAt || (/* @__PURE__ */ new Date()).toISOString()
         };
       });
@@ -3412,6 +3559,8 @@ async function getUserProfileWithVaults(owner) {
         sponsor: sponsorAddr,
         sponsorMainNodeId: sponsorMainId,
         currentMaxRank: firstMain.id === 1 ? 18 : maxRank,
+        latestCloneByRank: primaryLatestCloneByRank,
+        latestCloneByMainIdAndRank: latestCloneByMainIdForUser,
         createdAt: matrixDB.lastSyncedAt || (/* @__PURE__ */ new Date()).toISOString(),
         updatedAt: matrixDB.lastSyncedAt || (/* @__PURE__ */ new Date()).toISOString(),
         vaults: dbVaults,
@@ -3661,6 +3810,119 @@ function startWsHeartbeat() {
     }
   }, HEARTBEAT_INTERVAL_MS);
 }
+var cloneQueueFlushInFlight = null;
+async function drainOnChainCloneQueueLoop(readContract, writeContract, botAddress, botHasGas, triggerReason) {
+  let pendingBefore = 0;
+  let pendingAfter = 0;
+  let flushedCount = 0;
+  const txHashes = [];
+  let pendingCount = 0n;
+  try {
+    pendingCount = await readContract.getPendingCloneCount();
+    pendingBefore = Number(pendingCount || 0n);
+    pendingAfter = pendingBefore;
+  } catch {
+    return { pendingBefore: 0, pendingAfter: 0, flushedCount: 0, txHashes };
+  }
+  if (pendingCount > 0n && writeContract && botHasGas) {
+    let rounds = 0;
+    while (pendingCount > 0n && rounds < 20) {
+      rounds++;
+      try {
+        const batchSize = pendingCount > 5n ? 5n : pendingCount;
+        await writeContract.processCloneQueue.staticCall(batchSize);
+        console.log(
+          `\u{1F680} [Clone-Queue Guard] (${triggerReason}) \u0E2A\u0E48\u0E07\u0E18\u0E38\u0E23\u0E01\u0E23\u0E23\u0E21 processCloneQueue(${batchSize.toString()}) \u0E1C\u0E48\u0E32\u0E19 HTTP Provider...`
+        );
+        const tx = await writeContract.processCloneQueue(batchSize);
+        const receipt = await tx.wait(1);
+        const txHash = receipt?.hash || tx.hash;
+        txHashes.push(txHash);
+        flushedCount += Number(batchSize);
+        recordRealTransactionLog({
+          txHash,
+          actionType: "CLONE_BOT",
+          title: `\u0E15\u0E23\u0E27\u0E08\u0E2A\u0E2D\u0E1A\u0E41\u0E25\u0E30\u0E40\u0E04\u0E25\u0E35\u0E22\u0E23\u0E4C\u0E04\u0E34\u0E27\u0E42\u0E04\u0E25\u0E19\u0E19\u0E34\u0E48\u0E07\u0E2D\u0E31\u0E15\u0E42\u0E19\u0E21\u0E31\u0E15\u0E34 (Batch ${batchSize.toString()})`,
+          userAddress: botAddress,
+          blockNumber: receipt?.blockNumber,
+          source: "WS_BOT",
+          details: `Trigger: ${triggerReason} | Pending: ${pendingCount.toString()}`
+        });
+        recordWsBotEvent("processCloneQueue", `TX: ${txHash} (Batch: ${batchSize.toString()})`);
+        pendingCount = await readContract.getPendingCloneCount().catch(() => 0n);
+        pendingAfter = Number(pendingCount || 0n);
+      } catch {
+        break;
+      }
+    }
+  }
+  return { pendingBefore, pendingAfter, flushedCount, txHashes };
+}
+async function ensureOnChainCloneQueueFlushed(triggerReason, maxWaitMs = 8e3) {
+  if (cloneQueueFlushInFlight) {
+    return await cloneQueueFlushInFlight;
+  }
+  cloneQueueFlushInFlight = (async () => {
+    const startWait = Date.now();
+    while (wsIsProcessingQueue && Date.now() - startWait < maxWaitMs) {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+    const httpProvider = getBotHttpProvider();
+    const readContract = new ethers.Contract(CONTRACT_ADDRESS, WS_BOT_ABI, httpProvider);
+    const hasValidKey = Boolean(BOT_PRIVATE_KEY && BOT_PRIVATE_KEY.length >= 64);
+    const pkHex = BOT_PRIVATE_KEY.startsWith("0x") ? BOT_PRIVATE_KEY : `0x${BOT_PRIVATE_KEY}`;
+    const botSigner = hasValidKey ? new ethers.Wallet(pkHex, httpProvider) : null;
+    const writeContract = botSigner ? new ethers.Contract(CONTRACT_ADDRESS, WS_BOT_ABI, botSigner) : null;
+    let botHasGas = false;
+    if (botSigner) {
+      try {
+        const bal = await httpProvider.getBalance(botSigner.address);
+        botHasGas = bal > ethers.parseEther("0.0002");
+      } catch {
+        botHasGas = false;
+      }
+    }
+    const drainRes = await drainOnChainCloneQueueLoop(
+      readContract,
+      writeContract,
+      botSigner?.address || "",
+      botHasGas,
+      triggerReason
+    );
+    let synced = false;
+    let onChainTotalR1 = 0;
+    try {
+      onChainTotalR1 = Number(await readContract.totalNodesInRank(1));
+    } catch {
+      onChainTotalR1 = 0;
+    }
+    const localR1Count = (matrixDB.nodesByRank[1] || []).filter((n) => !n.isSyntheticExtra).length;
+    if (drainRes.flushedCount > 0 || onChainTotalR1 > 0 && onChainTotalR1 > localR1Count) {
+      try {
+        if (drainRes.flushedCount > 0 && triggerMatrixDatabaseSync) {
+          await triggerMatrixDatabaseSync(CONTRACT_ADDRESS, true);
+        } else if (triggerRankDatabaseSync) {
+          await triggerRankDatabaseSync(1, CONTRACT_ADDRESS, false, true);
+        } else if (triggerMatrixDatabaseSync) {
+          await triggerMatrixDatabaseSync(CONTRACT_ADDRESS, true);
+        }
+        synced = true;
+      } catch {
+        synced = false;
+      }
+    }
+    return {
+      checked: true,
+      ...drainRes,
+      synced
+    };
+  })();
+  try {
+    return await cloneQueueFlushInFlight;
+  } finally {
+    cloneQueueFlushInFlight = null;
+  }
+}
 async function checkAndProcessBotCloneQueue(triggerReason) {
   if (wsIsProcessingQueue) return;
   wsIsProcessingQueue = true;
@@ -3684,36 +3946,17 @@ async function checkAndProcessBotCloneQueue(triggerReason) {
         botHasGas = false;
       }
     }
-    if (writeContract && botHasGas) {
-      let pendingCount = 0n;
-      try {
-        pendingCount = await readContract.getPendingCloneCount();
-      } catch {
-        pendingCount = 0n;
-      }
-      if (pendingCount > 0n) {
-        try {
-          const batchSize = pendingCount > 5n ? 5n : pendingCount;
-          await writeContract.processCloneQueue.staticCall(batchSize);
-          console.log(
-            `\u{1F680} [WS-Bot] (${triggerReason}) \u0E2A\u0E48\u0E07\u0E18\u0E38\u0E23\u0E01\u0E23\u0E23\u0E21 processCloneQueue(${batchSize.toString()}) \u0E1C\u0E48\u0E32\u0E19 HTTP Provider...`
-          );
-          const tx = await writeContract.processCloneQueue(batchSize);
-          const receipt = await tx.wait(1);
-          const txHash = receipt?.hash || tx.hash;
-          recordRealTransactionLog({
-            txHash,
-            actionType: "CLONE_BOT",
-            title: `Bot \u0E23\u0E31\u0E19\u0E04\u0E34\u0E27\u0E42\u0E04\u0E25\u0E19\u0E19\u0E34\u0E48\u0E07\u0E2D\u0E31\u0E15\u0E42\u0E19\u0E21\u0E31\u0E15\u0E34 (Batch ${batchSize.toString()})`,
-            userAddress: botSigner?.address || "",
-            blockNumber: receipt?.blockNumber,
-            source: "WS_BOT",
-            details: `Trigger: ${triggerReason} | Pending: ${pendingCount.toString()}`
-          });
-          recordWsBotEvent("processCloneQueue", `TX: ${txHash} (Batch: ${batchSize.toString()})`);
-          didExecuteOnChain = true;
-        } catch {
-        }
+    const initialDrain = await drainOnChainCloneQueueLoop(
+      readContract,
+      writeContract,
+      botSigner?.address || "",
+      botHasGas,
+      triggerReason
+    );
+    if (initialDrain.flushedCount > 0) {
+      didExecuteOnChain = true;
+      if (triggerMatrixDatabaseSync) {
+        await triggerMatrixDatabaseSync(CONTRACT_ADDRESS, true);
       }
     }
     if (writeContract && botHasGas && triggerComputeMainIdStats) {
@@ -3724,34 +3967,44 @@ async function checkAndProcessBotCloneQueue(triggerReason) {
         if (!stats) continue;
         const rank1Price = RANK_PRICES_USDT[0] || 5;
         if (stats.window5Start > 1 && stats.newAutoIdPool + 1e-6 >= rank1Price) {
-          try {
-            await writeContract.checkAndProcessAutoNewMainIdForNode.staticCall(mainNode.id);
-            console.log(
-              `\u{1F916} [WS-Bot] (${triggerReason}) Main #${mainNode.id} \u0E21\u0E35 Auto ID Pool = ${stats.newAutoIdPool.toFixed(
-                2
-              )} USDT (>= ${rank1Price} USDT) -> \u0E2A\u0E31\u0E48\u0E07 checkAndProcessAutoNewMainIdForNode(${mainNode.id})`
-            );
-            const tx = await writeContract.checkAndProcessAutoNewMainIdForNode(mainNode.id);
-            const receipt = await tx.wait(1);
-            const txHash = receipt?.hash || tx.hash;
-            recordRealTransactionLog({
-              txHash,
-              actionType: "AUTO_ID",
-              title: `Bot \u0E41\u0E15\u0E01 Auto New Main ID \u0E08\u0E32\u0E01 Main #${mainNode.id}`,
-              userAddress: mainNode.owner,
-              mainNodeId: mainNode.id,
-              rank: 1,
-              amountUsdt: rank1Price,
-              blockNumber: receipt?.blockNumber,
-              source: "WS_BOT",
-              details: `Trigger: ${triggerReason}`
-            });
-            recordWsBotEvent(
-              "AutoNewMainId",
-              `Main #${mainNode.id} \u0E41\u0E15\u0E01 Auto ID \u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08 (TX: ${txHash.slice(0, 10)}...)`
-            );
-            didExecuteOnChain = true;
-          } catch {
+          const preAutoDrain = await drainOnChainCloneQueueLoop(
+            readContract,
+            writeContract,
+            botSigner?.address || "",
+            botHasGas,
+            `${triggerReason}:PRE_AUTO_ID(#${mainNode.id})`
+          );
+          if (preAutoDrain.flushedCount > 0) didExecuteOnChain = true;
+          if (preAutoDrain.pendingAfter === 0) {
+            try {
+              await writeContract.checkAndProcessAutoNewMainIdForNode.staticCall(mainNode.id);
+              console.log(
+                `\u{1F916} [WS-Bot] (${triggerReason}) Main #${mainNode.id} \u0E21\u0E35 Auto ID Pool = ${stats.newAutoIdPool.toFixed(
+                  2
+                )} USDT (>= ${rank1Price} USDT) -> \u0E2A\u0E31\u0E48\u0E07 checkAndProcessAutoNewMainIdForNode(${mainNode.id})`
+              );
+              const tx = await writeContract.checkAndProcessAutoNewMainIdForNode(mainNode.id);
+              const receipt = await tx.wait(1);
+              const txHash = receipt?.hash || tx.hash;
+              recordRealTransactionLog({
+                txHash,
+                actionType: "AUTO_ID",
+                title: `Bot \u0E41\u0E15\u0E01 Auto New Main ID \u0E08\u0E32\u0E01 Main #${mainNode.id}`,
+                userAddress: mainNode.owner,
+                mainNodeId: mainNode.id,
+                rank: 1,
+                amountUsdt: rank1Price,
+                blockNumber: receipt?.blockNumber,
+                source: "WS_BOT",
+                details: `Trigger: ${triggerReason}`
+              });
+              recordWsBotEvent(
+                "AutoNewMainId",
+                `Main #${mainNode.id} \u0E41\u0E15\u0E01 Auto ID \u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08 (TX: ${txHash.slice(0, 10)}...)`
+              );
+              didExecuteOnChain = true;
+            } catch {
+            }
           }
         }
         const minExtraPrice = RANK_PRICES_USDT[1] || 10;
@@ -3768,37 +4021,47 @@ async function checkAndProcessBotCloneQueue(triggerReason) {
             }
           }
           if (eligibleTargetRank >= 2) {
-            try {
-              await writeContract.processPendingExtraIdQueue.staticCall(mainNode.id, 2);
-              console.log(
-                `\u{1F916} [WS-Bot] (${triggerReason}) Main #${mainNode.id} \u0E21\u0E35 Extra ID Pool = ${stats.newExtraIdPool.toFixed(
-                  2
-                )} USDT \u0E1E\u0E23\u0E49\u0E2D\u0E21\u0E2D\u0E2D\u0E01 Extra ID \u0E43\u0E19 R${eligibleTargetRank} -> \u0E2A\u0E31\u0E48\u0E07 processPendingExtraIdQueue(${mainNode.id}, 2)`
-              );
-              const tx = await writeContract.processPendingExtraIdQueue(mainNode.id, 2);
-              const receipt = await tx.wait(1);
-              const txHash = receipt?.hash || tx.hash;
-              recordRealTransactionLog({
-                txHash,
-                actionType: "EXTRA_ID",
-                title: `Bot \u0E41\u0E15\u0E01 Extra ID (R${eligibleTargetRank}) \u0E08\u0E32\u0E01 Main #${mainNode.id}`,
-                userAddress: mainNode.owner,
-                mainNodeId: mainNode.id,
-                rank: eligibleTargetRank,
-                amountUsdt: RANK_PRICES_USDT[eligibleTargetRank - 1] || 10,
-                blockNumber: receipt?.blockNumber,
-                source: "WS_BOT",
-                details: `Trigger: ${triggerReason}`
-              });
-              recordWsBotEvent(
-                "AutoExtraIdQueue",
-                `Main #${mainNode.id} \u0E41\u0E15\u0E01 Extra ID R${eligibleTargetRank} \u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08 (TX: ${txHash.slice(
-                  0,
-                  10
-                )}...)`
-              );
-              didExecuteOnChain = true;
-            } catch {
+            const preExtraDrain = await drainOnChainCloneQueueLoop(
+              readContract,
+              writeContract,
+              botSigner?.address || "",
+              botHasGas,
+              `${triggerReason}:PRE_EXTRA_ID(#${mainNode.id})`
+            );
+            if (preExtraDrain.flushedCount > 0) didExecuteOnChain = true;
+            if (preExtraDrain.pendingAfter === 0) {
+              try {
+                await writeContract.processPendingExtraIdQueue.staticCall(mainNode.id, 2);
+                console.log(
+                  `\u{1F916} [WS-Bot] (${triggerReason}) Main #${mainNode.id} \u0E21\u0E35 Extra ID Pool = ${stats.newExtraIdPool.toFixed(
+                    2
+                  )} USDT \u0E1E\u0E23\u0E49\u0E2D\u0E21\u0E2D\u0E2D\u0E01 Extra ID \u0E43\u0E19 R${eligibleTargetRank} -> \u0E2A\u0E31\u0E48\u0E07 processPendingExtraIdQueue(${mainNode.id}, 2)`
+                );
+                const tx = await writeContract.processPendingExtraIdQueue(mainNode.id, 2);
+                const receipt = await tx.wait(1);
+                const txHash = receipt?.hash || tx.hash;
+                recordRealTransactionLog({
+                  txHash,
+                  actionType: "EXTRA_ID",
+                  title: `Bot \u0E41\u0E15\u0E01 Extra ID (R${eligibleTargetRank}) \u0E08\u0E32\u0E01 Main #${mainNode.id}`,
+                  userAddress: mainNode.owner,
+                  mainNodeId: mainNode.id,
+                  rank: eligibleTargetRank,
+                  amountUsdt: RANK_PRICES_USDT[eligibleTargetRank - 1] || 10,
+                  blockNumber: receipt?.blockNumber,
+                  source: "WS_BOT",
+                  details: `Trigger: ${triggerReason}`
+                });
+                recordWsBotEvent(
+                  "AutoExtraIdQueue",
+                  `Main #${mainNode.id} \u0E41\u0E15\u0E01 Extra ID R${eligibleTargetRank} \u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08 (TX: ${txHash.slice(
+                    0,
+                    10
+                  )}...)`
+                );
+                didExecuteOnChain = true;
+              } catch {
+              }
             }
           }
         }
@@ -3817,6 +4080,7 @@ async function checkAndProcessBotCloneQueue(triggerReason) {
   }
 }
 var triggerMatrixDatabaseSync = null;
+var triggerRankDatabaseSync = null;
 var triggerComputeMainIdStats = null;
 async function startEventListener() {
   if (!CONTRACT_ADDRESS) return;
@@ -4972,6 +5236,43 @@ async function startApp() {
       res.status(500).json({ success: false, error: err?.message || String(err) });
     }
   });
+  app.get("/api/matrix/clone-queue-status", async (_req, res) => {
+    try {
+      const httpProvider = getBotHttpProvider();
+      const readContract = new ethers.Contract(CONTRACT_ADDRESS, WS_BOT_ABI, httpProvider);
+      const pendingOnChain = Number(await readContract.getPendingCloneCount().catch(() => 0n));
+      const now = Date.now();
+      const activeReservations = Array.from(reservationsMap.values()).filter(
+        (r) => r.status === "RESERVED" && now <= r.expiresAt
+      );
+      const activeVirtualClones = activeReservations.reduce(
+        (sum, r) => sum + (Array.isArray(r.virtualClones) ? r.virtualClones.length : 0),
+        0
+      );
+      res.json({
+        success: true,
+        pendingOnChain,
+        isBotProcessingQueue: wsIsProcessingQueue,
+        activeReservationsCount: activeReservations.length,
+        activeVirtualClones,
+        totalNodesRank1: (matrixDB.nodesByRank[1] || []).filter((n) => !n.isSyntheticExtra).length
+      });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err?.message || String(err) });
+    }
+  });
+  app.post("/api/matrix/ensure-clone-queue", async (req, res) => {
+    try {
+      const reason = String(req.body?.reason || "PRE_ID_ACTION");
+      const result = await ensureOnChainCloneQueueFlushed(reason);
+      res.json({
+        success: true,
+        ...result
+      });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err?.message || String(err) });
+    }
+  });
   app.get("/api/db/postgres", async (_req, res) => {
     await refreshPgTableCounts();
     res.json({
@@ -5079,6 +5380,7 @@ async function startApp() {
     }
     return null;
   }
+  triggerRankDatabaseSync = syncRankIntoDatabase;
   async function syncRankIntoDatabase(rank, targetContract = CONTRACT_ADDRESS, forceRefresh = false, bypassCooldown = false) {
     const rankNum = Math.min(Math.max(Number(rank) || 1, 1), 18);
     const cacheKey = `${targetContract.toLowerCase()}:${rankNum}`;
@@ -5906,6 +6208,21 @@ async function startApp() {
     const upgradeHistory = (matrixDB.upgradeLogs || []).filter(
       (u) => Number(u.mainNodeId) === mainIdNum
     );
+    const { latestCloneByMainIdAndRank, cloneCountByMainIdAndRank } = rebuildLatestCloneByMainIdAndRank();
+    const latestCloneByRank = {};
+    const cloneCountByRank = {};
+    let totalClonesCount = 0;
+    let latestCloneOverall = null;
+    for (let r = 1; r <= 18; r++) {
+      const lcId = Number(latestCloneByMainIdAndRank[mainIdNum]?.[r] || 0);
+      const lcCnt = Number(cloneCountByMainIdAndRank[mainIdNum]?.[r] || 0);
+      latestCloneByRank[r] = lcId;
+      cloneCountByRank[r] = lcCnt;
+      totalClonesCount += lcCnt;
+      if (lcId > 0) {
+        latestCloneOverall = { rank: r, nodeId: lcId };
+      }
+    }
     return {
       mainId: mainIdNum,
       owner: targetNode?.owner || ethers.ZeroAddress,
@@ -5913,6 +6230,11 @@ async function startApp() {
       window5Start,
       window5End,
       vaultsByRank,
+      latestCloneByRank,
+      cloneCountByRank,
+      latestCloneIdRank1: latestCloneByRank[1] || 0,
+      latestCloneOverall,
+      totalClonesCount,
       upgradeRankPool: Number(upgradeRankPool.toFixed(2)),
       newAutoIdPool: Number(newAutoIdPool.toFixed(2)),
       newExtraIdPool: Number(newExtraIdPool.toFixed(2)),
@@ -5951,6 +6273,7 @@ async function startApp() {
       systemWallets: matrixDB.systemWallets,
       rankCounts: matrixDB.rankCounts,
       nodesByRank: matrixDB.nodesByRank,
+      latestCloneByMainIdAndRank: matrixDB.latestCloneByMainIdAndRank || {},
       totalRewards: matrixDB.rewardLogs.length,
       totalUpgrades: (matrixDB.upgradeLogs || []).length,
       upgradeLogs: matrixDB.upgradeLogs || []
@@ -6008,6 +6331,7 @@ async function startApp() {
   app.post("/api/matrix/auto-extra-id", async (req, res) => {
     try {
       const mainIdNum = Math.max(1, Number(req.body?.mainId) || 1);
+      await ensureOnChainCloneQueueFlushed(`API_AUTO_EXTRA_ID(#${mainIdNum})`);
       await syncAllMatrixDatabase(CONTRACT_ADDRESS, false);
       const statsBefore = computeMainIdDatabaseStats(mainIdNum);
       let txHash = null;
@@ -6086,6 +6410,80 @@ async function startApp() {
       res.status(500).json({ success: false, error: err?.message || "Database query error" });
     }
   });
+  app.get("/api/matrix/latest-clones", async (req, res) => {
+    try {
+      res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      const mainIdParam = Number(req.query.mainId || 0);
+      const rankParam = Number(req.query.rank || 0);
+      const sourceParam = String(req.query.source || "").toLowerCase();
+      if (!matrixDB.nodesByRank[1] || matrixDB.nodesByRank[1].length <= 1) {
+        await syncAllMatrixDatabase(CONTRACT_ADDRESS, false).catch(() => {
+        });
+      } else {
+        reconcileAutoExtraIdsAcrossRanks();
+      }
+      const { latestCloneByMainIdAndRank, cloneCountByMainIdAndRank } = rebuildLatestCloneByMainIdAndRank();
+      if (sourceParam === "postgres" && pgPool && pgConnected) {
+        const whereClauses = [];
+        const params = [];
+        if (mainIdParam > 0) {
+          params.push(mainIdParam);
+          whereClauses.push(`main_id = $${params.length}`);
+        }
+        if (rankParam >= 1 && rankParam <= 18) {
+          params.push(rankParam);
+          whereClauses.push(`rank = $${params.length}`);
+        }
+        const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
+        const pgRes = await pgPool.query(
+          `SELECT id, main_id, rank, latest_clone_id, total_clones, owner, updated_at
+           FROM main_id_latest_clones ${whereSql}
+           ORDER BY main_id ASC, rank ASC`,
+          params
+        );
+        return res.json({
+          success: true,
+          source: "POSTGRESQL",
+          mainId: mainIdParam > 0 ? mainIdParam : void 0,
+          rank: rankParam >= 1 && rankParam <= 18 ? rankParam : void 0,
+          rows: pgRes.rows,
+          latestCloneByMainIdAndRank,
+          cloneCountByMainIdAndRank
+        });
+      }
+      if (mainIdParam > 0 && rankParam >= 1 && rankParam <= 18) {
+        const lcId = Number(latestCloneByMainIdAndRank[mainIdParam]?.[rankParam] || 0);
+        const lcCount = Number(cloneCountByMainIdAndRank[mainIdParam]?.[rankParam] || 0);
+        return res.json({
+          success: true,
+          source: "DATABASE",
+          mainId: mainIdParam,
+          rank: rankParam,
+          latestCloneId: lcId,
+          totalClones: lcCount,
+          latestCloneByRank: latestCloneByMainIdAndRank[mainIdParam] || {},
+          cloneCountByRank: cloneCountByMainIdAndRank[mainIdParam] || {}
+        });
+      }
+      if (mainIdParam > 0) {
+        return res.json({
+          success: true,
+          source: "DATABASE",
+          mainId: mainIdParam,
+          latestCloneByRank: latestCloneByMainIdAndRank[mainIdParam] || {},
+          cloneCountByRank: cloneCountByMainIdAndRank[mainIdParam] || {}
+        });
+      }
+      res.json({
+        success: true,
+        source: "DATABASE",
+        latestCloneByMainIdAndRank,
+        cloneCountByMainIdAndRank
+      });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err?.message || "Failed to read latest clones" });
+    }
+  });
   app.get("/api/matrix/per-id-history", async (req, res) => {
     try {
       const forceSync = req.query.forceSync === "1";
@@ -6141,6 +6539,8 @@ async function startApp() {
         const spawnedByMainId = isAutoMain ? autoMainSourceMap.get(r1Node.id) || r1Node.directSponsorNodeId || 1 : r1Node.isClone ? origMainId : 0;
         const stats = !r1Node.isClone ? computeMainIdDatabaseStats(r1Node.id) : {
           currentRank: 1,
+          latestCloneByRank: {},
+          cloneCountByRank: {},
           upgradeRankPool: 0,
           newAutoIdPool: 0,
           newExtraIdPool: 0,
@@ -6167,7 +6567,8 @@ async function startApp() {
                 leftChild: mInR.leftChild,
                 rightChild: mInR.rightChild,
                 nodeVault: Number((mInR.nodeVault || 0).toFixed(2)),
-                rawNodeVault: Number((mInR.rawNodeVault || mInR.nodeVault || 0).toFixed(2))
+                rawNodeVault: Number((mInR.rawNodeVault || mInR.nodeVault || 0).toFixed(2)),
+                latestCloneId: Number(stats.latestCloneByRank?.[r] || 0)
               });
             }
           }
@@ -6180,7 +6581,8 @@ async function startApp() {
             leftChild: r1Node.leftChild,
             rightChild: r1Node.rightChild,
             nodeVault: Number((r1Node.nodeVault || 0).toFixed(2)),
-            rawNodeVault: Number((r1Node.rawNodeVault || 0).toFixed(2))
+            rawNodeVault: Number((r1Node.rawNodeVault || 0).toFixed(2)),
+            latestCloneId: Number(stats.latestCloneByRank?.[1] || 0)
           });
         }
         const tiersBreakdown = [];
@@ -6291,6 +6693,8 @@ async function startApp() {
             oldCarryoverVault: stats.oldCarryoverVault,
             newExtraIdPoolGross: stats.newExtraIdPoolGross
           },
+          latestCloneByRank: stats.latestCloneByRank || {},
+          cloneCountByRank: stats.cloneCountByRank || {},
           totalAutoIdCount: 0,
           totalExtraIdCount: 0,
           totalClonesCount: 0,
@@ -6388,6 +6792,29 @@ async function startApp() {
         rep.totalAutoIdCount = rep.autoIdsSpawned.length;
         rep.totalExtraIdCount = rep.autoExtraIdsSpawned.length;
         rep.totalClonesCount = rep.clonesSpawned.length;
+        if (!rep.isClone && rep.clonesSpawned.length > 0) {
+          const updatedLatest = { ...rep.latestCloneByRank || {} };
+          const updatedCount = {};
+          for (let r = 1; r <= 18; r++) {
+            if (!updatedLatest[r]) updatedLatest[r] = 0;
+            updatedCount[r] = 0;
+          }
+          for (const cl of rep.clonesSpawned) {
+            const cr = Number(cl.rank || 1);
+            const cid = Number(cl.id || 0);
+            if (cr >= 1 && cr <= 18 && cid > 0) {
+              updatedCount[cr] = (updatedCount[cr] || 0) + 1;
+              if (cid > (updatedLatest[cr] || 0)) {
+                updatedLatest[cr] = cid;
+              }
+            }
+          }
+          rep.latestCloneByRank = updatedLatest;
+          rep.cloneCountByRank = updatedCount;
+          for (const rn of rep.rankNodesList) {
+            rn.latestCloneId = Number(updatedLatest[rn.rank] || 0);
+          }
+        }
       }
       const allSellWalletAddr = matrixDB.systemWallets?.allSellWallet || "0xBeFEB9871a20656aeF7E8d218f751e9C23FAF710";
       const familyPoolWalletAddr = matrixDB.systemWallets?.familyPool || "0x225DF4b5961f757f54728138F289Eaf49D4F275A";
@@ -7874,6 +8301,7 @@ async function startApp() {
   });
   app.post("/api/matrix/register", async (req, res) => {
     try {
+      await ensureOnChainCloneQueueFlushed("API_MATRIX_REGISTER");
       const { owner, sponsorNodeId, targetParentId, isLeft, count } = req.body;
       const rawOwner = String(owner || "").trim();
       const checksumOwner = rawOwner && ethers.isAddress(rawOwner) ? ethers.getAddress(rawOwner) : matrixDB.systemWallets.rootOwner;
@@ -8031,6 +8459,7 @@ async function startApp() {
   });
   app.post("/api/matrix/upgrade", async (req, res) => {
     try {
+      await ensureOnChainCloneQueueFlushed("API_MATRIX_UPGRADE");
       const { targetRank, mainId, owner } = req.body;
       const rankNum = Math.min(Math.max(Number(targetRank) || 2, 2), 18);
       const mainIdNum = Math.max(1, Number(mainId) || 1);
@@ -8914,10 +9343,33 @@ async function startApp() {
           "function checkAndProcessAutoNewMainIdForNode(uint256 _mainNodeId) external",
           "function checkAndProcessAutoExtraId(address _user, uint8 _currentRank) external",
           "function checkAndProcessAutoExtraIdForNode(address _user, uint8 _currentRank, uint256 _sponsorNodeId) external",
-          "function processPendingExtraIdQueue(uint256 _r1MainId, uint8 _maxBatch) external returns (uint8 processed)"
+          "function processPendingExtraIdQueue(uint256 _r1MainId, uint8 _maxBatch) external returns (uint8 processed)",
+          "function getPendingCloneCount() external view returns (uint256)",
+          "function processCloneQueue(uint256 _maxIterations) external"
         ],
         wallet
       );
+      const requiresCloneQueuePreCheck = [
+        "adminUpgradeRankForMainId",
+        "adminUpgradeRank",
+        "checkAndProcessAutoNewMainIdForNode",
+        "checkAndProcessAutoNewMainId",
+        "checkAndProcessAutoExtraIdForNode",
+        "checkAndProcessAutoExtraId",
+        "processPendingExtraIdQueue"
+      ].includes(String(action || ""));
+      if (requiresCloneQueuePreCheck) {
+        await ensureOnChainCloneQueueFlushed(`ADMIN_ACTION:${String(action || "")}`);
+        let adminPending = await contract.getPendingCloneCount().catch(() => 0n);
+        let flushRounds = 0;
+        while (adminPending > 0n && flushRounds < 10) {
+          flushRounds++;
+          const batch = adminPending > 5n ? 5n : adminPending;
+          const flushTx = await contract.processCloneQueue(batch);
+          await flushTx.wait(1);
+          adminPending = await contract.getPendingCloneCount().catch(() => 0n);
+        }
+      }
       const isOnlyOwnerAction = [
         "adminUpgradeRankForMainId",
         "adminUpgradeRank",
@@ -9183,6 +9635,7 @@ async function startApp() {
   app.get("/api/matrix/inspect-rank", async (req, res) => {
     const rankNum = Math.min(Math.max(Number(req.query.rank) || 1, 1), 18);
     const addrParam = String(req.query.address || "").toLowerCase();
+    const mainIdParam = Number(req.query.mainId || 0);
     const currentPriceNum = RANK_PRICES_USDT[rankNum - 1] ?? 5;
     const nextPriceNum = rankNum < 18 ? RANK_PRICES_USDT[rankNum] ?? 0 : 0;
     const formatUsdtPrice = (val) => `${val.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDT`;
@@ -9190,19 +9643,35 @@ async function startApp() {
       await syncRankIntoDatabase(rankNum, CONTRACT_ADDRESS, false);
     }
     const rNodes = matrixDB.nodesByRank[rankNum] || [];
+    const r1Nodes = matrixDB.nodesByRank[1] || [];
+    const { latestCloneByMainIdAndRank } = rebuildLatestCloneByMainIdAndRank();
     const targetOwner = addrParam && ethers.isAddress(addrParam) ? addrParam : (rNodes[0]?.owner || matrixDB.systemWallets.rootOwner || "").toLowerCase();
+    const ownedMainsR1 = r1Nodes.filter(
+      (n) => !n.isClone && !n.isExtraId && (n.owner || "").toLowerCase() === targetOwner
+    );
+    const targetMainId = mainIdParam > 0 ? mainIdParam : ownedMainsR1[0]?.id || 1;
     const ownedNodes = rNodes.filter((n) => n.owner.toLowerCase() === targetOwner);
-    const ownedMains = ownedNodes.filter((n) => !n.isClone && !n.isExtraId);
+    const ownedMains = ownedNodes.filter(
+      (n) => !n.isClone && !n.isExtraId && (mainIdParam <= 0 || n.originMainId === targetMainId || n.id === targetMainId)
+    );
     const firstNodeId = ownedMains[0]?.id ?? ownedNodes[0]?.id ?? 0;
     const latestNodeId = ownedNodes[ownedNodes.length - 1]?.id ?? 0;
+    const latestCloneId = Number(latestCloneByMainIdAndRank[targetMainId]?.[rankNum] || 0);
     const vaultBal = ownedMains[0] ? Number(ownedMains[0].nodeVault || 0) : matrixDB.userRankVaults[targetOwner]?.[rankNum] ?? 0;
+    const latestCloneByMainIdInRank = {};
+    for (const [mIdStr, rankMap] of Object.entries(latestCloneByMainIdAndRank)) {
+      latestCloneByMainIdInRank[Number(mIdStr)] = Number(rankMap?.[rankNum] || 0);
+    }
     res.json({
       success: true,
       source: "DATABASE",
       rank: rankNum,
+      mainId: targetMainId,
       address: targetOwner,
       firstNodeId: String(firstNodeId),
       latestNodeId: String(latestNodeId),
+      latestCloneId: String(latestCloneId),
+      latestCloneByMainId: latestCloneByMainIdInRank,
       upgradeVaultBalance: vaultBal.toFixed(2),
       rankPrice: formatUsdtPrice(currentPriceNum),
       nextRankPrice: nextPriceNum > 0 ? formatUsdtPrice(nextPriceNum) : "Max Rank"
@@ -9644,6 +10113,7 @@ async function startApp() {
   });
   app.post("/api/batch-queue/flush", async (_req, res) => {
     try {
+      await ensureOnChainCloneQueueFlushed("BATCH_QUEUE_FLUSH");
       nextFlushTimestamp = Date.now() + BATCH_INTERVAL_SECONDS * 1e3;
       if (pendingBatchQueue.length === 0) {
         return res.json({
@@ -9699,6 +10169,7 @@ async function startApp() {
   });
   app.post("/api/matrix/simulate-batch", async (req, res) => {
     try {
+      await ensureOnChainCloneQueueFlushed("SIMULATE_BATCH");
       const { rank = 1, sponsorAddress, sponsorNodeId = 1, applicants, count } = req.body;
       const applicantList = Array.isArray(applicants) && applicants.length > 0 ? applicants : Array.from({ length: Number(count) || 2 }, (_, idx) => ({
         owner: sponsorAddress || `0xApplicant_${idx + 1}`
@@ -9738,6 +10209,7 @@ async function startApp() {
       if (!owner) {
         return res.status(400).json({ success: false, error: "owner address is required" });
       }
+      await ensureOnChainCloneQueueFlushed(`QUEUE_RESERVE(Sp#${Number(sponsorNodeId) || 1})`);
       const reservation = await enqueuePlacementRequest({
         owner,
         sponsorNodeId: Number(sponsorNodeId) || 1,
@@ -10119,13 +10591,16 @@ async function startApp() {
           sponsorMainNodeId: hasNodes ? userProfileData?.sponsorMainNodeId || "1" : "0",
           currentMaxRank: hasNodes ? userProfileData?.currentMaxRank || 1 : 0,
           mainNodeIdRank1: hasNodes ? mainNodes[0] || allNodes[0] || "0" : "0",
-          latestCloneIdRank1: hasNodes ? cloneNodes[cloneNodes.length - 1] || "0" : "0",
+          latestCloneIdRank1: hasNodes ? String(userProfileData?.latestCloneByRank?.[1] || cloneNodes[cloneNodes.length - 1] || "0") : "0",
+          latestCloneByRank: hasNodes ? userProfileData?.latestCloneByRank || {} : {},
+          latestCloneByMainIdAndRank: hasNodes ? userProfileData?.latestCloneByMainIdAndRank || {} : {},
           ownedMainIdsRank1: mainNodes,
           ownedCloneIdsRank1: cloneNodes,
           ownedAllIdsRank1: allNodes
         },
         vaults: hasNodes ? userProfileData?.vaults || [] : [],
         mainIdStats,
+        latestCloneByMainIdAndRank: hasNodes ? userProfileData?.latestCloneByMainIdAndRank || {} : {},
         nodes: userProfileData?.nodes || [],
         usdtBalance,
         usdtAllowance,
@@ -10153,6 +10628,7 @@ async function startApp() {
         lastSyncedAt: matrixDB.lastSyncedAt,
         rankCounts: matrixDB.rankCounts,
         nodesByRank: matrixDB.nodesByRank,
+        latestCloneByMainIdAndRank: matrixDB.latestCloneByMainIdAndRank || {},
         contractAddress: CONTRACT_ADDRESS,
         transactions: getAggregatedTransactions(),
         rewardLogs: matrixDB.rewardLogs || [],

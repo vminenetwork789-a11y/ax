@@ -192,6 +192,7 @@ interface MatrixTreeVisualizerProps {
   ownedWalletMainIds?: string[];
   ownedWalletAllIds?: string[];
   selectedMainId?: string;
+  selectedMainIdLatestCloneByRank?: Record<number, number>;
   onSelectMainId?: (mainId: string) => void;
 }
 
@@ -209,6 +210,7 @@ interface WalletOwnedIdOption {
   direct30TotalUsdt: number;
   level30TotalUsdt: number;
   vault35GrossTotalUsdt: number;
+  latestCloneByRank?: Record<number, number>;
 }
 
 const RPC_ENDPOINTS = [
@@ -672,6 +674,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
   ownedWalletMainIds = [],
   ownedWalletAllIds = [],
   selectedMainId = '1',
+  selectedMainIdLatestCloneByRank,
   onSelectMainId,
 }) => {
   const initialPostTxTargetRef = useRef<PostTxViewTarget | null | undefined>(undefined);
@@ -1431,6 +1434,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         direct30TotalUsdt: Number(rep.direct30TotalUsdt || 0),
         level30TotalUsdt: Number(rep.level30TotalUsdt || 0),
         vault35GrossTotalUsdt: Number(rep.vault35GrossTotalUsdt || 0),
+        latestCloneByRank: rep.latestCloneByRank || {},
       });
     }
 
@@ -9029,6 +9033,21 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                                     Vault +{item.vault35GrossTotalUsdt.toFixed(1)}U
                                   </span>
                                 </div>
+                                {(() => {
+                                  const lcForItem =
+                                    Number(item.latestCloneByRank?.[selectedRank] || 0) ||
+                                    (Number(item.originMainId) === Number(selectedMainId)
+                                      ? Number(selectedMainIdLatestCloneByRank?.[selectedRank] || 0)
+                                      : 0);
+                                  if ((item.category === 'MAIN' || item.category === 'AUTO') && lcForItem > 0) {
+                                    return (
+                                      <div className="text-[9.5px] font-mono text-cyan-700 dark:text-cyan-300 font-bold">
+                                        🧬 โคลนนิ่งล่าสุดใน R{selectedRank}: #{lcForItem}
+                                      </div>
+                                    );
+                                  }
+                                  return null;
+                                })()}
                               </button>
                             );
                           })}
@@ -10334,6 +10353,26 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                           +{modalNode.vaultBalance.toFixed(2)} USDT
                         </span>
                       </div>
+                      {(() => {
+                        const latestCloneInThisRank =
+                          Number(mainReport?.latestCloneByRank?.[modalNode.rank] || 0) ||
+                          (Number(targetMainId) === Number(selectedMainId)
+                            ? Number(selectedMainIdLatestCloneByRank?.[modalNode.rank] || 0)
+                            : 0) ||
+                          clonesList
+                            .filter((c: any) => Number(c.rank) === Number(modalNode.rank))
+                            .reduce((maxId: number, c: any) => Math.max(maxId, Number(c.id || 0)), 0);
+                        return (
+                          <div className="flex items-center justify-between">
+                            <span className="text-slate-300">
+                              โคลนนิ่งล่าสุดของ Main #{targetMainId} (R{modalNode.rank}):
+                            </span>
+                            <span className="font-extrabold text-cyan-300">
+                              {latestCloneInThisRank > 0 ? `#${latestCloneInThisRank}` : 'ยังไม่มี'}
+                            </span>
+                          </div>
+                        );
+                      })()}
 
                       {/* 15-Level Breakdown inside Box 2 */}
                       {(() => {
@@ -10961,6 +11000,9 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                         <span>
                           <strong className="text-amber-300">R{rn.rank}-#{rn.nodeId}</strong> (ใต้ #{rn.parentId}{' '}
                           {rn.side})
+                          {Number(rn.latestCloneId || 0) > 0 && (
+                            <span className="ml-1.5 text-cyan-300">• โคลนล่าสุด #{rn.latestCloneId}</span>
+                          )}
                         </span>
                         <span>
                           Vault: <strong className="text-emerald-400">{rn.nodeVault.toFixed(2)}U</strong>

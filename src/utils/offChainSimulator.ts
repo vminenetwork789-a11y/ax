@@ -931,6 +931,78 @@ export async function loadOnChainRank1State(
   };
 }
 
+async function ensureCloneQueueCheckedInSimulator(
+  signerOrProvider: ethers.Signer | ethers.Provider | null,
+  contractAddress: string,
+  onProgress?: (msg: string) => void,
+  reason = 'SIMULATOR_PRE_ID_CHECK',
+  allowOnChainFlush = false
+): Promise<void> {
+  onProgress?.('กำลังตรวจสอบคิวโคลนนิ่งก่อนคำนวณตำแหน่ง...');
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    try {
+      const res = await fetch('/api/matrix/ensure-clone-queue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason }),
+        signal: controller.signal,
+      });
+      if (res.ok) {
+        const data = await res.json().catch(() => null);
+        if (data && typeof data.pendingAfter === 'number' && data.pendingAfter > 0 && allowOnChainFlush) {
+          throw new Error(
+            `ยังมีคิวโคลนนิ่งค้างอยู่ ${data.pendingAfter} รายการ กรุณารอเคลียร์คิวให้เสร็จก่อน`
+          );
+        }
+      }
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  } catch (err: any) {
+    if (allowOnChainFlush && err?.message?.includes('ยังมีคิวโคลนนิ่งค้างอยู่')) {
+      throw err;
+    }
+  }
+
+  if (allowOnChainFlush && signerOrProvider && 'sendTransaction' in signerOrProvider) {
+    const contract = new ethers.Contract(contractAddress, CONTRACT_ABI, signerOrProvider);
+    if (
+      typeof contract.getPendingCloneCount === 'function' &&
+      typeof contract.processCloneQueue === 'function'
+    ) {
+      for (let round = 0; round < 10; round++) {
+        const pendingBn: bigint = await contract
+          .getPendingCloneCount()
+          .then((v: any) => BigInt(v || 0))
+          .catch(() => 0n);
+        if (pendingBn <= 0n) break;
+        const batchSize = pendingBn > 16n ? 16n : pendingBn;
+        onProgress?.(
+          `พบคิวโคลนนิ่งบนเชนค้างอยู่ ${pendingBn.toString()} รายการ กำลังเคลียร์คิวโคลนนิ่งก่อน (${round + 1})...`
+        );
+        const flushTx = await contract.processCloneQueue(batchSize);
+        await flushTx.wait();
+        await Promise.race([
+          fetch('/api/db/sync?rank=1&fast=1', { method: 'POST' }).catch(() => {}),
+          new Promise((resolve) => setTimeout(resolve, 2500)),
+        ]);
+      }
+
+      const finalPending: bigint = await contract
+        .getPendingCloneCount()
+        .then((v: any) => BigInt(v || 0))
+        .catch(() => 0n);
+      if (finalPending > 0n) {
+        throw new Error(
+          `ยังมีคิวโคลนนิ่งค้างอยู่บนเชน ${finalPending.toString()} รายการ กรุณารอเคลียร์คิวให้เสร็จก่อน`
+        );
+      }
+    }
+  }
+}
+
 // --- 5. ฟังก์ชันค้นหาตำแหน่งที่จะลงออโต้ (Auto-Placement Preview สำหรับแสดงบน UI แบบ Real-Time) ---
 export async function previewOffChainSimulation(
   providerOrSigner: ethers.Provider | ethers.Signer | null,
@@ -948,6 +1020,28 @@ export async function previewOffChainSimulation(
   let sponsorIsValid = true;
   let sponsorReason = 'Valid main sponsor ID';
   let sponsorAddress = CONTRACT_ADDRESS;
+
+  // เช็คคิวโคลนนิ่งฝั่ง Backend ก่อนโหลดผังมาจำลองทุกครั้ง (ไม่เปิดหน้าต่างกระเป๋าในโหมดพรีวิว)
+  try {
+    const statusRes = await fetch('/api/matrix/clone-queue-status').catch(() => null);
+    if (statusRes && statusRes.ok) {
+      const statusJson = await statusRes.json().catch(() => null);
+      if (
+        statusJson &&
+        (Number(statusJson.pendingOnChain || 0) > 0 || Boolean(statusJson.isBotProcessingQueue))
+      ) {
+        await ensureCloneQueueCheckedInSimulator(
+          providerOrSigner,
+          contractAddress,
+          onProgress,
+          'PREVIEW_SIMULATION',
+          false
+        );
+      }
+    }
+  } catch {
+    // Non-fatal in preview mode
+  }
 
   try {
     onProgress('กำลังค้นหาตำแหน่งว่างในผังไบนารี่แบบออโต้ (Auto-Placement Sync)...');
@@ -1162,6 +1256,15 @@ export async function executeOffChainSimulationAndBatch(
     const userAddress = await signer.getAddress();
     const contract = new ethers.Contract(contractAddress, CONTRACT_ABI, signer);
 
+    // 1. บังคับเช็คและเคลียร์คิวโคลนนิ่งก่อนคำนวณตำแหน่งสำหรับเปิด ID ทุกครั้ง
+    await ensureCloneQueueCheckedInSimulator(
+      signer,
+      contractAddress,
+      onProgress,
+      'EXECUTE_BATCH_PRE_SIM',
+      true
+    );
+
     onProgress(`กำลังค้นหาตำแหน่งว่างออโต้ใต้ Sponsor #${sponsorNodeId}...`);
     const simResult = await previewOffChainSimulation(
       signer,
@@ -1230,30 +1333,38 @@ export async function executeOffChainSimulationAndBatch(
       await approveTx.wait();
     }
 
-    // รีเฟรชการคำนวณตำแหน่งจากสถานะเชนล่าสุดอีกครั้งก่อนส่งธุรกรรม เพื่อให้มั่นใจว่าตรงกับรหัสหลักของผู้แนะนำ (#sponsorNodeId)
-    if (mode === 'contract_round') {
-      try {
-        onProgress(
-          `ถึงคิวส่งแล้ว! กำลังตรวจสอบตำแหน่งสายตรงและโคลนนิ่งของ Sponsor #${sponsorNodeId} ล่าสุด...`
-        );
-        const latestSim = await previewOffChainSimulation(
-          signer,
-          contractAddress,
-          sponsorNodeId,
-          applicantsQueue,
-          undefined,
-          mode,
-          excludeTicketId
-        );
-        if (latestSim.targetParentIds.length === count) {
-          simResult.targetParentIds = latestSim.targetParentIds;
-          simResult.targetParentIdsBigInt = latestSim.targetParentIdsBigInt;
-          simResult.isLefts = latestSim.isLefts;
-          simResult.stepLogs = latestSim.stepLogs;
-        }
-      } catch (cpErr) {
-        console.warn('Notice re-verifying placement before sending batch:', cpErr);
+    // 2. เช็คคิวโคลนนิ่งและรีเฟรชการคำนวณตำแหน่งจากสถานะเชนล่าสุดอีกครั้งก่อนส่งธุรกรรมทุกครั้ง
+    try {
+      await ensureCloneQueueCheckedInSimulator(
+        signer,
+        contractAddress,
+        onProgress,
+        'EXECUTE_BATCH_PRE_TX',
+        true
+      );
+      onProgress(
+        `ถึงคิวส่งแล้ว! กำลังตรวจสอบตำแหน่งสายตรงและโคลนนิ่งของ Sponsor #${sponsorNodeId} ล่าสุด...`
+      );
+      const latestSim = await previewOffChainSimulation(
+        signer,
+        contractAddress,
+        sponsorNodeId,
+        applicantsQueue,
+        undefined,
+        mode,
+        excludeTicketId
+      );
+      if (latestSim.targetParentIds.length === count) {
+        simResult.targetParentIds = latestSim.targetParentIds;
+        simResult.targetParentIdsBigInt = latestSim.targetParentIdsBigInt;
+        simResult.isLefts = latestSim.isLefts;
+        simResult.stepLogs = latestSim.stepLogs;
       }
+    } catch (cpErr: any) {
+      if (cpErr?.message?.includes('ยังมีคิวโคลนนิ่งค้างอยู่')) {
+        throw cpErr;
+      }
+      console.warn('Notice re-verifying placement before sending batch:', cpErr);
     }
 
     const firstParent = simResult.targetParentIds[0];

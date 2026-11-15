@@ -297,10 +297,13 @@ export async function checkAndProcessPendingQueues(triggerSource: string): Promi
         `🔔 [WS-Bot] (${triggerSource}) พบคิวโคลนรอประมวลผล: ${pendingCloneCount.toString()} รายการ`
       );
       if (BOT_PRIVATE_KEY && BOT_PRIVATE_KEY.length >= 64) {
-        const botWallet = new ethers.Wallet(BOT_PRIVATE_KEY, httpProvider);
+        const pkHex = BOT_PRIVATE_KEY.startsWith('0x') ? BOT_PRIVATE_KEY : `0x${BOT_PRIVATE_KEY}`;
+        const botWallet = new ethers.Wallet(pkHex, httpProvider);
         const writeContract = new ethers.Contract(CONTRACT_ADDRESS, BOT_CONTRACT_ABI, botWallet);
 
-        while (pendingCloneCount > 0n) {
+        let rounds = 0;
+        while (pendingCloneCount > 0n && rounds < 20) {
+          rounds++;
           const batchSize =
             pendingCloneCount > BigInt(MAX_CLONE_BATCH_SIZE)
               ? BigInt(MAX_CLONE_BATCH_SIZE)

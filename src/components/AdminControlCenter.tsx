@@ -1520,6 +1520,9 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
                           }),
                         });
                         const data = await res.json();
+                        if (!res.ok || data?.success === false) {
+                          throw new Error(data?.error || 'ประมวลผล Extra ID ไม่สำเร็จ');
+                        }
                         await fetchAdminOverview();
                         if (typeof window !== 'undefined') {
                           window.dispatchEvent(new CustomEvent('matrix:tree:refresh'));

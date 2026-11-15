@@ -269,12 +269,14 @@ export const MATRIX_ABI = [
   'function mainIdCurrentMaxRank(uint256) external view returns (uint8)',
   'function mainIdNodeInRank(uint256, uint8) external view returns (uint256)',
   'function mainNodeLatestCloneId(uint8, uint256) external view returns (uint256)',
+  'function getLatestCloneByMainIdAndRank(uint256 _mainId, uint8 _rank) external view returns (uint256)',
   'function nodeDirectSponsorNodeId(uint8, uint256) external view returns (uint256)',
   'function nodeCloneRound(uint8, uint256) external view returns (uint8)',
   'function nodeCloneTotalCount(uint8, uint256) external view returns (uint256)',
   'function getNodeCloneRound(uint8, uint256) external view returns (uint8)',
   'function getNodeCloneTotalCount(uint8, uint256) external view returns (uint256)',
   'function getNodeVault(uint8 _rank, uint256 _nodeId) external view returns (uint256)',
+  'function getPendingCloneCount() external view returns (uint256)',
 
   // State-changing Functions
   'function register(uint256 _sponsorNodeId) external',
@@ -286,6 +288,7 @@ export const MATRIX_ABI = [
   'function checkAndProcessAutoExtraId(address _user, uint8 _currentRank) external',
   'function checkAndProcessAutoExtraIdForNode(address _user, uint8 _currentRank, uint256 _sponsorNodeId) external',
   'function processPendingExtraIdQueue(uint256 _r1MainId, uint8 _maxBatch) external returns (uint8 processed)',
+  'function processCloneQueue(uint256 _maxIterations) external',
   'function adminUpgradeRank(address _user, uint8 _targetRank) external',
   'function adminUpgradeRankForMainId(uint256 _r1MainId, uint8 _targetRank) external',
   'function setSystemWallets(address _allSell, address _bot, address _familyPool) external',
@@ -302,6 +305,7 @@ export const MATRIX_ABI = [
   'event RankUpgraded(address indexed user, uint8 fromRank, uint8 toRank, uint256 newNodeId, bool isAutoUpgrade)',
   'event AutoNewMainIdCreated(address indexed user, uint256 count, uint256 vaultDiff)',
   'event AutoExtraIdCreated(address indexed user, uint8 indexed rank, uint256 nodeId)',
+  'event CloneQueued(uint8 indexed rank, uint256 indexed parentId, uint256 pendingCount)',
 ];
 
 export const CONTRACT_ABI = MATRIX_ABI;

@@ -10,6 +10,7 @@ interface RankInspectorAndAdminPanelProps {
   onInspectRank: (rank: number) => Promise<{
     firstNodeId: string;
     latestNodeId: string;
+    latestCloneId?: string;
     upgradeVaultBalance: string;
     rankPrice?: string;
     nextRankPrice: string;
@@ -42,12 +43,14 @@ export const RankInspectorAndAdminPanel: React.FC<RankInspectorAndAdminPanelProp
   const [rankStats, setRankStats] = useState<{
     firstNodeId: string;
     latestNodeId: string;
+    latestCloneId?: string;
     upgradeVaultBalance: string;
     rankPrice?: string;
     nextRankPrice: string;
   }>({
     firstNodeId: '-',
     latestNodeId: '-',
+    latestCloneId: '0',
     upgradeVaultBalance: '0.00',
     rankPrice: '5.00 USDT',
     nextRankPrice: '10.00 USDT',
@@ -229,6 +232,16 @@ export const RankInspectorAndAdminPanel: React.FC<RankInspectorAndAdminPanelProp
               <span className="text-slate-400">Latest Node ID:</span>
               <span id="inspectLatestId" className="font-mono font-bold text-teal-400">
                 {rankStats.latestNodeId}
+              </span>
+            </div>
+            <div className="flex justify-between text-xs">
+              <span className="text-slate-400">
+                {language === 'th' ? `โคลนนิ่งล่าสุด (Rank ${selectedInspectRank}):` : `Latest Clone ID (Rank ${selectedInspectRank}):`}
+              </span>
+              <span id="inspectLatestCloneId" className="font-mono font-bold text-cyan-300">
+                {rankStats.latestCloneId && rankStats.latestCloneId !== '0' && rankStats.latestCloneId !== '-'
+                  ? `#${rankStats.latestCloneId}`
+                  : '-'}
               </span>
             </div>
             <div className="flex justify-between text-xs">
