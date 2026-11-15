@@ -739,7 +739,7 @@ export function calculateMatrixUpgradePath(
         false,
         false,
         0,
-        mNode.directSponsorNodeId > 0 ? mNode.directSponsorNodeId : 1,
+        r1Main,
         'AUTO_NEW_MAIN'
       );
       const autoEv: ChainReactionEvent = {

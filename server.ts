@@ -3222,6 +3222,9 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
         const synSource = n.directSponsorNodeId > 0 ? n.directSponsorNodeId : firstMain;
         n.originType = 'AUTO_NEW_MAIN';
         n.autoSourceMainId = synSource;
+        n.directSponsorNodeId = synSource;
+        const srcOwner = byIdR1.get(synSource)?.owner;
+        if (srcOwner) n.directSponsor = srcOwner;
         autoMainSourceMap.set(n.id, synSource);
         spawnedCountByMain.set(synSource, (spawnedCountByMain.get(synSource) || 0) + 1);
       } else if (n.confirmedOriginType === 'AUTO_NEW_MAIN') {
@@ -3250,6 +3253,9 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
         }
         n.originType = 'AUTO_NEW_MAIN';
         n.autoSourceMainId = sourceMain;
+        n.directSponsorNodeId = sourceMain;
+        const srcOwner = byIdR1.get(sourceMain)?.owner;
+        if (srcOwner) n.directSponsor = srcOwner;
         autoMainSourceMap.set(n.id, sourceMain);
         spawnedCountByMain.set(sourceMain, (spawnedCountByMain.get(sourceMain) || 0) + 1);
         simAutoVaultByMain.set(
@@ -3304,6 +3310,9 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
         if (sourceMain !== undefined) {
           n.originType = 'AUTO_NEW_MAIN';
           n.autoSourceMainId = sourceMain;
+          n.directSponsorNodeId = sourceMain;
+          const srcOwner = byIdR1.get(sourceMain)?.owner;
+          if (srcOwner) n.directSponsor = srcOwner;
           autoMainSourceMap.set(n.id, sourceMain);
           spawnedCountByMain.set(sourceMain, (spawnedCountByMain.get(sourceMain) || 0) + 1);
           simAutoVaultByMain.set(
@@ -3330,6 +3339,16 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
           );
         }
       }
+    }
+  }
+
+  // Ensure any Rank 1 clone of an Auto ID also inherits the Auto ID's creator sponsor
+  for (const n of r1Nodes) {
+    if (n.isClone && !n.isExtraId && autoMainSourceMap.has(n.originMainId)) {
+      const spId = autoMainSourceMap.get(n.originMainId)!;
+      n.directSponsorNodeId = spId;
+      const srcOwner = byIdR1.get(spId)?.owner;
+      if (srcOwner) n.directSponsor = srcOwner;
     }
   }
 
@@ -6197,6 +6216,9 @@ async function startApp() {
           }
 
           reconcileAutoExtraIdsAcrossRanks();
+          if (rankNum === 1) {
+            reconcileRank1AutoMainIds();
+          }
           rebuildDatabaseRewardLogsFromNodes();
           rebuildDatabaseUpgradeLogsFromNodes();
           saveMatrixDBToDisk();
@@ -6422,10 +6444,17 @@ async function startApp() {
                 const dbNode = r1List.find((n) => n.id === autoId);
                 if (!dbNode || dbNode.isClone || dbNode.isExtraId) continue;
                 const srcMain = resolveAutoSourceInR1Tree(autoId, userLower, prefList);
-                if (dbNode.confirmedOriginType !== 'AUTO_NEW_MAIN' || dbNode.autoSourceMainId !== srcMain) {
+                if (
+                  dbNode.confirmedOriginType !== 'AUTO_NEW_MAIN' ||
+                  dbNode.autoSourceMainId !== srcMain ||
+                  dbNode.directSponsorNodeId !== srcMain
+                ) {
                   dbNode.confirmedOriginType = 'AUTO_NEW_MAIN';
                   dbNode.originType = 'AUTO_NEW_MAIN';
                   dbNode.autoSourceMainId = srcMain;
+                  dbNode.directSponsorNodeId = srcMain;
+                  const srcNode = r1List.find((n) => n.id === srcMain);
+                  if (srcNode?.owner) dbNode.directSponsor = srcNode.owner;
                   changed = true;
                 }
               }
@@ -6839,6 +6868,7 @@ async function startApp() {
         } else if (Date.now() - lastChainTxSyncAt > 45000 || (matrixDB.transactionLogs || []).length === 0) {
           syncRecentOnChainTxHashes(targetContract, 35000).catch(() => {});
         }
+        reconcileRank1AutoMainIds();
         reconcileAutoExtraIdsAcrossRanks();
         rebuildDatabaseRewardLogsFromNodes();
         rebuildDatabaseUpgradeLogsFromNodes();
@@ -6857,6 +6887,7 @@ async function startApp() {
 
   const runInitialReconciliation = () => {
     try {
+      reconcileRank1AutoMainIds();
       reconcileAutoExtraIdsAcrossRanks();
       rebuildDatabaseRewardLogsFromNodes();
       rebuildDatabaseUpgradeLogsFromNodes();
@@ -7609,7 +7640,9 @@ async function startApp() {
           cloneSequence: r1Node.isClone ? (r1Node.cloneSequence || 1) : 0,
           spawnedByMainId,
           owner: r1Node.owner,
-          directSponsorNodeId: r1Node.directSponsorNodeId || (r1Node.id === 1 ? 0 : 1),
+          directSponsorNodeId: isAutoMain
+            ? spawnedByMainId
+            : r1Node.directSponsorNodeId || (r1Node.id === 1 ? 0 : 1),
           parentId: r1Node.parentId,
           side: sideInR1,
           sideInR1,
@@ -7691,7 +7724,7 @@ async function startApp() {
               type: 'AUTO_ID',
               parentId: r1Node.parentId,
               side,
-              directSponsorNodeId: r1Node.directSponsorNodeId || 1,
+              directSponsorNodeId: spId,
               spawnedByMainId: spId,
               owner: r1Node.owner,
               timestamp: computeNodeTimestamp(1, r1Node.id),
@@ -10509,7 +10542,9 @@ async function startApp() {
             ? m.autoSourceMainId || autoMainSourceMap.get(m.id) || m.directSponsorNodeId || 1
             : 0,
           owner: m.owner,
-          directSponsorNodeId: m.directSponsorNodeId || 1,
+          directSponsorNodeId: isAutoId
+            ? m.autoSourceMainId || autoMainSourceMap.get(m.id) || m.directSponsorNodeId || 1
+            : m.directSponsorNodeId || 1,
           directSponsor: m.directSponsor,
           parentId: m.parentId,
           isLeft: Boolean(m.isLeft),

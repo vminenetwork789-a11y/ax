@@ -883,7 +883,9 @@ contract FractalFlowMatrix27 is Ownable, ReentrancyGuard {
             spId = originId > 0 ? nodeToR1MainId[_rank][originId] : 1;
             if (spId == 0) spId = originId > 0 ? originId : 1;
         } else {
-            (spId, spAddr) = _resolveAutoSponsor(_rank, originId, _sponsor);
+            spId = originId > 0 ? originId : 1;
+            address creatorOwner = rankNodes[_rank][spId].owner;
+            if (creatorOwner != address(0)) spAddr = creatorOwner;
         }
         if (spAddr != address(0)) {
             rankNodes[_rank][newNodeId].directSponsor = spAddr;
