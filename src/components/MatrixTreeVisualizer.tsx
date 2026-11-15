@@ -3894,73 +3894,92 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         // 1. Check if this node was spawned as an Auto New Main ID from Pool 2 (Rank 1..3 Vault >= 5 USDT)
         if (!n.isClone && !n.isExtraId && n.id > firstMainOfOwner) {
           const explicitSponsorId = onChainSponsorNodeMap.get(n.id) || 0;
+          const repForActiveNode = activeRank === 1 ? perIdReportsMapRef.current.get(n.id) : undefined;
           const isBackendTaggedAuto =
-            onChainOriginTypeMap.get(n.id) === 'AUTO_NEW_MAIN' ||
+            (activeRank === 1 &&
+              (onChainOriginTypeMap.get(n.id) === 'AUTO_NEW_MAIN' ||
+                snap1?.get(n.id)?.originType === 'AUTO_NEW_MAIN' ||
+                repForActiveNode?.nodeType === 'AUTO_ID' ||
+                repForActiveNode?.isAutoId === true)) ||
             Boolean((n as any).isSyntheticAutoMain);
-          const priorMains = (ownerAllMainNodesMap.get(ownerKey) || []).filter((mId) => {
-            if (mId >= n.id) return false;
-            if (getMainIdWindow5Start(mId, n.owner) <= 1) return false;
-            const maxAllowedSpawns = crossRankAutoIdCount.get(mId) || 0;
-            const currentSpawns = mainNodeAutoIdSpawnCount.get(mId) || 0;
-            if (currentSpawns >= maxAllowedSpawns) return false;
-            // กฎเหล็กการจัดวางบนสัญญา (_findPlacementSpot): Auto ID ที่เกิดจาก mId จะต้องวางอยู่ใต้สายงาน/โคลนของ mId เท่านั้น
-            // ดังนั้น R1-#3 (ซึ่งวางอยู่ใต้ #1 ฝั่งขวา ไม่ได้อยู่ใต้ #2) จะไม่มีวันถูกมองเป็น Auto ID ของ #2 เด็ดขาด
-            if (!isPlacedUnderMainOrClonesActive(mId, n.id)) return false;
-            const mSpId = onChainSponsorNodeMap.get(mId) || 1;
-            return (
-              explicitSponsorId === 0 ||
-              mId === explicitSponsorId ||
-              explicitSponsorId === mSpId
-            );
-          });
+          const isBackendTaggedManual =
+            !isBackendTaggedAuto &&
+            ((activeRank === 1 &&
+              (onChainOriginTypeMap.get(n.id) === 'MANUAL_REGISTER' ||
+                snap1?.get(n.id)?.originType === 'MANUAL_REGISTER' ||
+                repForActiveNode?.nodeType === 'MANUAL_ID' ||
+                repForActiveNode?.isAutoId === false)) ||
+              (activeRank > 1 && onChainOriginTypeMap.get(n.id) === 'MANUAL_REGISTER'));
 
-          let sourceMain = priorMains.find(
-            (mId) => (lineageAutoIdVault.get(mId) || 0) + 1e-9 >= rank1EntryPrice
-          );
-          if (sourceMain === undefined && activeRank === 1) {
-            sourceMain = priorMains.find((mId) => {
-              if (usedExtraR2To4ForMain.has(mId)) return false;
-              const minReqR1Id = extraVaultMinR1IdFromRanks2To4.get(mId) || mId;
-              if (n.id <= minReqR1Id) return false;
-              const r1Bal = lineageAutoIdVault.get(mId) || 0;
-              const extraBal = extraVaultFromRanks2To4.get(mId) || 0;
-              return r1Bal + extraBal + 1e-9 >= rank1EntryPrice;
+          if (!isBackendTaggedManual) {
+            const priorMains = (ownerAllMainNodesMap.get(ownerKey) || []).filter((mId) => {
+              if (mId >= n.id) return false;
+              if (getMainIdWindow5Start(mId, n.owner) <= 1) return false;
+              const maxAllowedSpawns = crossRankAutoIdCount.get(mId) || 0;
+              const currentSpawns = mainNodeAutoIdSpawnCount.get(mId) || 0;
+              if (currentSpawns >= maxAllowedSpawns) return false;
+              // กฎเหล็กการจัดวางบนสัญญา (_findPlacementSpot): Auto ID ที่เกิดจาก mId จะต้องวางอยู่ใต้สายงาน/โคลนของ mId เท่านั้น
+              // ดังนั้น R1-#3 (ซึ่งวางอยู่ใต้ #1 ฝั่งขวา ไม่ได้อยู่ใต้ #2) จะไม่มีวันถูกมองเป็น Auto ID ของ #2 เด็ดขาด
+              if (!isPlacedUnderMainOrClonesActive(mId, n.id)) return false;
+              const mSpId = onChainSponsorNodeMap.get(mId) || 1;
+              return (
+                explicitSponsorId === 0 ||
+                mId === explicitSponsorId ||
+                explicitSponsorId === mSpId
+              );
             });
-            if (sourceMain !== undefined) {
-              usedExtraR2To4ForMain.add(sourceMain);
-              const r1Bal = lineageAutoIdVault.get(sourceMain) || 0;
-              const extraBal = extraVaultFromRanks2To4.get(sourceMain) || 0;
-              lineageAutoIdVault.set(sourceMain, Number((r1Bal + extraBal).toFixed(4)));
-            }
-          }
-          if (sourceMain === undefined && isBackendTaggedAuto) {
-            if (priorMains.length > 0) {
-              sourceMain =
-                explicitSponsorId > 0 && priorMains.includes(explicitSponsorId)
-                  ? explicitSponsorId
-                  : priorMains[0];
-            } else {
-              sourceMain = explicitSponsorId > 0 ? explicitSponsorId : firstMainOfOwner;
-            }
-          }
 
-          if (sourceMain !== undefined) {
-            autoMainNodeIds.add(n.id);
-            autoIdSourceMainMap.set(n.id, sourceMain);
-            mainNodeAutoIdSpawnCount.set(
-              sourceMain,
-              (mainNodeAutoIdSpawnCount.get(sourceMain) || 0) + 1
+            let sourceMain = priorMains.find(
+              (mId) => (lineageAutoIdVault.get(mId) || 0) + 1e-9 >= rank1EntryPrice
             );
-            const spawnedList = nodeSpawnedAutoIds.get(sourceMain) || [];
-            if (!spawnedList.includes(n.id)) {
-              spawnedList.push(n.id);
-              nodeSpawnedAutoIds.set(sourceMain, spawnedList);
+            if (sourceMain === undefined && activeRank === 1) {
+              sourceMain = priorMains.find((mId) => {
+                if (usedExtraR2To4ForMain.has(mId)) return false;
+                const minReqR1Id = extraVaultMinR1IdFromRanks2To4.get(mId) || mId;
+                if (n.id <= minReqR1Id) return false;
+                const r1Bal = lineageAutoIdVault.get(mId) || 0;
+                const extraBal = extraVaultFromRanks2To4.get(mId) || 0;
+                return r1Bal + extraBal + 1e-9 >= rank1EntryPrice;
+              });
+              if (sourceMain !== undefined) {
+                usedExtraR2To4ForMain.add(sourceMain);
+                const r1Bal = lineageAutoIdVault.get(sourceMain) || 0;
+                const extraBal = extraVaultFromRanks2To4.get(sourceMain) || 0;
+                lineageAutoIdVault.set(sourceMain, Number((r1Bal + extraBal).toFixed(4)));
+              }
             }
-            const currentAutoVault = lineageAutoIdVault.get(sourceMain) || 0;
-            lineageAutoIdVault.set(
-              sourceMain,
-              Math.max(0, Number((currentAutoVault - rank1EntryPrice).toFixed(4)))
-            );
+            if (sourceMain === undefined && isBackendTaggedAuto) {
+              const repSpawnedBy = Number(repForActiveNode?.spawnedByMainId || 0);
+              if (repSpawnedBy > 0) {
+                sourceMain = repSpawnedBy;
+              } else if (priorMains.length > 0) {
+                sourceMain =
+                  explicitSponsorId > 0 && priorMains.includes(explicitSponsorId)
+                    ? explicitSponsorId
+                    : priorMains[0];
+              } else {
+                sourceMain = explicitSponsorId > 0 ? explicitSponsorId : firstMainOfOwner;
+              }
+            }
+
+            if (sourceMain !== undefined) {
+              autoMainNodeIds.add(n.id);
+              autoIdSourceMainMap.set(n.id, sourceMain);
+              mainNodeAutoIdSpawnCount.set(
+                sourceMain,
+                (mainNodeAutoIdSpawnCount.get(sourceMain) || 0) + 1
+              );
+              const spawnedList = nodeSpawnedAutoIds.get(sourceMain) || [];
+              if (!spawnedList.includes(n.id)) {
+                spawnedList.push(n.id);
+                nodeSpawnedAutoIds.set(sourceMain, spawnedList);
+              }
+              const currentAutoVault = lineageAutoIdVault.get(sourceMain) || 0;
+              lineageAutoIdVault.set(
+                sourceMain,
+                Math.max(0, Number((currentAutoVault - rank1EntryPrice).toFixed(4)))
+              );
+            }
           }
         }
 
@@ -4286,63 +4305,79 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
 
           if (!sn.isClone && !sn.isExtraId && id1 > firstMain) {
             const explicitSpId = sn.directSponsorNodeId || 0;
-            const isSnapTaggedAuto = sn.originType === 'AUTO_NEW_MAIN';
-            // กฎเหล็ก Pool 2: รหัสหลักต้นทาง (m) จะสร้าง New Auto ID ได้ก็ต่อเมื่อพ้นกรอบ 5 rank ย้อนหลังแล้วเท่านั้น (window5Start > 1 คืออยู่ตั้งแต่ Rank 6 ขึ้นไป หรือเป็น Root #1)
-            const priorMains = (s1OwnerAllMains.get(oKey) || []).filter((m) => {
-              if (m >= id1) return false;
-              if (getMainIdWindow5Start(m, sn.owner) <= 1) return false;
-              const maxAllowed = crossRankAutoIdCount.get(m) || 0;
-              const curSpawns = s1AutoIdCountByMain.get(m) || 0;
-              if (curSpawns >= maxAllowed) return false;
-              // กฎเหล็กการจัดวางบนสัญญา (_findPlacementSpot): Auto ID ที่เกิดจาก m จะต้องวางอยู่ใต้สายงาน/โคลนของ m เท่านั้น
-              if (!isPlacedUnderMainOrClones1(m, id1)) return false;
-              const mSpId = snap1.get(m)?.directSponsorNodeId || 1;
-              return explicitSpId === 0 || m === explicitSpId || explicitSpId === mSpId;
-            });
-            let sourceMain = priorMains.find(
-              (m) => (s1AutoVaultSim.get(m) || 0) + 1e-9 >= r1Price
-            );
-            if (sourceMain === undefined) {
-              sourceMain = priorMains.find((m) => {
-                if (s1UsedExtraR2To3.has(m)) return false;
-                const minReqR1Id = extraVaultMinR1IdFromRanks2To4.get(m) || m;
-                if (id1 <= minReqR1Id) return false;
-                const r1Bal = s1AutoVaultSim.get(m) || 0;
-                const extraBal = extraVaultFromRanks2To4.get(m) || 0;
-                return r1Bal + extraBal + 1e-9 >= r1Price;
+            const repForId1 = perIdReportsMapRef.current.get(id1);
+            const isSnapTaggedAuto =
+              sn.originType === 'AUTO_NEW_MAIN' ||
+              (activeRank === 1 && onChainOriginTypeMap.get(id1) === 'AUTO_NEW_MAIN') ||
+              repForId1?.nodeType === 'AUTO_ID' ||
+              repForId1?.isAutoId === true;
+            const isSnapTaggedManual =
+              !isSnapTaggedAuto &&
+              (sn.originType === 'MANUAL_REGISTER' ||
+                (activeRank === 1 && onChainOriginTypeMap.get(id1) === 'MANUAL_REGISTER') ||
+                repForId1?.nodeType === 'MANUAL_ID' ||
+                repForId1?.isAutoId === false);
+            if (!isSnapTaggedManual) {
+              // กฎเหล็ก Pool 2: รหัสหลักต้นทาง (m) จะสร้าง New Auto ID ได้ก็ต่อเมื่อพ้นกรอบ 5 rank ย้อนหลังแล้วเท่านั้น (window5Start > 1 คืออยู่ตั้งแต่ Rank 6 ขึ้นไป หรือเป็น Root #1)
+              const priorMains = (s1OwnerAllMains.get(oKey) || []).filter((m) => {
+                if (m >= id1) return false;
+                if (getMainIdWindow5Start(m, sn.owner) <= 1) return false;
+                const maxAllowed = crossRankAutoIdCount.get(m) || 0;
+                const curSpawns = s1AutoIdCountByMain.get(m) || 0;
+                if (curSpawns >= maxAllowed) return false;
+                // กฎเหล็กการจัดวางบนสัญญา (_findPlacementSpot): Auto ID ที่เกิดจาก m จะต้องวางอยู่ใต้สายงาน/โคลนของ m เท่านั้น
+                if (!isPlacedUnderMainOrClones1(m, id1)) return false;
+                const mSpId = snap1.get(m)?.directSponsorNodeId || 1;
+                return explicitSpId === 0 || m === explicitSpId || explicitSpId === mSpId;
               });
+              let sourceMain = priorMains.find(
+                (m) => (s1AutoVaultSim.get(m) || 0) + 1e-9 >= r1Price
+              );
+              if (sourceMain === undefined) {
+                sourceMain = priorMains.find((m) => {
+                  if (s1UsedExtraR2To3.has(m)) return false;
+                  const minReqR1Id = extraVaultMinR1IdFromRanks2To4.get(m) || m;
+                  if (id1 <= minReqR1Id) return false;
+                  const r1Bal = s1AutoVaultSim.get(m) || 0;
+                  const extraBal = extraVaultFromRanks2To4.get(m) || 0;
+                  return r1Bal + extraBal + 1e-9 >= r1Price;
+                });
+                if (sourceMain !== undefined) {
+                  s1UsedExtraR2To3.add(sourceMain);
+                  s1AutoVaultSim.set(
+                    sourceMain,
+                    Number(
+                      ((s1AutoVaultSim.get(sourceMain) || 0) + (extraVaultFromRanks2To4.get(sourceMain) || 0)).toFixed(4)
+                    )
+                  );
+                }
+              }
+              if (sourceMain === undefined && isSnapTaggedAuto) {
+                const repSpawnedBy = Number(repForId1?.spawnedByMainId || 0);
+                if (repSpawnedBy > 0) {
+                  sourceMain = repSpawnedBy;
+                } else if (priorMains.length > 0) {
+                  sourceMain =
+                    explicitSpId > 0 && priorMains.includes(explicitSpId)
+                      ? explicitSpId
+                      : priorMains[0];
+                } else {
+                  sourceMain = explicitSpId > 0 ? explicitSpId : firstMain;
+                }
+              }
               if (sourceMain !== undefined) {
-                s1UsedExtraR2To3.add(sourceMain);
+                s1AutoIdSourceMap.set(id1, sourceMain);
+                s1AutoIdCountByMain.set(sourceMain, (s1AutoIdCountByMain.get(sourceMain) || 0) + 1);
+                const spList = s1SpawnedAutoIdsByMain.get(sourceMain) || [];
+                if (!spList.includes(id1)) {
+                  spList.push(id1);
+                  s1SpawnedAutoIdsByMain.set(sourceMain, spList);
+                }
                 s1AutoVaultSim.set(
                   sourceMain,
-                  Number(
-                    ((s1AutoVaultSim.get(sourceMain) || 0) + (extraVaultFromRanks2To4.get(sourceMain) || 0)).toFixed(4)
-                  )
+                  Math.max(0, Number(((s1AutoVaultSim.get(sourceMain) || 0) - r1Price).toFixed(4)))
                 );
               }
-            }
-            if (sourceMain === undefined && isSnapTaggedAuto) {
-              if (priorMains.length > 0) {
-                sourceMain =
-                  explicitSpId > 0 && priorMains.includes(explicitSpId)
-                    ? explicitSpId
-                    : priorMains[0];
-              } else {
-                sourceMain = explicitSpId > 0 ? explicitSpId : firstMain;
-              }
-            }
-            if (sourceMain !== undefined) {
-              s1AutoIdSourceMap.set(id1, sourceMain);
-              s1AutoIdCountByMain.set(sourceMain, (s1AutoIdCountByMain.get(sourceMain) || 0) + 1);
-              const spList = s1SpawnedAutoIdsByMain.get(sourceMain) || [];
-              if (!spList.includes(id1)) {
-                spList.push(id1);
-                s1SpawnedAutoIdsByMain.set(sourceMain, spList);
-              }
-              s1AutoVaultSim.set(
-                sourceMain,
-                Math.max(0, Number(((s1AutoVaultSim.get(sourceMain) || 0) - r1Price).toFixed(4)))
-              );
             }
           }
 
@@ -4556,6 +4591,19 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         const effectiveR1MainId = isExtraOrigin
           ? 0
           : r1MainId || (activeRank === 1 ? n.id : originMainId);
+        const r1OriginTypeAuth =
+          (activeRank === 1 ? onChainOriginTypeMap.get(effectiveR1MainId) : undefined) ||
+          snap1?.get(effectiveR1MainId)?.originType;
+        const r1ReportAuth = effectiveR1MainId > 0 ? perIdReportsMapRef.current.get(effectiveR1MainId) : undefined;
+        const isAuthoritativelyAuto =
+          r1OriginTypeAuth === 'AUTO_NEW_MAIN' ||
+          r1ReportAuth?.nodeType === 'AUTO_ID' ||
+          r1ReportAuth?.isAutoId === true;
+        const isAuthoritativelyManual =
+          !isAuthoritativelyAuto &&
+          (r1OriginTypeAuth === 'MANUAL_REGISTER' ||
+            r1ReportAuth?.nodeType === 'MANUAL_ID' ||
+            r1ReportAuth?.isAutoId === false);
 
         enrichedMap.set(n.id, {
           id: n.id,
@@ -4574,10 +4622,9 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             !n.isClone &&
             !n.isExtraId &&
             effectiveR1MainId > 1 &&
-            (s1AutoIdSourceMap.has(effectiveR1MainId) ||
-              onChainOriginTypeMap.get(effectiveR1MainId) === 'AUTO_NEW_MAIN' ||
-              snap1?.get(effectiveR1MainId)?.originType === 'AUTO_NEW_MAIN' ||
-              perIdReportsMapRef.current.get(effectiveR1MainId)?.nodeType === 'AUTO_ID' ||
+            !isAuthoritativelyManual &&
+            (isAuthoritativelyAuto ||
+              s1AutoIdSourceMap.has(effectiveR1MainId) ||
               (activeRank === 1 && autoMainNodeIds.has(n.id))),
           originMainId,
           r1MainId,
@@ -4592,10 +4639,13 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             s1SpawnedAutoIdsByMain.get(effectiveR1MainId) ||
             nodeSpawnedAutoIds.get(originMainId) ||
             [],
-          spawnedByMainId:
-            s1AutoIdSourceMap.get(effectiveR1MainId) ||
-            autoIdSourceMainMap.get(n.id) ||
-            undefined,
+          spawnedByMainId: isAuthoritativelyManual
+            ? undefined
+            : s1AutoIdSourceMap.get(effectiveR1MainId) ||
+              autoIdSourceMainMap.get(n.id) ||
+              (isAuthoritativelyAuto && Number(r1ReportAuth?.spawnedByMainId || 0) > 0
+                ? Number(r1ReportAuth.spawnedByMainId)
+                : undefined),
           directUplineNodeId,
           directRewardThisNode: nodeDirectBonusMap.get(n.id) || 0,
           unilevelRewardThisNode: nodeUnilevelBonusMap.get(n.id) || 0,
