@@ -60,10 +60,12 @@ import {
   Crown,
   Activity,
   ExternalLink,
+  GitBranch,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { emitTransactionToast } from './TransactionToast';
 import { ExtraIdPathCalculator, SimRawNode } from './ExtraIdPathCalculator';
+import { MatrixSandboxSimulator } from './MatrixSandboxSimulator';
 import { MatrixActivityFeed } from './MatrixActivityFeed';
 import {
   getActiveReferralSponsorId,
@@ -1709,7 +1711,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
   const [isPathCalculatorOpen, setIsPathCalculatorOpen] = useState<boolean>(false);
   const [isLegendOpen, setIsLegendOpen] = useState<boolean>(false);
   const [isSecondaryWidgetsCollapsed, setIsSecondaryWidgetsCollapsed] = useState<boolean>(false);
-  const [secondaryWidgetsTab, setSecondaryWidgetsTab] = useState<'pools' | 'calculator' | 'alerts'>('pools');
+  const [secondaryWidgetsTab, setSecondaryWidgetsTab] = useState<'pools' | 'calculator' | 'sandbox' | 'alerts'>('pools');
   const [isConnectionAlertDismissed, setIsConnectionAlertDismissed] = useState<boolean>(false);
   const [copiedText, setCopiedText] = useState<string | null>(null);
   const [activeLocks, setActiveLocks] = useState<
@@ -7607,7 +7609,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                     setSecondaryWidgetsTab('calculator');
                     setIsPathCalculatorOpen(true);
                   }}
-                  className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition cursor-pointer flex items-center gap-1 ${
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition cursor-pointer flex items-center gap-1 whitespace-nowrap shrink-0 ${
                     !isSecondaryWidgetsCollapsed && secondaryWidgetsTab === 'calculator'
                       ? 'bg-[#2563EB] text-white shadow-2xs'
                       : 'text-[#334155] dark:text-slate-300 hover:text-[#2563EB]'
@@ -7615,6 +7617,22 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                 >
                   <Calculator className="w-3 h-3" />
                   <span>คำนวณ Extra ID</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsSecondaryWidgetsCollapsed(false);
+                    setSecondaryWidgetsTab('sandbox');
+                  }}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition cursor-pointer flex items-center gap-1 whitespace-nowrap shrink-0 ${
+                    !isSecondaryWidgetsCollapsed && secondaryWidgetsTab === 'sandbox'
+                      ? 'bg-[#2563EB] text-white shadow-2xs'
+                      : 'text-[#334155] dark:text-slate-300 hover:text-[#2563EB]'
+                  }`}
+                >
+                  <GitBranch className="w-3 h-3" />
+                  <span>{language === 'th' ? 'จำลองผัง (Sandbox)' : 'Matrix Sandbox'}</span>
                 </button>
 
                 {(isAutoExtraPopupEnabled || selectedWalletSwitchItem !== null) && (
@@ -7823,6 +7841,19 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                       กำลังโหลดข้อมูลตารางคำนวณเส้นทาง...
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* TAB 2.5: Matrix Sandbox Simulator (Clone / Auto ID / Extra ID) */}
+              {secondaryWidgetsTab === 'sandbox' && (
+                <div className="space-y-2">
+                  <MatrixSandboxSimulator
+                    multiRankSnapshots={multiRankSnapshotsState}
+                    perIdReportsMap={perIdReportsMap}
+                    language={language}
+                    initialRank={selectedRank}
+                    initialMainId={Number(selectedMainId || 1) || 1}
+                  />
                 </div>
               )}
 
