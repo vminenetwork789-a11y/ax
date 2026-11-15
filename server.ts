@@ -262,12 +262,23 @@ process.on('unhandledRejection', (reason: any) => {
 });
 process.on('uncaughtException', (err: any) => {
   const errStr = err ? (err.stack || err.message || String(err)) : '';
+  const errCode = String(err?.code || '');
   if (
+    errCode === 'ECONNRESET' ||
+    errCode === 'EPIPE' ||
+    errCode === 'ETIMEDOUT' ||
+    errCode === 'ECONNREFUSED' ||
+    errCode === 'EAI_AGAIN' ||
     errStr.includes('provider destroyed') ||
     errStr.includes('cancelled request') ||
     errStr.includes('eth_unsubscribe') ||
     errStr.includes('UNSUPPORTED_OPERATION') ||
-    errStr.includes('WebSocket is not open')
+    errStr.includes('WebSocket is not open') ||
+    errStr.includes('ECONNRESET') ||
+    errStr.includes('EPIPE') ||
+    errStr.includes('ETIMEDOUT') ||
+    errStr.includes('connection reset') ||
+    errStr.includes('socket hang up')
   ) {
     return;
   }
@@ -296,7 +307,7 @@ const DEFAULT_SYSTEM_CONFIG = {
   contractAddress:
     process.env.OVERRIDE_CONTRACT_ADDRESS ||
     process.env.CONTRACT_ADDRESS ||
-    '0xB3832D4cc6daE0B24f1e6660d7C85dcc1F005Cd1',
+    '0xBe7012a27d8c648fAacd89d00B73633E880Db7cc',
   usdtAddress: process.env.USDT_ADDRESS || '0x05f24E1F598DF1aE8d0B424ce978f8ea33bB752b',
   chainId: Number(process.env.CHAIN_ID || 97),
   networkName: process.env.NETWORK_NAME || 'BNB Smart Chain Testnet',
@@ -348,6 +359,7 @@ const SERVER_LEGACY_CONTRACTS = new Set([
   '0xd3e4e4d7f367e563756d82989bb930b0261eb2ba',
   '0x49a754084903678b7d46ff2934edb037cd1ab518',
   '0x8b2ef84f543f5c1dfa8240a1853d63efe66006eb',
+  '0xb3832d4cc6dae0b24f1e6660d7c85dcc1f005cd1',
 ]);
 
 const SERVER_LEGACY_USDT = new Set([
@@ -526,6 +538,8 @@ function initPostgresPool() {
       max: 10,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 8000,
+      keepAlive: true,
+      keepAliveInitialDelayMillis: 10000,
       ssl: false,
     });
 
@@ -2356,7 +2370,9 @@ function reconcileRankTreeLinks(nodes: IndexedTreeNode[]): IndexedTreeNode[] {
       const nextCount = (cloneCountByOrigin.get(origId) || 0) + 1;
       cloneCountByOrigin.set(origId, nextCount);
       n.cloneSequence = nextCount;
-      n.cloneRound = ((nextCount - 1) % 2) + 1;
+      if (!n.cloneRound || n.cloneRound <= 0) {
+        n.cloneRound = ((nextCount - 1) % 2) + 1;
+      }
     } else {
       n.cloneSequence = 0;
       n.cloneRound = 0;
@@ -2364,9 +2380,8 @@ function reconcileRankTreeLinks(nodes: IndexedTreeNode[]): IndexedTreeNode[] {
     if (n.id <= 1 || n.parentId <= 0) continue;
   }
 
-  // Canonical Binary Tree Linker: รวบรวมลูกของแต่ละ Parent และจัดระเบียบ Left / Right ให้ถูกต้องเสมอ
-  // กฎเหล็ก: ลูกลำดับแรก (หรือโคลนรอบ 1) ต้องอยู่ฝั่งซ้าย (leftChild) เสมอ และลูกลำดับสอง (หรือโคลนรอบ 2) อยู่ฝั่งขวา (rightChild)
-  // ป้องกันบั๊กฝั่งซ้าย-ขวากลับด้าน (เช่น ซ้ายเป็นรอบ 2 ขวาเป็นรอบ 1) หรือมีลูกฝั่งขวาขณะที่ฝั่งซ้ายยังว่าง
+  // Canonical Binary Tree Linker: รักษาตำแหน่งซ้าย-ขวาจริงจาก Smart Contract หากถูกต้องครบถ้วน
+  // และซ่อมแซมเฉพาะโหนดที่ลิงก์ซ้าย/ขวาสูญหายหรือไม่สอดคล้อง
   const childrenByParent = new Map<number, IndexedTreeNode[]>();
   for (const n of nodes) {
     if (n.id <= 1 || n.parentId <= 0) continue;
@@ -2381,13 +2396,35 @@ function reconcileRankTreeLinks(nodes: IndexedTreeNode[]): IndexedTreeNode[] {
     if (!parent) continue;
     children.sort((a, b) => a.id - b.id);
 
-    const leftNode = children[0];
-    const rightNode = children.length > 1 ? children[1] : undefined;
+    const existingLeft = children.find((c) => c.id === parent.leftChild);
+    const existingRight = children.find((c) => c.id === parent.rightChild && c.id !== parent.leftChild);
 
-    parent.leftChild = leftNode ? leftNode.id : 0;
-    parent.rightChild = rightNode ? rightNode.id : 0;
-    if (leftNode) leftNode.isLeft = true;
-    if (rightNode) rightNode.isLeft = false;
+    if (children.length === 1) {
+      const onlyChild = children[0];
+      if (existingRight && !existingLeft) {
+        parent.leftChild = 0;
+        parent.rightChild = onlyChild.id;
+        onlyChild.isLeft = false;
+      } else {
+        parent.leftChild = onlyChild.id;
+        parent.rightChild = 0;
+        onlyChild.isLeft = true;
+      }
+    } else if (existingLeft && existingRight) {
+      parent.leftChild = existingLeft.id;
+      parent.rightChild = existingRight.id;
+      existingLeft.isLeft = true;
+      existingRight.isLeft = false;
+    } else {
+      const leftNode = existingLeft || children.find((c) => c.id !== existingRight?.id) || children[0];
+      const rightNode =
+        existingRight || children.find((c) => c.id !== leftNode?.id);
+
+      parent.leftChild = leftNode ? leftNode.id : 0;
+      parent.rightChild = rightNode ? rightNode.id : 0;
+      if (leftNode) leftNode.isLeft = true;
+      if (rightNode) rightNode.isLeft = false;
+    }
   }
 
   for (const p of nodes) {
@@ -2396,7 +2433,10 @@ function reconcileRankTreeLinks(nodes: IndexedTreeNode[]): IndexedTreeNode[] {
       if (p.rightChild > 0 && !byId.has(p.rightChild)) p.rightChild = 0;
     } else {
       const cList = childrenByParent.get(p.id)!;
-      if (cList.length < 2) p.rightChild = 0;
+      if (cList.length < 2 && p.leftChild > 0 && p.rightChild > 0) {
+        if (!byId.has(p.leftChild) || byId.get(p.leftChild)?.parentId !== p.id) p.leftChild = 0;
+        if (!byId.has(p.rightChild) || byId.get(p.rightChild)?.parentId !== p.id) p.rightChild = 0;
+      }
     }
   }
 
@@ -2806,7 +2846,7 @@ function findClonePlacementInRankNodes(
   if (cloneOriginMainId === 1 || originNode.id === 1) {
     sponsorNodeInRankId = 1;
     savedDirectSponsorId = 1;
-  } else if (rankNum === 1 || originNode.isExtraId) {
+  } else if (rankNum === 1) {
     if (originNode.directSponsorNodeId && originNode.directSponsorNodeId > 0) {
       sponsorNodeInRankId = originNode.directSponsorNodeId;
       savedDirectSponsorId = originNode.directSponsorNodeId;
@@ -2819,7 +2859,7 @@ function findClonePlacementInRankNodes(
       savedDirectSponsorId = sponsorNodeInRankId;
     }
   } else {
-    // Rank 2..27: ตรวจสอบว่าผู้แนะนำตรง (savedDirectSponsorId เช่น ID #5) มีโหนดใน Rank นี้หรือยัง
+    // Rank 2..18 (ทั้ง Main ID และ Extra ID): แปลง R1 Sponsor Main ID เป็นโหนดใน Rank นี้
     const r1SponsorId = originNode.directSponsorNodeId || 1;
     savedDirectSponsorId = r1SponsorId;
     const spNodeInR = rNodes.find(
@@ -4288,20 +4328,34 @@ async function startEventListener(): Promise<void> {
       wsLastDisconnectReason = `Provider Error: ${msg}`;
     });
 
-    const rawWs = (wsBotProvider as any).websocket;
+    const rawWs = (wsBotProvider as any).websocket || (wsBotProvider as any)._websocket;
     const onSocketClose = async (code?: unknown) => {
       await cleanupWebSocket();
       scheduleReconnect(`WebSocket Close (code=${String(code ?? 'unknown')})`);
     };
-    const onSocketError = (err?: any) => {
+    const onSocketError = async (err?: any) => {
       const msg = err?.message || String(err ?? 'unknown');
       wsLastDisconnectReason = `Socket Error: ${msg}`;
+      await cleanupWebSocket();
+      scheduleReconnect(`Socket Error (${msg})`);
     };
 
     if (rawWs) {
       if (typeof rawWs.on === 'function') {
         rawWs.on('close', onSocketClose);
         rawWs.on('error', onSocketError);
+        rawWs.on('open', () => {
+          try {
+            rawWs._socket?.on?.('error', onSocketError);
+          } catch {
+            // ignore
+          }
+        });
+        try {
+          rawWs._socket?.on?.('error', onSocketError);
+        } catch {
+          // ignore
+        }
       } else if (typeof rawWs.addEventListener === 'function') {
         rawWs.addEventListener('close', onSocketClose);
         rawWs.addEventListener('error', onSocketError);
@@ -4564,6 +4618,15 @@ export interface PositionReservation {
     assignedNodeId: string;
     isClone?: boolean;
   }>;
+  virtualClones?: Array<{
+    cloneNodeId: string;
+    owner: string;
+    targetParentId: string;
+    isLeft: boolean;
+    originMainId: string;
+    directSponsorNodeId: string;
+    cloneRound: number;
+  }>;
   status: 'RESERVED' | 'CONFIRMED' | 'RELEASED' | 'EXPIRED';
   reservedAt: number;
   expiresAt: number;
@@ -4601,6 +4664,9 @@ interface SimulatedQueueNode {
   rightChild: string;
   isClone: boolean;
   isExtraId: boolean;
+  originMainId?: string;
+  directSponsorNodeId?: string;
+  cloneRound?: number;
 }
 
 const reservationsMap = new Map<string, PositionReservation>();
@@ -4619,7 +4685,10 @@ setInterval(() => {
   }
 }, 2000);
 
-async function fetchTreeWithVirtualLocks(rank: number = 1): Promise<{
+async function fetchTreeWithVirtualLocks(
+  rank: number = 1,
+  excludeTicketId?: string
+): Promise<{
   nodesMap: Map<string, SimulatedQueueNode>;
   totalNodes: number;
   ownerFirstNodeMap: Map<string, string>;
@@ -4646,6 +4715,9 @@ async function fetchTreeWithVirtualLocks(rank: number = 1): Promise<{
         rightChild: String(n.rightChild || 0),
         isClone: Boolean(n.isClone),
         isExtraId: Boolean(n.isExtraId),
+        originMainId: n.originMainId > 0 ? String(n.originMainId) : undefined,
+        directSponsorNodeId: n.directSponsorNodeId > 0 ? String(n.directSponsorNodeId) : undefined,
+        cloneRound: n.cloneRound > 0 ? Number(n.cloneRound) : undefined,
       });
       if (ownerKey) {
         if (!ownerFirstNodeMap.has(ownerKey)) {
@@ -4667,16 +4739,26 @@ async function fetchTreeWithVirtualLocks(rank: number = 1): Promise<{
         const batchPromises = [];
         for (let i = 1; i <= Math.min(totalNodes, 500); i++) {
           batchPromises.push(
-            contract.rankNodes(rank, i).then((node: any) => ({
-              id: node[0].toString(),
-              owner: (node[1] || '').toLowerCase(),
-              directSponsor: (node[2] || '').toLowerCase(),
-              parentId: node[3].toString(),
-              leftChild: node[4].toString(),
-              rightChild: node[5].toString(),
-              isClone: Boolean(node[6]),
-              isExtraId: Boolean(node[7]),
-            })).catch(() => null)
+            Promise.all([
+              contract.rankNodes(rank, i),
+              contract.nodeOriginMainId(rank, i).catch(() => 0n),
+              contract.nodeDirectSponsorNodeId(rank, i).catch(() => 0n),
+              contract.nodeCloneRound(rank, i).catch(() => 0n),
+            ])
+              .then(([node, origBn, spNodeBn, roundBn]: any[]) => ({
+                id: node[0].toString(),
+                owner: (node[1] || '').toLowerCase(),
+                directSponsor: (node[2] || '').toLowerCase(),
+                parentId: node[3].toString(),
+                leftChild: node[4].toString(),
+                rightChild: node[5].toString(),
+                isClone: Boolean(node[6]),
+                isExtraId: Boolean(node[7]),
+                originMainId: Number(origBn) > 0 ? String(origBn) : undefined,
+                directSponsorNodeId: Number(spNodeBn) > 0 ? String(spNodeBn) : undefined,
+                cloneRound: Number(roundBn) > 0 ? Number(roundBn) : undefined,
+              }))
+              .catch(() => null)
           );
         }
 
@@ -4726,12 +4808,16 @@ async function fetchTreeWithVirtualLocks(rank: number = 1): Promise<{
       rightChild: '0',
       isClone: false,
       isExtraId: false,
+      originMainId: '1',
+      directSponsorNodeId: '0',
+      cloneRound: 0,
     });
     totalNodes = Math.max(totalNodes, 1);
   }
 
   const now = Date.now();
   for (const res of reservationsMap.values()) {
+    if (excludeTicketId && res.ticketId === excludeTicketId) continue;
     if (res.status === 'RESERVED' && now <= res.expiresAt && res.rank === rank) {
       for (const item of res.batchDetails) {
         const pNode = nodesMap.get(item.targetParentId);
@@ -4752,6 +4838,9 @@ async function fetchTreeWithVirtualLocks(rank: number = 1): Promise<{
           rightChild: '0',
           isClone: Boolean(item.isClone),
           isExtraId: false,
+          originMainId: item.assignedNodeId,
+          directSponsorNodeId: String(res.sponsorNodeId || 1),
+          cloneRound: 0,
         });
 
         const ownerKey = item.owner.toLowerCase();
@@ -4759,6 +4848,30 @@ async function fetchTreeWithVirtualLocks(rank: number = 1): Promise<{
           ownerFirstNodeMap.set(ownerKey, item.assignedNodeId);
         }
         ownerLatestNodeMap.set(ownerKey, item.assignedNodeId);
+      }
+
+      for (const vClone of res.virtualClones || []) {
+        const pNode = nodesMap.get(vClone.targetParentId);
+        if (pNode) {
+          if (vClone.isLeft) {
+            pNode.leftChild = vClone.cloneNodeId;
+          } else {
+            pNode.rightChild = vClone.cloneNodeId;
+          }
+        }
+        nodesMap.set(vClone.cloneNodeId, {
+          id: vClone.cloneNodeId,
+          owner: vClone.owner.toLowerCase(),
+          directSponsor: res.sponsorAddress.toLowerCase(),
+          parentId: vClone.targetParentId,
+          leftChild: '0',
+          rightChild: '0',
+          isClone: true,
+          isExtraId: false,
+          originMainId: vClone.originMainId,
+          directSponsorNodeId: vClone.directSponsorNodeId,
+          cloneRound: vClone.cloneRound,
+        });
       }
     }
   }
@@ -4843,6 +4956,22 @@ function buildServerCloneLineageMap(
         cloneRound: 0,
       });
     } else if (n.isClone) {
+      if (n.originMainId && n.originMainId !== '0' && n.originMainId !== idStr) {
+        const originId = n.originMainId;
+        const prevCount = mainNodeCloneRoundCount.get(originId) || 0;
+        const currentCount = prevCount + 1;
+        mainNodeCloneRoundCount.set(originId, currentCount);
+        const cloneRound =
+          n.cloneRound && n.cloneRound > 0 ? n.cloneRound : ((currentCount - 1) % 2) + 1;
+
+        lineageMap.set(idStr, {
+          originMainId: originId,
+          spawnedFromNodeId: originId,
+          cloneRound,
+        });
+        continue;
+      }
+
       let spawnedFromNodeId = '0';
       const walletFirstId = ownerPrimaryNodeMap.get(ownerKey) || idStr;
 
@@ -4876,7 +5005,8 @@ function buildServerCloneLineageMap(
       const prevCount = mainNodeCloneRoundCount.get(originMainId) || 0;
       const currentCount = prevCount + 1;
       mainNodeCloneRoundCount.set(originMainId, currentCount);
-      const cloneRound = ((currentCount - 1) % 2) + 1;
+      const cloneRound =
+        n.cloneRound && n.cloneRound > 0 ? n.cloneRound : ((currentCount - 1) % 2) + 1;
 
       lineageMap.set(idStr, {
         originMainId,
@@ -5029,6 +5159,59 @@ export function calculateAutoIdAndExtraIdSlot(
   return { targetParentId: slot.parentId, isLeft: slot.isLeft, originMainId: sponsorMainIdStr, targetType: 'descendant' };
 }
 
+function resolveServerSponsorNodeIdForMainNode(
+  nodesMap: Map<string, SimulatedQueueNode>,
+  lineageMap: Map<string, { originMainId: string; spawnedFromNodeId: string; cloneRound: number }>,
+  originMainIdStr: string,
+  sponsorAddress: string
+): number {
+  if (!originMainIdStr || originMainIdStr === '0' || originMainIdStr === '1') {
+    return 1;
+  }
+  const originNode = nodesMap.get(originMainIdStr);
+  if (originNode?.directSponsorNodeId && Number(originNode.directSponsorNodeId) > 0) {
+    return Number(originNode.directSponsorNodeId);
+  }
+  const effectiveSponsorAddr = (
+    originNode?.directSponsor && originNode.directSponsor !== ethers.ZeroAddress
+      ? originNode.directSponsor
+      : sponsorAddress || ''
+  ).toLowerCase();
+  if (!effectiveSponsorAddr || effectiveSponsorAddr === ethers.ZeroAddress) {
+    return 1;
+  }
+
+  const originNum = Number(originMainIdStr);
+  let currIdStr = originNode ? originNode.parentId : '0';
+  const visited = new Set<string>();
+  while (currIdStr && currIdStr !== '0' && !visited.has(currIdStr)) {
+    visited.add(currIdStr);
+    const anc = nodesMap.get(currIdStr);
+    if (!anc) break;
+    if ((anc.owner || '').toLowerCase() === effectiveSponsorAddr) {
+      const ancMeta = lineageMap.get(currIdStr);
+      const ancOriginStr = ancMeta ? ancMeta.originMainId : anc.originMainId || currIdStr;
+      if (Number(ancOriginStr) < originNum) {
+        return Number(ancOriginStr) || 1;
+      }
+    }
+    currIdStr = anc.parentId;
+  }
+
+  const candidateMains = Array.from(nodesMap.values())
+    .filter(
+      (n) =>
+        !n.isClone &&
+        (n.owner || '').toLowerCase() === effectiveSponsorAddr &&
+        Number(n.id) < originNum
+    )
+    .sort((a, b) => Number(a.id) - Number(b.id));
+  if (candidateMains.length > 0) {
+    return Number(candidateMains[0].id) || 1;
+  }
+  return 1;
+}
+
 async function processPlacementJob(jobData: QueueReserveRequest): Promise<PositionReservation> {
   const {
     owner,
@@ -5046,8 +5229,11 @@ async function processPlacementJob(jobData: QueueReserveRequest): Promise<Positi
       ? applicants
       : Array.from({ length: nodeCount }, () => ({ owner }));
 
-  const { nodesMap, totalNodes, ownerFirstNodeMap, ownerLatestNodeMap } =
+  const { nodesMap, ownerFirstNodeMap, ownerLatestNodeMap } =
     await fetchTreeWithVirtualLocks(rank);
+
+  const resolvedSponsorAddr =
+    nodesMap.get(String(sponsorNodeId || 1))?.owner || sponsorAddress || CONTRACT_ADDRESS;
 
   let nextNodeId = 1;
   for (const key of nodesMap.keys()) {
@@ -5058,16 +5244,18 @@ async function processPlacementJob(jobData: QueueReserveRequest): Promise<Positi
   }
 
   const batchDetails: PositionReservation['batchDetails'] = [];
+  const virtualClones: NonNullable<PositionReservation['virtualClones']> = [];
 
-  // เงื่อนไขสมัครสมาชิก: จะต้องไปต่อติดตัวของผู้แนะนำตรง Direct Sponsor ซ้ายก่อนขวา
-  // แต่ถ้าผู้แนะนำตรงไม่มีช่องว่าง ก็ให้ไปวางต่อติดตัวโคลนนิ่งของรหัสหลักผู้แนะนำนั้นเท่านั้น
+  // เงื่อนไขสมัครสมาชิก + Rebirth Clone 100%:
+  // 1) โหนดที่สมัครวางตามโหมด (contract_round / auto_under_sponsor / global_bfs)
+  // 2) หากตกขาขวา (isLeft === false) ต้องจำลองการเกิด Rebirth Clone สลับรอบคี่ (Sponsor) / รอบคู่ (Global BFS #1) แบบต่อเนื่อง
   for (let idx = 0; idx < applicantList.length; idx++) {
     const appOwner = applicantList[idx].owner || owner;
     const placement = calculateQueueSlot(
       nodesMap,
       ownerFirstNodeMap,
       ownerLatestNodeMap,
-      sponsorAddress,
+      resolvedSponsorAddr,
       sponsorNodeId,
       mode
     );
@@ -5093,13 +5281,106 @@ async function processPlacementJob(jobData: QueueReserveRequest): Promise<Positi
     nodesMap.set(assignedId, {
       id: assignedId,
       owner: appOwner.toLowerCase(),
-      directSponsor: sponsorAddress.toLowerCase(),
+      directSponsor: resolvedSponsorAddr.toLowerCase(),
       parentId: placement.targetParentId,
       leftChild: '0',
       rightChild: '0',
       isClone,
       isExtraId: false,
+      originMainId: assignedId,
+      directSponsorNodeId: String(sponsorNodeId || 1),
+      cloneRound: 0,
     });
+
+    if (!placement.isLeft && pNode) {
+      const rightTriggerQueue: string[] = [pNode.id];
+      let cloneGuard = 0;
+      while (rightTriggerQueue.length > 0 && cloneGuard < 20) {
+        cloneGuard++;
+        const trigParentId = rightTriggerQueue.shift()!;
+        const trigParent = nodesMap.get(trigParentId);
+        if (!trigParent) continue;
+
+        const lineageMap = buildServerCloneLineageMap(nodesMap);
+        const trigMeta = lineageMap.get(trigParentId);
+        const cloneOriginMainIdStr = trigMeta
+          ? trigMeta.originMainId
+          : trigParent.originMainId || trigParentId;
+
+        let existingClonesForOrigin = 0;
+        for (const cand of nodesMap.values()) {
+          if (!cand.isClone) continue;
+          const candOrig = lineageMap.get(cand.id)?.originMainId || cand.originMainId || cand.id;
+          if (candOrig === cloneOriginMainIdStr) {
+            existingClonesForOrigin++;
+          }
+        }
+        const roundIdx = existingClonesForOrigin % 2;
+        const cloneRound = roundIdx + 1;
+
+        const cloneOwner = trigParent.owner;
+        const cloneSponsorAddr =
+          trigParent.directSponsor && trigParent.directSponsor !== ethers.ZeroAddress
+            ? trigParent.directSponsor
+            : cloneOwner;
+        const targetSpNodeId = resolveServerSponsorNodeIdForMainNode(
+          nodesMap,
+          lineageMap,
+          cloneOriginMainIdStr,
+          cloneSponsorAddr
+        );
+
+        const clonePlacement =
+          roundIdx === 0
+            ? calculateQueueSlot(
+                nodesMap,
+                ownerFirstNodeMap,
+                ownerLatestNodeMap,
+                cloneSponsorAddr,
+                targetSpNodeId,
+                'contract_round'
+              )
+            : (() => {
+                const bfs = bfsFindNextVacant(nodesMap, '1');
+                return { targetParentId: bfs.parentId, isLeft: bfs.isLeft };
+              })();
+
+        const cloneIdStr = String(nextNodeId++);
+        const cParent = nodesMap.get(clonePlacement.targetParentId);
+        if (cParent) {
+          if (clonePlacement.isLeft) cParent.leftChild = cloneIdStr;
+          else cParent.rightChild = cloneIdStr;
+        }
+
+        nodesMap.set(cloneIdStr, {
+          id: cloneIdStr,
+          owner: cloneOwner.toLowerCase(),
+          directSponsor: cloneSponsorAddr.toLowerCase(),
+          parentId: clonePlacement.targetParentId,
+          leftChild: '0',
+          rightChild: '0',
+          isClone: true,
+          isExtraId: false,
+          originMainId: cloneOriginMainIdStr,
+          directSponsorNodeId: String(targetSpNodeId),
+          cloneRound,
+        });
+
+        virtualClones.push({
+          cloneNodeId: cloneIdStr,
+          owner: cloneOwner,
+          targetParentId: clonePlacement.targetParentId,
+          isLeft: clonePlacement.isLeft,
+          originMainId: cloneOriginMainIdStr,
+          directSponsorNodeId: String(targetSpNodeId),
+          cloneRound,
+        });
+
+        if (!clonePlacement.isLeft && cParent) {
+          rightTriggerQueue.push(cParent.id);
+        }
+      }
+    }
   }
 
   const firstSlot = batchDetails[0];
@@ -5111,13 +5392,14 @@ async function processPlacementJob(jobData: QueueReserveRequest): Promise<Positi
     owner,
     rank,
     sponsorNodeId,
-    sponsorAddress,
+    sponsorAddress: resolvedSponsorAddr,
     targetParentId: firstSlot.targetParentId,
     isLeft: firstSlot.isLeft,
     activeRound: 0,
     assignedNodeId: firstSlot.assignedNodeId,
     batchCount: applicantList.length,
     batchDetails,
+    virtualClones,
     status: 'RESERVED',
     reservedAt: now,
     expiresAt: now + RESERVATION_LEASE_MS,
@@ -10958,6 +11240,9 @@ async function startApp() {
           ? spNode.originMainId
           : 1;
 
+      leftNodesCount = 0;
+      clonesSpawnedCount = 0;
+
       for (let i = 0; i < applicantList.length; i++) {
         const rawAppOwner = String(applicantList[i].owner || sponsorAddress || '').trim();
         const checksumOwner =
@@ -10991,19 +11276,15 @@ async function startApp() {
         };
 
         r1List.push(newNode);
-        if (placements[i]) {
-          placements[i].assignedNodeId = String(nextIdInRank);
-          placements[i].targetParentId = String(parentIdNum);
-          placements[i].isLeft = placeLeft;
-          placements[i].side = placeLeft ? 'LEFT' : 'RIGHT';
-        }
         targetParentIds[i] = String(parentIdNum);
         isLefts[i] = placeLeft;
 
         const parentNode = r1List.find((n) => n.id === parentIdNum);
         const rightSlotTriggerQueue: IndexedTreeNode[] = [];
+        const spawnedCloneNotes: string[] = [];
         if (parentNode) {
           if (placeLeft) {
+            leftNodesCount += 1;
             parentNode.leftChild = nextIdInRank;
             const pMainId =
               parentNode.originMainId && parentNode.originMainId > 0
@@ -11023,6 +11304,7 @@ async function startApp() {
         let cloneSafety = 0;
         while (rightSlotTriggerQueue.length > 0 && cloneSafety < 25) {
           cloneSafety++;
+          clonesSpawnedCount += 1;
           const triggerParent = rightSlotTriggerQueue.shift()!;
           const clonePlacement = findClonePlacementInRankNodes(r1List, triggerParent);
           const nextCloneId = r1List.reduce((m, n) => Math.max(m, n.id), 0) + 1;
@@ -11051,9 +11333,13 @@ async function startApp() {
           };
 
           r1List.push(newCloneNode);
+          spawnedCloneNotes.push(
+            `#${nextCloneId} รอบ ${clonePlacement.cloneRound} (ใต้ #${clonePlacement.parentId} ${clonePlacement.isLeft ? 'LEFT' : 'RIGHT'})`
+          );
           const cloneParent = r1List.find((n) => n.id === clonePlacement.parentId);
           if (cloneParent) {
             if (clonePlacement.isLeft) {
+              leftNodesCount += 1;
               cloneParent.leftChild = nextCloneId;
               const cpMainId =
                 cloneParent.originMainId && cloneParent.originMainId > 0
@@ -11068,6 +11354,28 @@ async function startApp() {
               cloneParent.rightChild = nextCloneId;
               rightSlotTriggerQueue.push(cloneParent);
             }
+          }
+        }
+
+        if (placements[i]) {
+          placements[i].assignedNodeId = String(nextIdInRank);
+          placements[i].targetParentId = String(parentIdNum);
+          placements[i].isLeft = placeLeft;
+          placements[i].side = placeLeft ? 'LEFT' : 'RIGHT';
+          if (placeLeft) {
+            placements[i].directBonusUSDT = `${(pricePerRank * 0.3).toFixed(2)} USDT (30%)`;
+            placements[i].levelBonusUSDT = `${(pricePerRank * 0.3).toFixed(2)} USDT (2%x15)`;
+            placements[i].vaultAccumulatedUSDT = `${(pricePerRank * 0.35).toFixed(2)} USDT (35%)`;
+            placements[i].allSellAndBotUSDT = `${(pricePerRank * 0.05).toFixed(2)} USDT (4%+1%)`;
+            placements[i].cloneTrigger = 'Distributes Left-Child Rewards';
+          } else {
+            placements[i].directBonusUSDT = '0.00 USDT (Right Slot)';
+            placements[i].levelBonusUSDT = '0.00 USDT (Right Slot)';
+            placements[i].vaultAccumulatedUSDT = '0.00 USDT (Right Slot)';
+            placements[i].cloneTrigger =
+              spawnedCloneNotes.length > 0
+                ? `✨ Auto-Clone ${spawnedCloneNotes.join(', ')}`
+                : `✨ Right-Child Rebirth Clone triggered for Parent #${parentIdNum}`;
           }
         }
       }
@@ -11945,9 +12253,22 @@ async function startApp() {
       }
     });
 
-    ws.on('error', (e) => {
-      console.warn('[WS Client Error]:', e);
+    ws.on('error', () => {
+      // Ignore transient client WS disconnect/reset errors
     });
+  });
+
+  wss.on('error', () => {
+    // Prevent unhandled WebSocketServer socket errors from crashing process
+  });
+
+  server.on('clientError', (err: any, socket: any) => {
+    if (err?.code === 'ECONNRESET' || !socket?.writable) return;
+    try {
+      socket.end('HTTP/1.1 400 Bad Request\r\n\r\n');
+    } catch {
+      // ignore
+    }
   });
 
   server.on('error', (err: any) => {

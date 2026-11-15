@@ -20,6 +20,7 @@ export interface InMemoryMatrixNode {
   isClone: boolean;
   originMainId?: string;
   directSponsorNodeId?: string;
+  cloneRound?: number;
 }
 
 export interface WalletNodeDetail {
@@ -63,6 +64,8 @@ export interface SpawnedCloneStep {
   triggeredByParentId: string;
   cloneParentId: string;
   cloneIsLeft: boolean;
+  cloneRound?: number;
+  originMainId?: string;
 }
 
 export interface SimulationStepLog {
@@ -251,7 +254,8 @@ export function buildCloneLineageMap(
         const prevCount = mainNodeCloneRoundCount.get(originId) || 0;
         const currentCount = prevCount + 1;
         mainNodeCloneRoundCount.set(originId, currentCount);
-        const cloneRound = ((currentCount - 1) % 2) + 1;
+        const cloneRound =
+          n.cloneRound && n.cloneRound > 0 ? n.cloneRound : ((currentCount - 1) % 2) + 1;
         lineageMap.set(idStr, {
           nodeId: idStr,
           isClone: true,
@@ -593,11 +597,26 @@ function simulateRightChildCloneCascade(
     parentSponsor
   );
 
-  const clonePlacement = findClonePlacementSlot(
-    rankNodes,
-    parentSponsor,
-    targetSponsorNodeId
-  );
+  // นับจำนวนโคลนที่เคยเกิดขึ้นแล้วของรหัสหลักต้นสังกัด (originMainId) นี้:
+  // - รอบคี่ (Round 1, 3, 5... => existingClones % 2 === 0): ช่วยทีมสปอนเซอร์ (ต่อ Sponsor / โคลนของ Sponsor)
+  // - รอบคู่ (Round 2, 4, 6... => existingClones % 2 === 1): ช่วยผังกลางโลก (Global BFS ใต้ Root #1)
+  let existingClonesForOrigin = 0;
+  for (const existingNode of Object.values(rankNodes)) {
+    if (!existingNode.isClone) continue;
+    const exMeta = lineageMap.get(existingNode.id.toString());
+    const exOrigin = exMeta?.originMainId || existingNode.originMainId || existingNode.id.toString();
+    if (exOrigin === cloneOriginMainIdStr) {
+      existingClonesForOrigin++;
+    }
+  }
+  const roundIndex = existingClonesForOrigin % 2;
+  const cloneRound = roundIndex + 1;
+  state.currentToggle = roundIndex === 0 ? 1 : 0;
+
+  const clonePlacement: { parentId: bigint; isLeft: boolean } =
+    roundIndex === 0
+      ? findClonePlacementSlot(rankNodes, parentSponsor, targetSponsorNodeId)
+      : findFirstAvailableUnder(rankNodes, 1n);
 
   state.nextNodeId += 1n;
   const cloneNodeId = state.nextNodeId;
@@ -613,6 +632,7 @@ function simulateRightChildCloneCascade(
     isClone: true,
     originMainId: cloneOriginMainIdStr,
     directSponsorNodeId: targetSponsorNodeId.toString(),
+    cloneRound,
   };
 
   const targetParentNode = rankNodes[clonePlacement.parentId.toString()];
@@ -640,6 +660,8 @@ function simulateRightChildCloneCascade(
     triggeredByParentId: triggerParentId.toString(),
     cloneParentId: clonePlacement.parentId.toString(),
     cloneIsLeft: clonePlacement.isLeft,
+    cloneRound,
+    originMainId: cloneOriginMainIdStr,
   });
 
   // If the clone itself landed on a RIGHT child slot, Solidity recursively triggers another clone!
@@ -659,7 +681,8 @@ function simulateRightChildCloneCascade(
 export async function loadOnChainRank1State(
   providerOrSigner: ethers.Provider | ethers.Signer | null,
   contractAddress: string = CONTRACT_ADDRESS,
-  sponsorNodeId: number = 1
+  sponsorNodeId: number = 1,
+  excludeTicketId?: string
 ): Promise<{
   rankNodes: RankNodesMap;
   ownerProfiles: Record<string, OwnerProfileCache>;
@@ -704,6 +727,9 @@ export async function loadOnChainRank1State(
             leftChild: BigInt(n.leftChild || 0),
             rightChild: BigInt(n.rightChild || 0),
             isClone: Boolean(n.isClone),
+            originMainId: n.originMainId ? String(n.originMainId) : undefined,
+            directSponsorNodeId: n.directSponsorNodeId ? String(n.directSponsorNodeId) : undefined,
+            cloneRound: n.cloneRound ? Number(n.cloneRound) : undefined,
           };
           if (ownerStr && ownerStr !== ethers.ZeroAddress) {
             uniqueOwners.add(ownerStr.toLowerCase());
@@ -756,7 +782,12 @@ export async function loadOnChainRank1State(
       const rawNodesList = await Promise.all(
         ids.map(async (id) => {
           try {
-            const n = await contract.rankNodes(1, id);
+            const [n, origBn, spNodeBn, roundBn] = await Promise.all([
+              contract.rankNodes(1, id),
+              contract.nodeOriginMainId(1, id).catch(() => 0n),
+              contract.nodeDirectSponsorNodeId(1, id).catch(() => 0n),
+              contract.nodeCloneRound(1, id).catch(() => 0n),
+            ]);
             return {
               id: BigInt(n.id ?? n[0]),
               owner: String(n.owner ?? n[1]),
@@ -765,6 +796,9 @@ export async function loadOnChainRank1State(
               leftChild: BigInt(n.leftChild ?? n[4]),
               rightChild: BigInt(n.rightChild ?? n[5]),
               isClone: Boolean(n.isClone ?? n[6]),
+              originMainId: Number(origBn) > 0 ? String(origBn) : undefined,
+              directSponsorNodeId: Number(spNodeBn) > 0 ? String(spNodeBn) : undefined,
+              cloneRound: Number(roundBn) > 0 ? Number(roundBn) : undefined,
             };
           } catch {
             return null;
@@ -829,8 +863,9 @@ export async function loadOnChainRank1State(
       if (queueData.activeReservations && Array.isArray(queueData.activeReservations)) {
         const now = Date.now();
         for (const res of queueData.activeReservations) {
-          if (res.status === 'RESERVED' && now <= res.expiresAt) {
-            for (const item of res.batchDetails) {
+          if (excludeTicketId && res.ticketId === excludeTicketId) continue;
+          if (res.status === 'RESERVED' && now <= res.expiresAt && Number(res.rank || 1) === 1) {
+            for (const item of res.batchDetails || []) {
               const pKey = String(item.targetParentId);
               if (rankNodes[pKey]) {
                 if (item.isLeft) {
@@ -847,7 +882,35 @@ export async function loadOnChainRank1State(
                 leftChild: 0n,
                 rightChild: 0n,
                 isClone: Boolean(item.isClone),
+                originMainId: String(item.assignedNodeId),
+                directSponsorNodeId: String(res.sponsorNodeId || 1),
               };
+              const assignedBn = BigInt(item.assignedNodeId);
+              if (assignedBn > totalNodes) totalNodes = assignedBn;
+            }
+            for (const vClone of res.virtualClones || []) {
+              const pKey = String(vClone.targetParentId);
+              if (rankNodes[pKey]) {
+                if (vClone.isLeft) {
+                  rankNodes[pKey].leftChild = BigInt(vClone.cloneNodeId);
+                } else {
+                  rankNodes[pKey].rightChild = BigInt(vClone.cloneNodeId);
+                }
+              }
+              rankNodes[String(vClone.cloneNodeId)] = {
+                id: BigInt(vClone.cloneNodeId),
+                owner: vClone.owner,
+                directSponsor: res.sponsorAddress,
+                parentId: BigInt(vClone.targetParentId),
+                leftChild: 0n,
+                rightChild: 0n,
+                isClone: true,
+                originMainId: String(vClone.originMainId || vClone.cloneNodeId),
+                directSponsorNodeId: String(vClone.directSponsorNodeId || res.sponsorNodeId || 1),
+                cloneRound: Number(vClone.cloneRound || 1),
+              };
+              const cloneBn = BigInt(vClone.cloneNodeId);
+              if (cloneBn > totalNodes) totalNodes = cloneBn;
             }
           }
         }
@@ -875,7 +938,8 @@ export async function previewOffChainSimulation(
   sponsorNodeId: number,
   applicantsQueue: ApplicantItem[],
   onProgress: (msg: string) => void = () => {},
-  mode: PlacementMode = 'contract_round'
+  mode: PlacementMode = 'contract_round',
+  excludeTicketId?: string
 ) {
   let rankNodes: RankNodesMap = {};
   let ownerProfiles: Record<string, OwnerProfileCache> = {};
@@ -887,7 +951,12 @@ export async function previewOffChainSimulation(
 
   try {
     onProgress('กำลังค้นหาตำแหน่งว่างในผังไบนารี่แบบออโต้ (Auto-Placement Sync)...');
-    const loaded = await loadOnChainRank1State(providerOrSigner, contractAddress, sponsorNodeId);
+    const loaded = await loadOnChainRank1State(
+      providerOrSigner,
+      contractAddress,
+      sponsorNodeId,
+      excludeTicketId
+    );
     rankNodes = loaded.rankNodes;
     ownerProfiles = loaded.ownerProfiles;
     totalNodes = loaded.totalNodes;
@@ -1076,7 +1145,8 @@ export async function executeOffChainSimulationAndBatch(
   sponsorNodeId: number,
   applicantsQueue: ApplicantItem[],
   onProgress: (msg: string) => void = () => {},
-  mode: PlacementMode = 'contract_round'
+  mode: PlacementMode = 'contract_round',
+  excludeTicketId?: string
 ): Promise<{
   success: boolean;
   txHash?: string;
@@ -1099,7 +1169,8 @@ export async function executeOffChainSimulationAndBatch(
       sponsorNodeId,
       applicantsQueue,
       onProgress,
-      mode
+      mode,
+      excludeTicketId
     );
 
     if (!simResult.sponsorIsValid) {
@@ -1171,7 +1242,8 @@ export async function executeOffChainSimulationAndBatch(
           sponsorNodeId,
           applicantsQueue,
           undefined,
-          mode
+          mode,
+          excludeTicketId
         );
         if (latestSim.targetParentIds.length === count) {
           simResult.targetParentIds = latestSim.targetParentIds;

@@ -338,8 +338,6 @@ export const RegisterSection: React.FC<RegisterSectionProps> = ({
       res = await onExecuteOffChainBatch(finalSponsorId, queue, undefined, placementMode);
     } else {
       res = await onRegister(finalSponsorId, {
-        targetParentId: placementPreview?.targetParentId,
-        isLeft: placementPreview?.isLeft,
         mode: placementMode,
       });
     }
@@ -914,7 +912,7 @@ export const RegisterSection: React.FC<RegisterSectionProps> = ({
                             {step.spawnedClones
                               .map(
                                 (c) =>
-                                  `#${c.cloneNodeId} (ใต้ #${c.cloneParentId} ${
+                                  `#${c.cloneNodeId}${c.cloneRound ? ` รอบ ${c.cloneRound}` : ''} (ใต้ #${c.cloneParentId} ${
                                     c.cloneIsLeft ? 'ซ้าย' : 'ขวา'
                                   })`
                               )

@@ -24,14 +24,17 @@ interface IERC20 {
 }
 
 library SafeERC20 {
-    function safeTransfer(IERC20 token, address to, uint256 value) internal {
-        (bool s, bytes memory d) = address(token).call(abi.encodeWithSelector(token.transfer.selector, to, value));
+    function _call(IERC20 token, bytes memory data) private {
+        (bool s, bytes memory d) = address(token).call(data);
         if (!s || (d.length != 0 && !abi.decode(d, (bool)))) revert();
     }
 
+    function safeTransfer(IERC20 token, address to, uint256 value) internal {
+        _call(token, abi.encodeWithSelector(token.transfer.selector, to, value));
+    }
+
     function safeTransferFrom(IERC20 token, address from, address to, uint256 value) internal {
-        (bool s, bytes memory d) = address(token).call(abi.encodeWithSelector(token.transferFrom.selector, from, to, value));
-        if (!s || (d.length != 0 && !abi.decode(d, (bool)))) revert();
+        _call(token, abi.encodeWithSelector(token.transferFrom.selector, from, to, value));
     }
 }
 
@@ -240,6 +243,13 @@ contract FractalFlowMatrix27 is Ownable, ReentrancyGuard {
         }
     }
 
+    function _validateSponsor(uint256 _sponsorNodeId) internal view returns (bool, address) {
+        if (_sponsorNodeId == 0 || _sponsorNodeId > totalNodesInRank[1]) return (false, address(0));
+        MatrixNode storage sponsorNode = rankNodes[1][_sponsorNodeId];
+        if (sponsorNode.owner == address(0) || sponsorNode.isClone || sponsorNode.isExtraId) return (false, address(0));
+        return (true, sponsorNode.owner);
+    }
+
     function checkValidSponsorId(uint256 _sponsorNodeId)
         public
         view
@@ -259,13 +269,13 @@ contract FractalFlowMatrix27 is Ownable, ReentrancyGuard {
     }
 
     function previewPlacement(uint8 _rank, address _sponsor)
-        public
+        external
         view
         returns (uint256 targetParentId, bool isLeft, uint8 activeRound)
     {
         uint256 sponsorNodeId = users[_sponsor].firstNodeId[_rank];
         activeRound = sponsorNodeId > 0 ? sponsorRoundToggle[_rank][sponsorNodeId] : 0;
-        (targetParentId, isLeft) = _findPlacementWithRound(_rank, _sponsor, sponsorNodeId, activeRound);
+        (targetParentId, isLeft) = _findPlacementSpot(_rank, _sponsor, sponsorNodeId, false);
     }
 
     function previewPlacement(uint8 _rank, uint256 _sponsorNodeId)
@@ -273,9 +283,11 @@ contract FractalFlowMatrix27 is Ownable, ReentrancyGuard {
         view
         returns (uint256 targetParentId, bool isLeft, uint8 activeRound)
     {
-        (bool isValid, , address sponsorAddr) = checkValidSponsorId(_sponsorNodeId);
+        (bool isValid, address sponsorAddr) = _validateSponsor(_sponsorNodeId);
         if (!isValid) revert ErrInvalidSponsor();
-        return previewPlacement(_rank, sponsorAddr);
+        uint256 sponsorInTarget = _rank == 1 ? _sponsorNodeId : getMainIdNodeInRank(_sponsorNodeId, _rank);
+        activeRound = sponsorInTarget > 0 ? sponsorRoundToggle[_rank][sponsorInTarget] : 0;
+        (targetParentId, isLeft) = _findPlacementSpot(_rank, sponsorAddr, sponsorInTarget, false);
     }
 
     function getFiveRankWindow(uint8 _currentRank) public pure returns (uint8 window5Start, uint8 window5End) {
@@ -570,7 +582,7 @@ contract FractalFlowMatrix27 is Ownable, ReentrancyGuard {
         bool[] calldata _isClones
     ) external nonReentrant {
         if (_count == 0 || _count > 50) revert ErrBadParam();
-        (bool isValid, , address sponsorAddr) = checkValidSponsorId(_sponsorNodeId);
+        (bool isValid, address sponsorAddr) = _validateSponsor(_sponsorNodeId);
         if (!isValid) revert ErrInvalidSponsor();
 
         uint256 totalCost = rankPrice[1] * _count;
@@ -585,7 +597,7 @@ contract FractalFlowMatrix27 is Ownable, ReentrancyGuard {
             bool isL = hasTargets ? _isLefts[i] : true;
             if (hasTargets && _isClones[i]) revert ErrBadParam();
 
-            uint256 nId = _insertBatchItem(_sponsorNodeId, sponsorAddr, pId, isL, false);
+            uint256 nId = _insertBatchItem(_sponsorNodeId, sponsorAddr, pId, isL);
             if (firstCreated == 0) firstCreated = nId;
         }
 
@@ -597,24 +609,21 @@ contract FractalFlowMatrix27 is Ownable, ReentrancyGuard {
         uint256 _spNodeId,
         address _spAddr,
         uint256 _targetParentId,
-        bool _isLeft,
-        bool _isClone
+        bool _isLeft
     ) internal returns (uint256 newNodeId) {
         uint256 pId = _targetParentId;
         bool isL = _isLeft;
         if (pId == 0 || pId > totalNodesInRank[1] || (isL && rankNodes[1][pId].leftChild != 0) || (!isL && rankNodes[1][pId].rightChild != 0)) {
-            (pId, isL) = _findFirstAvailableUnder(1, _spNodeId);
+            (pId, isL) = _findPlacementSpot(1, _spAddr, _spNodeId, false);
         }
 
-        newNodeId = _insertRawNode(1, msg.sender, _spAddr, pId, isL, _isClone, false);
+        newNodeId = _insertRawNode(1, msg.sender, _spAddr, pId, isL, false, false);
 
-        if (!_isClone) {
-            nodeOriginMainId[1][newNodeId] = newNodeId;
-            nodeDirectSponsorNodeId[1][newNodeId] = _spNodeId;
-            mainIdCurrentMaxRank[newNodeId] = 1;
-            mainIdNodeInRank[newNodeId][1] = newNodeId;
-            nodeToR1MainId[1][newNodeId] = newNodeId;
-        }
+        nodeOriginMainId[1][newNodeId] = newNodeId;
+        nodeDirectSponsorNodeId[1][newNodeId] = _spNodeId;
+        mainIdCurrentMaxRank[newNodeId] = 1;
+        mainIdNodeInRank[newNodeId][1] = newNodeId;
+        nodeToR1MainId[1][newNodeId] = newNodeId;
         if (isL) {
             _distributeLeftChildRewards(1, newNodeId, pId, msg.sender);
         } else {
@@ -623,7 +632,7 @@ contract FractalFlowMatrix27 is Ownable, ReentrancyGuard {
     }
 
     function register(uint256 _sponsorNodeId) external nonReentrant {
-        (bool isValid, , address sponsorAddr) = checkValidSponsorId(_sponsorNodeId);
+        (bool isValid, address sponsorAddr) = _validateSponsor(_sponsorNodeId);
         if (!isValid) revert ErrInvalidSponsor();
 
         usdt.safeTransferFrom(msg.sender, address(this), rankPrice[1]);
@@ -927,7 +936,9 @@ contract FractalFlowMatrix27 is Ownable, ReentrancyGuard {
         uint256 originId = _cloneOriginMainId != 0 ? _cloneOriginMainId : _sponsorNodeId;
         uint8 currentRound = uint8(nodeCloneTotalCount[_rank][originId] % 2);
         sponsorRoundToggle[_rank][originId] = currentRound == 0 ? 1 : 0;
-        (uint256 pId, bool left) = _findPlacementWithRound(_rank, _sponsor, _sponsorNodeId, currentRound);
+        (uint256 pId, bool left) = currentRound == 0
+            ? _findPlacementSpot(_rank, _sponsor, _sponsorNodeId, false)
+            : _findFirstAvailableUnder(_rank, 1);
         return (pId, left, currentRound == 0 ? 1 : 2);
     }
 
@@ -975,20 +986,6 @@ contract FractalFlowMatrix27 is Ownable, ReentrancyGuard {
 
         // 3. Fallback: Shallowest spot under primary node
         return _findFirstAvailableUnder(_rank, primaryNodeId);
-    }
-
-    function _findExtraIdPlacement(uint8 _rank, address _sponsor, uint256 _sponsorNodeId) internal view returns (uint256 parentId, bool isLeft) {
-        return _findPlacementSpot(_rank, _sponsor, _sponsorNodeId, true);
-    }
-
-    function _findDirectAndClonePlacement(uint8 _rank, address _sponsor, uint256 _sponsorNodeId) internal view returns (uint256 parentId, bool isLeft) {
-        return _findPlacementSpot(_rank, _sponsor, _sponsorNodeId, false);
-    }
-
-    function _findPlacementWithRound(uint8 _rank, address _sponsor, uint256 _sponsorNodeId, uint8 _round) internal view returns (uint256 parentId, bool isLeft) {
-        return _round == 0
-            ? _findDirectAndClonePlacement(_rank, _sponsor, _sponsorNodeId)
-            : _findFirstAvailableUnder(_rank, 1);
     }
 
     function _isDescendantOf(uint8 _rank, uint256 _nodeId, uint256 _ancestorId) internal view returns (bool) {

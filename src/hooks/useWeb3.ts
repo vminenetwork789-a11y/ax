@@ -1173,7 +1173,8 @@ export function useWeb3() {
             sponsorNodeId,
             [{ owner: userAddr }],
             undefined,
-            modeToUse
+            modeToUse,
+            activeTicket?.ticketId
           );
           if (sim.targetParentIds.length > 0) {
             autoParentId = Number(sim.targetParentIds[0]);
@@ -2189,7 +2190,8 @@ export function useWeb3() {
           setTxState((prev) => ({ ...prev, step: msg }));
           if (onStatusCallback) onStatusCallback(msg);
         },
-        mode
+        mode,
+        activeBatchTicket?.ticketId
       );
 
       if (result.success) {

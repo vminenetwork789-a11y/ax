@@ -43,14 +43,25 @@ process.on('unhandledRejection', (reason: any) => {
 
 process.on('uncaughtException', (err: any) => {
   const errStr = err ? (err.stack || err.message || String(err)) : '';
+  const errCode = String(err?.code || '');
   if (
+    errCode === 'ECONNRESET' ||
+    errCode === 'EPIPE' ||
+    errCode === 'ETIMEDOUT' ||
+    errCode === 'ECONNREFUSED' ||
+    errCode === 'EAI_AGAIN' ||
     errStr.includes('provider destroyed') ||
     errStr.includes('cancelled request') ||
     errStr.includes('eth_unsubscribe') ||
     errStr.includes('UNSUPPORTED_OPERATION') ||
-    errStr.includes('WebSocket is not open')
+    errStr.includes('WebSocket is not open') ||
+    errStr.includes('ECONNRESET') ||
+    errStr.includes('EPIPE') ||
+    errStr.includes('ETIMEDOUT') ||
+    errStr.includes('connection reset') ||
+    errStr.includes('socket hang up')
   ) {
-    return; // Safely ignore benign provider teardown error
+    return; // Safely ignore benign provider teardown / transient socket reset errors
   }
   console.error('❌ [Process Guard] Uncaught Exception:', err);
 });
@@ -343,8 +354,14 @@ export async function connectWebSocket(): Promise<void> {
       websocket?: {
         on?: (event: string, cb: (...args: unknown[]) => void) => void;
         addEventListener?: (event: string, cb: (...args: unknown[]) => void) => void;
+        _socket?: { on?: (event: string, cb: (...args: unknown[]) => void) => void };
       };
-    }).websocket;
+      _websocket?: {
+        on?: (event: string, cb: (...args: unknown[]) => void) => void;
+        addEventListener?: (event: string, cb: (...args: unknown[]) => void) => void;
+        _socket?: { on?: (event: string, cb: (...args: unknown[]) => void) => void };
+      };
+    }).websocket || (wsProvider as unknown as { _websocket?: any })._websocket;
 
     const handleSocketClose = async (code?: unknown) => {
       if (isShuttingDown) return;
@@ -356,13 +373,27 @@ export async function connectWebSocket(): Promise<void> {
     const handleSocketError = async (err: unknown) => {
       if (isShuttingDown) return;
       const msg = err instanceof Error ? err.message : String(err);
-      console.error(`⚠️ [WS-Bot] WebSocket Error: ${msg}`);
+      console.warn(`⚠️ [WS-Bot] WebSocket Error: ${msg}`);
+      await cleanupWebSocket();
+      scheduleReconnect(`Socket Error (${msg})`);
     };
 
     if (rawWs) {
       if (typeof rawWs.on === 'function') {
         rawWs.on('close', handleSocketClose);
         rawWs.on('error', handleSocketError);
+        rawWs.on('open', () => {
+          try {
+            rawWs._socket?.on?.('error', handleSocketError);
+          } catch {
+            // ignore
+          }
+        });
+        try {
+          rawWs._socket?.on?.('error', handleSocketError);
+        } catch {
+          // ignore
+        }
       } else if (typeof rawWs.addEventListener === 'function') {
         rawWs.addEventListener('close', handleSocketClose);
         rawWs.addEventListener('error', handleSocketError);
