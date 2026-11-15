@@ -307,7 +307,7 @@ const DEFAULT_SYSTEM_CONFIG = {
   contractAddress:
     process.env.OVERRIDE_CONTRACT_ADDRESS ||
     process.env.CONTRACT_ADDRESS ||
-    '0xBe7012a27d8c648fAacd89d00B73633E880Db7cc',
+    '0xcE4b7F8471e275681ed6Da5B52a53115078866Fe',
   usdtAddress: process.env.USDT_ADDRESS || '0x05f24E1F598DF1aE8d0B424ce978f8ea33bB752b',
   chainId: Number(process.env.CHAIN_ID || 97),
   networkName: process.env.NETWORK_NAME || 'BNB Smart Chain Testnet',
@@ -360,6 +360,7 @@ const SERVER_LEGACY_CONTRACTS = new Set([
   '0x49a754084903678b7d46ff2934edb037cd1ab518',
   '0x8b2ef84f543f5c1dfa8240a1853d63efe66006eb',
   '0xb3832d4cc6dae0b24f1e6660d7c85dcc1f005cd1',
+  '0xbe7012a27d8c648faacd89d00b73633e880db7cc',
 ]);
 
 const SERVER_LEGACY_USDT = new Set([
@@ -484,6 +485,29 @@ async function ensurePostgresSchema() {
   pgSchemaReady = true;
 }
 
+async function clearPostgresTables() {
+  if (!pgPool || !pgConnected) return;
+  try {
+    if (!pgSchemaReady) {
+      await ensurePostgresSchema();
+    }
+    await pgPool.query(
+      `TRUNCATE TABLE accounts, wallets, matrix_levels, matrix_nodes, income_channels, activities, matrix_db_snapshots RESTART IDENTITY CASCADE;`
+    );
+    pgTablesCount = {
+      accounts: 0,
+      matrix_levels: 0,
+      income_channels: 0,
+      activities: 0,
+      wallets: 0,
+      matrix_nodes: 0,
+    };
+    console.log('🧹 [PostgreSQL] Cleared all tables cleanly.');
+  } catch (e: any) {
+    console.warn('⚠️ [PostgreSQL] clearPostgresTables notice:', e?.message);
+  }
+}
+
 async function hydrateMatrixDBFromPostgres() {
   if (!pgPool || !pgConnected || !pgSchemaReady) return;
   try {
@@ -492,6 +516,16 @@ async function hydrateMatrixDBFromPostgres() {
       [CONTRACT_ADDRESS]
     );
     const snap = res.rows[0]?.payload as PersistentMatrixDatabase | undefined;
+    if (!snap) {
+      const otherSnaps = await pgPool.query(
+        `SELECT COUNT(*)::int AS cnt FROM matrix_db_snapshots WHERE LOWER(contract_address) <> LOWER($1)`,
+        [CONTRACT_ADDRESS]
+      );
+      if ((otherSnaps.rows[0]?.cnt || 0) > 0) {
+        await clearPostgresTables();
+      }
+      return;
+    }
     if (snap && snap.contractAddress && snap.contractAddress.toLowerCase() === CONTRACT_ADDRESS.toLowerCase()) {
       for (let r = 1; r <= 18; r++) {
         for (const n of snap.nodesByRank?.[r] || []) {
@@ -5662,6 +5696,12 @@ async function startApp() {
         blockExplorerUrl: blockExplorerUrl || activeSystemConfig.blockExplorerUrl,
       });
 
+      rankSyncTimestamps.clear();
+      knownAdminFreeNodeKeys.clear();
+      inspectedAdminTxCache.clear();
+      reservationsMap.clear();
+      inMemoryDB.nodes.clear();
+      await clearPostgresTables();
       matrixDB = createEmptyMatrixDB(CONTRACT_ADDRESS, USDT_ADDRESS);
       saveMatrixDBToDisk(true);
       broadcastAllMatrixUpdates();
@@ -10577,20 +10617,28 @@ async function startApp() {
   const handleClearCacheRequest = async (_req: Request, res: Response) => {
     try {
       rankSyncTimestamps.clear();
-      for (let r = 1; r <= 18; r++) {
-        matrixDB.nodesByRank[r] = [];
-        matrixDB.rankCounts[r] = 0;
-      }
-      matrixDB.rewardLogs = [];
-      matrixDB.upgradeLogs = [];
-      matrixDB.userRankVaults = {};
+      knownAdminFreeNodeKeys.clear();
+      inspectedAdminTxCache.clear();
+      reservationsMap.clear();
+      inMemoryDB.nodes.clear();
+      await clearPostgresTables();
+      matrixDB = createEmptyMatrixDB(CONTRACT_ADDRESS, USDT_ADDRESS);
+      allSellAutoStore = {
+        autoEnabled: allSellAutoStore.autoEnabled,
+        lastExecutedCycleKey: null,
+        lastExecutedAt: null,
+        history: [],
+      };
+      saveAllSellAutoStore();
       saveMatrixDBToDisk(true);
       await syncAllMatrixDatabase(CONTRACT_ADDRESS, true);
+      await syncAllMatrixDBToPostgres();
+      broadcastAllMatrixUpdates();
       res.json({
         success: true,
         contractAddress: CONTRACT_ADDRESS,
         lastSyncedAt: matrixDB.lastSyncedAt,
-        message: '🧹 ล้างแคชฐานข้อมูลเก่าและดึงข้อมูลสดจาก Smart Contract ใหม่ครบ 18 แรงค์สำเร็จ!',
+        message: '🧹 ล้างข้อมูลฐานข้อมูลเก่าทั้งหมดและดึงข้อมูลสดจาก Smart Contract ใหม่ครบ 18 แรงค์สำเร็จ!',
       });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });

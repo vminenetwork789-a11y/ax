@@ -211,7 +211,7 @@ var cliPort = portArgIdx !== -1 ? Number(process.argv[portArgIdx + 1]) : NaN;
 var PORT = Number.isFinite(cliPort) && cliPort > 0 ? cliPort : Number(process.env.PORT || 3e3);
 var CONFIG_FILE_PATH = path.resolve(__dirname, "prisma/contract-config.json");
 var DEFAULT_SYSTEM_CONFIG = {
-  contractAddress: process.env.OVERRIDE_CONTRACT_ADDRESS || process.env.CONTRACT_ADDRESS || "0xBe7012a27d8c648fAacd89d00B73633E880Db7cc",
+  contractAddress: process.env.OVERRIDE_CONTRACT_ADDRESS || process.env.CONTRACT_ADDRESS || "0xcE4b7F8471e275681ed6Da5B52a53115078866Fe",
   usdtAddress: process.env.USDT_ADDRESS || "0x05f24E1F598DF1aE8d0B424ce978f8ea33bB752b",
   chainId: Number(process.env.CHAIN_ID || 97),
   networkName: process.env.NETWORK_NAME || "BNB Smart Chain Testnet",
@@ -262,7 +262,8 @@ var SERVER_LEGACY_CONTRACTS = /* @__PURE__ */ new Set([
   "0xd3e4e4d7f367e563756d82989bb930b0261eb2ba",
   "0x49a754084903678b7d46ff2934edb037cd1ab518",
   "0x8b2ef84f543f5c1dfa8240a1853d63efe66006eb",
-  "0xb3832d4cc6dae0b24f1e6660d7c85dcc1f005cd1"
+  "0xb3832d4cc6dae0b24f1e6660d7c85dcc1f005cd1",
+  "0xbe7012a27d8c648faacd89d00b73633e880db7cc"
 ]);
 var SERVER_LEGACY_USDT = /* @__PURE__ */ new Set([
   "0x95856be9c16afc9c147c034cd6a514d730bd90ba"
@@ -377,6 +378,28 @@ async function ensurePostgresSchema() {
   `);
   pgSchemaReady = true;
 }
+async function clearPostgresTables() {
+  if (!pgPool || !pgConnected) return;
+  try {
+    if (!pgSchemaReady) {
+      await ensurePostgresSchema();
+    }
+    await pgPool.query(
+      `TRUNCATE TABLE accounts, wallets, matrix_levels, matrix_nodes, income_channels, activities, matrix_db_snapshots RESTART IDENTITY CASCADE;`
+    );
+    pgTablesCount = {
+      accounts: 0,
+      matrix_levels: 0,
+      income_channels: 0,
+      activities: 0,
+      wallets: 0,
+      matrix_nodes: 0
+    };
+    console.log("\u{1F9F9} [PostgreSQL] Cleared all tables cleanly.");
+  } catch (e) {
+    console.warn("\u26A0\uFE0F [PostgreSQL] clearPostgresTables notice:", e?.message);
+  }
+}
 async function hydrateMatrixDBFromPostgres() {
   if (!pgPool || !pgConnected || !pgSchemaReady) return;
   try {
@@ -385,6 +408,16 @@ async function hydrateMatrixDBFromPostgres() {
       [CONTRACT_ADDRESS]
     );
     const snap = res.rows[0]?.payload;
+    if (!snap) {
+      const otherSnaps = await pgPool.query(
+        `SELECT COUNT(*)::int AS cnt FROM matrix_db_snapshots WHERE LOWER(contract_address) <> LOWER($1)`,
+        [CONTRACT_ADDRESS]
+      );
+      if ((otherSnaps.rows[0]?.cnt || 0) > 0) {
+        await clearPostgresTables();
+      }
+      return;
+    }
     if (snap && snap.contractAddress && snap.contractAddress.toLowerCase() === CONTRACT_ADDRESS.toLowerCase()) {
       for (let r = 1; r <= 18; r++) {
         for (const n of snap.nodesByRank?.[r] || []) {
@@ -4259,6 +4292,12 @@ async function startApp() {
         rpcUrl: rpcUrl || activeSystemConfig.rpcUrl,
         blockExplorerUrl: blockExplorerUrl || activeSystemConfig.blockExplorerUrl
       });
+      rankSyncTimestamps.clear();
+      knownAdminFreeNodeKeys.clear();
+      inspectedAdminTxCache.clear();
+      reservationsMap.clear();
+      inMemoryDB.nodes.clear();
+      await clearPostgresTables();
       matrixDB = createEmptyMatrixDB(CONTRACT_ADDRESS, USDT_ADDRESS);
       saveMatrixDBToDisk(true);
       broadcastAllMatrixUpdates();
@@ -8092,20 +8131,28 @@ async function startApp() {
   const handleClearCacheRequest = async (_req, res) => {
     try {
       rankSyncTimestamps.clear();
-      for (let r = 1; r <= 18; r++) {
-        matrixDB.nodesByRank[r] = [];
-        matrixDB.rankCounts[r] = 0;
-      }
-      matrixDB.rewardLogs = [];
-      matrixDB.upgradeLogs = [];
-      matrixDB.userRankVaults = {};
+      knownAdminFreeNodeKeys.clear();
+      inspectedAdminTxCache.clear();
+      reservationsMap.clear();
+      inMemoryDB.nodes.clear();
+      await clearPostgresTables();
+      matrixDB = createEmptyMatrixDB(CONTRACT_ADDRESS, USDT_ADDRESS);
+      allSellAutoStore = {
+        autoEnabled: allSellAutoStore.autoEnabled,
+        lastExecutedCycleKey: null,
+        lastExecutedAt: null,
+        history: []
+      };
+      saveAllSellAutoStore();
       saveMatrixDBToDisk(true);
       await syncAllMatrixDatabase(CONTRACT_ADDRESS, true);
+      await syncAllMatrixDBToPostgres();
+      broadcastAllMatrixUpdates();
       res.json({
         success: true,
         contractAddress: CONTRACT_ADDRESS,
         lastSyncedAt: matrixDB.lastSyncedAt,
-        message: "\u{1F9F9} \u0E25\u0E49\u0E32\u0E07\u0E41\u0E04\u0E0A\u0E10\u0E32\u0E19\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E40\u0E01\u0E48\u0E32\u0E41\u0E25\u0E30\u0E14\u0E36\u0E07\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E2A\u0E14\u0E08\u0E32\u0E01 Smart Contract \u0E43\u0E2B\u0E21\u0E48\u0E04\u0E23\u0E1A 18 \u0E41\u0E23\u0E07\u0E04\u0E4C\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08!"
+        message: "\u{1F9F9} \u0E25\u0E49\u0E32\u0E07\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E10\u0E32\u0E19\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E40\u0E01\u0E48\u0E32\u0E17\u0E31\u0E49\u0E07\u0E2B\u0E21\u0E14\u0E41\u0E25\u0E30\u0E14\u0E36\u0E07\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E2A\u0E14\u0E08\u0E32\u0E01 Smart Contract \u0E43\u0E2B\u0E21\u0E48\u0E04\u0E23\u0E1A 18 \u0E41\u0E23\u0E07\u0E04\u0E4C\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08!"
       });
     } catch (err) {
       res.status(500).json({ success: false, error: err.message });
