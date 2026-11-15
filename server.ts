@@ -388,6 +388,78 @@ let pgTablesCount: Record<string, number> = {};
 let pgSyncTimer: NodeJS.Timeout | null = null;
 let pgSyncInFlight: Promise<void> | null = null;
 
+const ALLSELL_PAYOUT_FILE_PATH = path.resolve(__dirname, 'prisma/allsell-payouts.json');
+
+interface AllSellPayoutTransferItem {
+  poolNumber: number;
+  poolTitleTh: string;
+  mainId: number;
+  recipientWallet: string;
+  amountUsdt: number;
+  txHash: string;
+  mode: 'ONCHAIN_TRANSFER' | 'CYCLE_SETTLEMENT';
+}
+
+interface AllSellPayoutCycleRecord {
+  id: string;
+  contractAddress: string;
+  cycleKey: string;
+  cycleLabelTh: string;
+  triggerType: 'AUTO_SCHEDULE' | 'MANUAL_TRIGGER';
+  executedAt: string;
+  totalAllSellPoolUsdt: number;
+  totalDistributedUsdt: number;
+  carriedOverUsdt: number;
+  qualifiedRecipientsCount: number;
+  transfers: AllSellPayoutTransferItem[];
+  noteTh: string;
+}
+
+interface AllSellAutoStore {
+  autoEnabled: boolean;
+  lastExecutedCycleKey: string | null;
+  lastExecutedAt: string | null;
+  history: AllSellPayoutCycleRecord[];
+}
+
+function loadAllSellAutoStore(): AllSellAutoStore {
+  try {
+    if (fs.existsSync(ALLSELL_PAYOUT_FILE_PATH)) {
+      const raw = fs.readFileSync(ALLSELL_PAYOUT_FILE_PATH, 'utf8');
+      const parsed = JSON.parse(raw);
+      return {
+        autoEnabled: parsed.autoEnabled !== false,
+        lastExecutedCycleKey: parsed.lastExecutedCycleKey || null,
+        lastExecutedAt: parsed.lastExecutedAt || null,
+        history: Array.isArray(parsed.history) ? parsed.history : [],
+      };
+    }
+  } catch {
+    // ignore read errors
+  }
+  return {
+    autoEnabled: true,
+    lastExecutedCycleKey: null,
+    lastExecutedAt: null,
+    history: [],
+  };
+}
+
+let allSellAutoStore: AllSellAutoStore = loadAllSellAutoStore();
+
+function saveAllSellAutoStore(syncToPg = true) {
+  try {
+    const dir = path.dirname(ALLSELL_PAYOUT_FILE_PATH);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(ALLSELL_PAYOUT_FILE_PATH, JSON.stringify(allSellAutoStore, null, 2), 'utf8');
+  } catch {
+    // ignore write errors
+  }
+  if (syncToPg && pgPool && pgConnected && pgSchemaReady) {
+    syncAllSellStoreToPostgres().catch(() => {});
+  }
+}
+
 async function ensurePostgresSchema() {
   if (!pgPool) return;
   await pgPool.query(`
@@ -463,6 +535,63 @@ async function ensurePostgresSchema() {
       last_synced_block BIGINT DEFAULT 0,
       updated_at TIMESTAMPTZ DEFAULT NOW()
     );
+    CREATE TABLE IF NOT EXISTS allsell_auto_config (
+      id TEXT PRIMARY KEY,
+      auto_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+      last_executed_cycle_key TEXT,
+      last_executed_at TEXT,
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS allsell_payout_cycles (
+      id TEXT PRIMARY KEY,
+      contract_address TEXT NOT NULL,
+      cycle_key TEXT NOT NULL,
+      cycle_label_th TEXT NOT NULL,
+      trigger_type TEXT NOT NULL,
+      executed_at TEXT NOT NULL,
+      total_allsell_pool_usdt NUMERIC(20, 6) NOT NULL DEFAULT 0,
+      total_distributed_usdt NUMERIC(20, 6) NOT NULL DEFAULT 0,
+      carried_over_usdt NUMERIC(20, 6) NOT NULL DEFAULT 0,
+      qualified_recipients_count INTEGER NOT NULL DEFAULT 0,
+      transfers JSONB NOT NULL DEFAULT '[]'::jsonb,
+      note_th TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS allsell_payout_transfers (
+      id TEXT PRIMARY KEY,
+      cycle_id TEXT NOT NULL,
+      contract_address TEXT NOT NULL,
+      cycle_key TEXT NOT NULL,
+      pool_number INTEGER NOT NULL,
+      pool_title_th TEXT NOT NULL,
+      main_id INTEGER NOT NULL,
+      recipient_wallet TEXT NOT NULL,
+      amount_usdt NUMERIC(20, 6) NOT NULL,
+      tx_hash TEXT NOT NULL,
+      mode TEXT NOT NULL,
+      executed_at TEXT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS allsell_inflows (
+      id TEXT PRIMARY KEY,
+      contract_address TEXT NOT NULL,
+      rank INTEGER NOT NULL,
+      from_node_id INTEGER NOT NULL,
+      from_main_id INTEGER NOT NULL,
+      from_node_type TEXT NOT NULL,
+      parent_id INTEGER NOT NULL,
+      amount_usdt NUMERIC(20, 6) NOT NULL,
+      recipient TEXT NOT NULL,
+      note TEXT NOT NULL,
+      tx_hash TEXT,
+      block_number BIGINT,
+      event_time TEXT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_allsell_cycles_contract ON allsell_payout_cycles (LOWER(contract_address));
+    CREATE INDEX IF NOT EXISTS idx_allsell_cycles_executed ON allsell_payout_cycles (executed_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_allsell_transfers_cycle ON allsell_payout_transfers (cycle_id);
+    CREATE INDEX IF NOT EXISTS idx_allsell_inflows_contract ON allsell_inflows (LOWER(contract_address));
     ALTER TABLE matrix_nodes ADD COLUMN IF NOT EXISTS rank INTEGER NOT NULL DEFAULT 1;
     ALTER TABLE matrix_nodes ADD COLUMN IF NOT EXISTS node_id INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE matrix_nodes ADD COLUMN IF NOT EXISTS owner TEXT;
@@ -473,6 +602,170 @@ async function ensurePostgresSchema() {
     ALTER TABLE matrix_nodes ADD COLUMN IF NOT EXISTS is_admin_free_upgrade BOOLEAN DEFAULT FALSE;
   `);
   pgSchemaReady = true;
+}
+
+async function hydrateAllSellAutoFromPostgres() {
+  if (!pgPool || !pgConnected || !pgSchemaReady) return;
+  try {
+    const cfgRes = await pgPool.query(
+      `SELECT auto_enabled, last_executed_cycle_key, last_executed_at
+       FROM allsell_auto_config WHERE id = 'default' LIMIT 1`
+    );
+    const cyclesRes = await pgPool.query(
+      `SELECT id, contract_address, cycle_key, cycle_label_th, trigger_type, executed_at,
+              total_allsell_pool_usdt, total_distributed_usdt, carried_over_usdt,
+              qualified_recipients_count, transfers, note_th
+       FROM allsell_payout_cycles
+       ORDER BY executed_at DESC
+       LIMIT 200`
+    );
+
+    const pgCycles: AllSellPayoutCycleRecord[] = cyclesRes.rows.map((row: any) => ({
+      id: String(row.id),
+      contractAddress: String(row.contract_address || ''),
+      cycleKey: String(row.cycle_key || ''),
+      cycleLabelTh: String(row.cycle_label_th || ''),
+      triggerType: row.trigger_type === 'AUTO_SCHEDULE' ? 'AUTO_SCHEDULE' : 'MANUAL_TRIGGER',
+      executedAt: String(row.executed_at || ''),
+      totalAllSellPoolUsdt: Number(row.total_allsell_pool_usdt || 0),
+      totalDistributedUsdt: Number(row.total_distributed_usdt || 0),
+      carriedOverUsdt: Number(row.carried_over_usdt || 0),
+      qualifiedRecipientsCount: Number(row.qualified_recipients_count || 0),
+      transfers: Array.isArray(row.transfers) ? row.transfers : [],
+      noteTh: String(row.note_th || ''),
+    }));
+
+    const mergedById = new Map<string, AllSellPayoutCycleRecord>();
+    for (const c of allSellAutoStore.history || []) {
+      if (c?.id) mergedById.set(c.id, c);
+    }
+    for (const c of pgCycles) {
+      if (c?.id && !mergedById.has(c.id)) {
+        mergedById.set(c.id, c);
+      }
+    }
+
+    const mergedHistory = Array.from(mergedById.values())
+      .sort((a, b) => new Date(b.executedAt).getTime() - new Date(a.executedAt).getTime())
+      .slice(0, 200);
+
+    let changed = mergedHistory.length !== (allSellAutoStore.history || []).length;
+    if (cfgRes.rows[0]) {
+      const cfg = cfgRes.rows[0];
+      const pgLastMs = cfg.last_executed_at ? new Date(cfg.last_executed_at).getTime() : 0;
+      const localLastMs = allSellAutoStore.lastExecutedAt
+        ? new Date(allSellAutoStore.lastExecutedAt).getTime()
+        : 0;
+      if (pgLastMs > localLastMs || !allSellAutoStore.lastExecutedAt) {
+        allSellAutoStore.autoEnabled = Boolean(cfg.auto_enabled);
+        allSellAutoStore.lastExecutedCycleKey = cfg.last_executed_cycle_key || allSellAutoStore.lastExecutedCycleKey;
+        allSellAutoStore.lastExecutedAt = cfg.last_executed_at || allSellAutoStore.lastExecutedAt;
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      allSellAutoStore.history = mergedHistory;
+      saveAllSellAutoStore(false);
+    }
+  } catch (e: any) {
+    console.warn('⚠️ [PostgreSQL] hydrateAllSellAutoFromPostgres notice:', e?.message);
+  }
+}
+
+async function syncAllSellStoreToPostgres(existingClient?: pg.PoolClient) {
+  if (!pgPool || !pgConnected || !pgSchemaReady) return;
+  const runner: { query: (text: string, params?: any[]) => Promise<any> } = existingClient || pgPool;
+  try {
+    await runner.query(
+      `INSERT INTO allsell_auto_config (id, auto_enabled, last_executed_cycle_key, last_executed_at, updated_at)
+       VALUES ('default', $1, $2, $3, NOW())
+       ON CONFLICT (id) DO UPDATE SET
+         auto_enabled = EXCLUDED.auto_enabled,
+         last_executed_cycle_key = EXCLUDED.last_executed_cycle_key,
+         last_executed_at = EXCLUDED.last_executed_at,
+         updated_at = NOW()`,
+      [
+        Boolean(allSellAutoStore.autoEnabled),
+        allSellAutoStore.lastExecutedCycleKey || null,
+        allSellAutoStore.lastExecutedAt || null,
+      ]
+    );
+
+    for (const rec of allSellAutoStore.history || []) {
+      if (!rec?.id) continue;
+      await runner.query(
+        `INSERT INTO allsell_payout_cycles (
+           id, contract_address, cycle_key, cycle_label_th, trigger_type, executed_at,
+           total_allsell_pool_usdt, total_distributed_usdt, carried_over_usdt,
+           qualified_recipients_count, transfers, note_th
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12)
+         ON CONFLICT (id) DO UPDATE SET
+           contract_address = EXCLUDED.contract_address,
+           cycle_key = EXCLUDED.cycle_key,
+           cycle_label_th = EXCLUDED.cycle_label_th,
+           trigger_type = EXCLUDED.trigger_type,
+           executed_at = EXCLUDED.executed_at,
+           total_allsell_pool_usdt = EXCLUDED.total_allsell_pool_usdt,
+           total_distributed_usdt = EXCLUDED.total_distributed_usdt,
+           carried_over_usdt = EXCLUDED.carried_over_usdt,
+           qualified_recipients_count = EXCLUDED.qualified_recipients_count,
+           transfers = EXCLUDED.transfers,
+           note_th = EXCLUDED.note_th`,
+        [
+          String(rec.id),
+          String(rec.contractAddress || CONTRACT_ADDRESS),
+          String(rec.cycleKey || ''),
+          String(rec.cycleLabelTh || ''),
+          String(rec.triggerType || 'MANUAL_TRIGGER'),
+          String(rec.executedAt || new Date().toISOString()),
+          Number(rec.totalAllSellPoolUsdt || 0).toFixed(6),
+          Number(rec.totalDistributedUsdt || 0).toFixed(6),
+          Number(rec.carriedOverUsdt || 0).toFixed(6),
+          Number(rec.qualifiedRecipientsCount || 0),
+          JSON.stringify(Array.isArray(rec.transfers) ? rec.transfers : []),
+          String(rec.noteTh || ''),
+        ]
+      );
+
+      const tList = Array.isArray(rec.transfers) ? rec.transfers : [];
+      for (let i = 0; i < tList.length; i++) {
+        const t = tList[i];
+        const tId = `${rec.id}:${i}:${Number(t.poolNumber || 0)}:${Number(t.mainId || 0)}`;
+        await runner.query(
+          `INSERT INTO allsell_payout_transfers (
+             id, cycle_id, contract_address, cycle_key, pool_number, pool_title_th,
+             main_id, recipient_wallet, amount_usdt, tx_hash, mode, executed_at
+           )
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+           ON CONFLICT (id) DO UPDATE SET
+             amount_usdt = EXCLUDED.amount_usdt,
+             tx_hash = EXCLUDED.tx_hash,
+             mode = EXCLUDED.mode`,
+          [
+            tId,
+            String(rec.id),
+            String(rec.contractAddress || CONTRACT_ADDRESS),
+            String(rec.cycleKey || ''),
+            Number(t.poolNumber || 1),
+            String(t.poolTitleTh || ''),
+            Number(t.mainId || 0),
+            String(t.recipientWallet || ''),
+            Number(t.amountUsdt || 0).toFixed(6),
+            String(t.txHash || ''),
+            String(t.mode || 'CYCLE_SETTLEMENT'),
+            String(rec.executedAt || new Date().toISOString()),
+          ]
+        );
+      }
+    }
+    if (!existingClient) {
+      await refreshPgTableCounts();
+    }
+  } catch (e: any) {
+    console.warn('⚠️ [PostgreSQL] syncAllSellStoreToPostgres notice:', e?.message);
+  }
 }
 
 async function hydrateMatrixDBFromPostgres() {
@@ -550,6 +843,7 @@ function initPostgresPool() {
         try {
           await ensurePostgresSchema();
           await hydrateMatrixDBFromPostgres();
+          await hydrateAllSellAutoFromPostgres();
           await syncAllMatrixDBToPostgres();
         } catch (schemaErr: any) {
           pgLastError = schemaErr?.message || String(schemaErr);
@@ -566,7 +860,18 @@ function initPostgresPool() {
 async function refreshPgTableCounts() {
   if (!pgPool || !pgConnected) return;
   try {
-    const tables = ['accounts', 'matrix_levels', 'income_channels', 'activities', 'wallets', 'matrix_nodes'];
+    const tables = [
+      'accounts',
+      'matrix_levels',
+      'income_channels',
+      'activities',
+      'wallets',
+      'matrix_nodes',
+      'allsell_inflows',
+      'allsell_payout_cycles',
+      'allsell_payout_transfers',
+      'allsell_auto_config',
+    ];
     const counts: Record<string, number> = {};
     for (const t of tables) {
       try {
@@ -928,7 +1233,96 @@ async function syncAllMatrixDBToPostgres() {
           );
         }
 
-        // 7. Persist full JSONB snapshot
+        // 7. Sync AllSell 4% inflows & payout cycles/transfers
+        const allSellWalletAddr =
+          matrixDB.systemWallets.allSellWallet || '0xBeFEB9871a20656aeF7E8d218f751e9C23FAF710';
+        const contractAddrLower = (matrixDB.contractAddress || CONTRACT_ADDRESS).toLowerCase();
+        for (let r = 1; r <= 18; r++) {
+          const rNodes = matrixDB.nodesByRank[r] || [];
+          if (rNodes.length <= 1) continue;
+          const unitPrice = RANK_PRICES_USDT[r - 1] || 5;
+          const allSellAmt = Number((unitPrice * 0.04).toFixed(2));
+          const rMap = new Map<number, IndexedTreeNode>();
+          for (const nodeItem of rNodes) rMap.set(nodeItem.id, nodeItem);
+
+          for (const nodeItem of rNodes) {
+            if (nodeItem.id <= 1 || nodeItem.isAdminFreeUpgrade) continue;
+            const parentItem = rMap.get(nodeItem.parentId);
+            if (!parentItem || parentItem.leftChild !== nodeItem.id) continue;
+
+            const fromMainId = Number(nodeItem.originMainId || nodeItem.id);
+            const fromNodeType = nodeItem.isExtraId
+              ? `Extra R${r}-#${nodeItem.id}`
+              : nodeItem.isClone
+              ? `โคลน R${r}-#${nodeItem.id} (ของ Main #${fromMainId})`
+              : nodeItem.originType === 'AUTO_NEW_MAIN'
+              ? `Auto ID #${fromMainId} (R${r}-#${nodeItem.id})`
+              : `Main #${fromMainId} (R${r}-#${nodeItem.id})`;
+
+            const matchingAllSellRew = (matrixDB.rewardLogs || []).find(
+              (rw) =>
+                String(rw.rewardType || '').toUpperCase() === 'ALLSELL' &&
+                Number(rw.rank || 1) === r &&
+                Number(rw.fromNodeId || 0) === nodeItem.id
+            );
+            const matchingNodeTx = (matrixDB.transactionLogs || []).find(
+              (t) =>
+                Number(t.rank || 1) === r &&
+                (Number(t.nodeId || 0) === nodeItem.id || Number(t.mainNodeId || 0) === fromMainId) &&
+                isRealTxHash(t.txHash)
+            );
+
+            const inflowId = `${contractAddrLower}:r${r}-#${nodeItem.id}`;
+            const eventTime =
+              nodeItem.createdAt ||
+              matchingAllSellRew?.createdAt ||
+              matchingNodeTx?.timestamp ||
+              matrixDB.lastSyncedAt ||
+              new Date().toISOString();
+            const txHash = isRealTxHash(matchingAllSellRew?.txHash)
+              ? matchingAllSellRew?.txHash
+              : matchingNodeTx?.txHash || matchingAllSellRew?.txHash || null;
+            const blockNumber =
+              matchingAllSellRew?.blockNumber || matchingNodeTx?.blockNumber || null;
+
+            await client.query(
+              `INSERT INTO allsell_inflows (
+                 id, contract_address, rank, from_node_id, from_main_id, from_node_type,
+                 parent_id, amount_usdt, recipient, note, tx_hash, block_number, event_time
+               )
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+               ON CONFLICT (id) DO UPDATE SET
+                 from_main_id = EXCLUDED.from_main_id,
+                 from_node_type = EXCLUDED.from_node_type,
+                 parent_id = EXCLUDED.parent_id,
+                 amount_usdt = EXCLUDED.amount_usdt,
+                 recipient = EXCLUDED.recipient,
+                 note = EXCLUDED.note,
+                 tx_hash = COALESCE(EXCLUDED.tx_hash, allsell_inflows.tx_hash),
+                 block_number = COALESCE(EXCLUDED.block_number, allsell_inflows.block_number),
+                 event_time = EXCLUDED.event_time`,
+              [
+                inflowId,
+                matrixDB.contractAddress || CONTRACT_ADDRESS,
+                r,
+                nodeItem.id,
+                fromMainId,
+                fromNodeType,
+                parentItem.id,
+                allSellAmt.toFixed(6),
+                matchingAllSellRew?.recipient || allSellWalletAddr,
+                `4% AllSell จาก ${fromNodeType} (วางเม็ดซ้ายใต้ R${r}-#${parentItem.id})`,
+                txHash,
+                blockNumber ? Number(blockNumber) : null,
+                eventTime,
+              ]
+            );
+          }
+        }
+
+        await syncAllSellStoreToPostgres(client);
+
+        // 8. Persist full JSONB snapshot
         await client.query(
           `INSERT INTO matrix_db_snapshots (contract_address, payload, last_synced_block, updated_at)
            VALUES ($1, $2::jsonb, $3, NOW())
@@ -7871,6 +8265,8 @@ async function startApp() {
         recipient: string;
         note: string;
         timestamp: string;
+        txHash?: string;
+        blockNumber?: number;
       }> = [];
       const botHistory: Array<{
         rank: number;
@@ -7947,14 +8343,21 @@ async function startApp() {
               Number(rw.rank || 1) === rankNum &&
               Number(rw.fromNodeId || 0) === id
           );
-          const matchingNodeTx = !isRealTxHash(matchingBotRew?.txHash)
-            ? (matrixDB.transactionLogs || []).find(
-                (t) =>
-                  Number(t.rank || 1) === rankNum &&
-                  (Number(t.nodeId || 0) === id || Number(t.mainNodeId || 0) === childCanonMainId) &&
-                  isRealTxHash(t.txHash)
-              )
-            : undefined;
+          const matchingAllSellRew = (matrixDB.rewardLogs || []).find(
+            (rw) =>
+              String(rw.rewardType || '').toUpperCase() === 'ALLSELL' &&
+              Number(rw.rank || 1) === rankNum &&
+              Number(rw.fromNodeId || 0) === id
+          );
+          const matchingNodeTx =
+            !isRealTxHash(matchingBotRew?.txHash) || !isRealTxHash(matchingAllSellRew?.txHash)
+              ? (matrixDB.transactionLogs || []).find(
+                  (t) =>
+                    Number(t.rank || 1) === rankNum &&
+                    (Number(t.nodeId || 0) === id || Number(t.mainNodeId || 0) === childCanonMainId) &&
+                    isRealTxHash(t.txHash)
+                )
+              : undefined;
 
           botHistory.push({
             rank: rankNum,
@@ -7981,7 +8384,11 @@ async function startApp() {
             amountUsdt: allSellAmt,
             recipient: allSellWalletAddr,
             note: `4% AllSell จาก ${childTypeLabel} (วางเม็ดซ้ายใต้ R${rankNum}-#${parent.id})`,
-            timestamp: rowEventTime,
+            timestamp: matchingAllSellRew?.createdAt || matchingNodeTx?.timestamp || rowEventTime,
+            txHash: isRealTxHash(matchingAllSellRew?.txHash)
+              ? matchingAllSellRew?.txHash
+              : matchingNodeTx?.txHash,
+            blockNumber: matchingAllSellRew?.blockNumber || matchingNodeTx?.blockNumber,
           });
 
           const parentOrigin = !parent.isClone
@@ -9059,74 +9466,7 @@ async function startApp() {
   // ============================================================================
   // AUTO ALLSELL PAYOUT ENGINE (ตัดรอบและจ่าย AllSell 4 กอง อัตโนมัติ ทุกวันที่ 1 และ 15)
   // ============================================================================
-  const ALLSELL_PAYOUT_FILE_PATH = path.resolve(__dirname, 'prisma/allsell-payouts.json');
-
-  interface AllSellPayoutTransferItem {
-    poolNumber: number;
-    poolTitleTh: string;
-    mainId: number;
-    recipientWallet: string;
-    amountUsdt: number;
-    txHash: string;
-    mode: 'ONCHAIN_TRANSFER' | 'CYCLE_SETTLEMENT';
-  }
-
-  interface AllSellPayoutCycleRecord {
-    id: string;
-    contractAddress: string;
-    cycleKey: string;
-    cycleLabelTh: string;
-    triggerType: 'AUTO_SCHEDULE' | 'MANUAL_TRIGGER';
-    executedAt: string;
-    totalAllSellPoolUsdt: number;
-    totalDistributedUsdt: number;
-    carriedOverUsdt: number;
-    qualifiedRecipientsCount: number;
-    transfers: AllSellPayoutTransferItem[];
-    noteTh: string;
-  }
-
-  interface AllSellAutoStore {
-    autoEnabled: boolean;
-    lastExecutedCycleKey: string | null;
-    lastExecutedAt: string | null;
-    history: AllSellPayoutCycleRecord[];
-  }
-
-  const loadAllSellAutoStore = (): AllSellAutoStore => {
-    try {
-      if (fs.existsSync(ALLSELL_PAYOUT_FILE_PATH)) {
-        const raw = fs.readFileSync(ALLSELL_PAYOUT_FILE_PATH, 'utf8');
-        const parsed = JSON.parse(raw);
-        return {
-          autoEnabled: parsed.autoEnabled !== false,
-          lastExecutedCycleKey: parsed.lastExecutedCycleKey || null,
-          lastExecutedAt: parsed.lastExecutedAt || null,
-          history: Array.isArray(parsed.history) ? parsed.history : [],
-        };
-      }
-    } catch {
-      // ignore read errors
-    }
-    return {
-      autoEnabled: true,
-      lastExecutedCycleKey: null,
-      lastExecutedAt: null,
-      history: [],
-    };
-  };
-
-  let allSellAutoStore: AllSellAutoStore = loadAllSellAutoStore();
-
-  const saveAllSellAutoStore = () => {
-    try {
-      const dir = path.dirname(ALLSELL_PAYOUT_FILE_PATH);
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(ALLSELL_PAYOUT_FILE_PATH, JSON.stringify(allSellAutoStore, null, 2), 'utf8');
-    } catch {
-      // ignore write errors
-    }
-  };
+  // AllSell store (allSellAutoStore & helpers) initialized at module top-level and synced to PostgreSQL
 
   const computeNextAllSellCycleInfo = () => {
     const nowMs = Date.now();
@@ -9454,10 +9794,22 @@ async function startApp() {
     allSellAutoStore.lastExecutedCycleKey = cycleKey;
     allSellAutoStore.lastExecutedAt = nowIso;
     allSellAutoStore.history.unshift(record);
-    if (allSellAutoStore.history.length > 100) {
-      allSellAutoStore.history = allSellAutoStore.history.slice(0, 100);
+    if (allSellAutoStore.history.length > 200) {
+      allSellAutoStore.history = allSellAutoStore.history.slice(0, 200);
     }
-    saveAllSellAutoStore();
+    saveAllSellAutoStore(false);
+    await recordPostgresActivity({
+      id: record.id,
+      type: 'ALLSELL_PAYOUT',
+      title: `ตัดรอบ AllSell 4% (${cycleLabelTh})`,
+      detail: record.noteTh,
+      amountUsdt: totalDistributedUsdt.toFixed(2),
+      amountDisplay: `${totalDistributedUsdt.toFixed(2)} USDT`,
+      status: 'สำเร็จ',
+      txHash: transfers[0]?.txHash,
+      dateTime: nowIso,
+    });
+    await syncAllSellStoreToPostgres();
     return record;
   };
 
@@ -9476,12 +9828,13 @@ async function startApp() {
     }
   }, 60 * 1000);
 
-  app.post('/api/matrix/allsell-auto-payout/toggle', (req: Request, res: Response) => {
+  app.post('/api/matrix/allsell-auto-payout/toggle', async (req: Request, res: Response) => {
     try {
       const { enabled } = req.body;
       allSellAutoStore.autoEnabled =
         typeof enabled === 'boolean' ? enabled : !allSellAutoStore.autoEnabled;
-      saveAllSellAutoStore();
+      saveAllSellAutoStore(false);
+      await syncAllSellStoreToPostgres();
       res.json({
         success: true,
         autoEnabled: allSellAutoStore.autoEnabled,
@@ -9505,6 +9858,104 @@ async function startApp() {
       });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.get('/api/matrix/allsell-history', async (req: Request, res: Response) => {
+    try {
+      const includeAllContracts = req.query.all === '1';
+      const targetContract = String(req.query.contractAddress || CONTRACT_ADDRESS).trim();
+
+      if (pgPool && pgConnected && pgSchemaReady) {
+        const [cfgRes, inflowsRes, cyclesRes, transfersRes] = await Promise.all([
+          pgPool.query(
+            `SELECT auto_enabled, last_executed_cycle_key, last_executed_at, updated_at
+             FROM allsell_auto_config WHERE id = 'default' LIMIT 1`
+          ),
+          includeAllContracts
+            ? pgPool.query(
+                `SELECT id, contract_address, rank, from_node_id, from_main_id, from_node_type,
+                        parent_id, amount_usdt, recipient, note, tx_hash, block_number, event_time
+                 FROM allsell_inflows ORDER BY event_time DESC, rank ASC, from_node_id DESC LIMIT 500`
+              )
+            : pgPool.query(
+                `SELECT id, contract_address, rank, from_node_id, from_main_id, from_node_type,
+                        parent_id, amount_usdt, recipient, note, tx_hash, block_number, event_time
+                 FROM allsell_inflows WHERE LOWER(contract_address) = LOWER($1)
+                 ORDER BY event_time DESC, rank ASC, from_node_id DESC LIMIT 500`,
+                [targetContract]
+              ),
+          includeAllContracts
+            ? pgPool.query(
+                `SELECT id, contract_address, cycle_key, cycle_label_th, trigger_type, executed_at,
+                        total_allsell_pool_usdt, total_distributed_usdt, carried_over_usdt,
+                        qualified_recipients_count, transfers, note_th
+                 FROM allsell_payout_cycles ORDER BY executed_at DESC LIMIT 200`
+              )
+            : pgPool.query(
+                `SELECT id, contract_address, cycle_key, cycle_label_th, trigger_type, executed_at,
+                        total_allsell_pool_usdt, total_distributed_usdt, carried_over_usdt,
+                        qualified_recipients_count, transfers, note_th
+                 FROM allsell_payout_cycles WHERE LOWER(contract_address) = LOWER($1)
+                 ORDER BY executed_at DESC LIMIT 200`,
+                [targetContract]
+              ),
+          includeAllContracts
+            ? pgPool.query(
+                `SELECT id, cycle_id, contract_address, cycle_key, pool_number, pool_title_th,
+                        main_id, recipient_wallet, amount_usdt, tx_hash, mode, executed_at
+                 FROM allsell_payout_transfers ORDER BY executed_at DESC LIMIT 500`
+              )
+            : pgPool.query(
+                `SELECT id, cycle_id, contract_address, cycle_key, pool_number, pool_title_th,
+                        main_id, recipient_wallet, amount_usdt, tx_hash, mode, executed_at
+                 FROM allsell_payout_transfers WHERE LOWER(contract_address) = LOWER($1)
+                 ORDER BY executed_at DESC LIMIT 500`,
+                [targetContract]
+              ),
+        ]);
+
+        return res.json({
+          success: true,
+          source: 'POSTGRESQL',
+          contractAddress: targetContract,
+          autoConfig: cfgRes.rows[0] || {
+            auto_enabled: allSellAutoStore.autoEnabled,
+            last_executed_cycle_key: allSellAutoStore.lastExecutedCycleKey,
+            last_executed_at: allSellAutoStore.lastExecutedAt,
+          },
+          inflowsCount: inflowsRes.rows.length,
+          inflows: inflowsRes.rows,
+          payoutCyclesCount: cyclesRes.rows.length,
+          payoutCycles: cyclesRes.rows,
+          payoutTransfersCount: transfersRes.rows.length,
+          payoutTransfers: transfersRes.rows,
+        });
+      }
+
+      const fallbackCycles = includeAllContracts
+        ? allSellAutoStore.history
+        : allSellAutoStore.history.filter(
+            (h) => (h.contractAddress || '').toLowerCase() === targetContract.toLowerCase()
+          );
+      return res.json({
+        success: true,
+        source: 'JSON_FALLBACK',
+        contractAddress: targetContract,
+        autoConfig: {
+          auto_enabled: allSellAutoStore.autoEnabled,
+          last_executed_cycle_key: allSellAutoStore.lastExecutedCycleKey,
+          last_executed_at: allSellAutoStore.lastExecutedAt,
+        },
+        inflowsCount: 0,
+        inflows: [],
+        payoutCyclesCount: fallbackCycles.length,
+        payoutCycles: fallbackCycles,
+        payoutTransfersCount: fallbackCycles.reduce((acc, c) => acc + (c.transfers?.length || 0), 0),
+        payoutTransfers: fallbackCycles.flatMap((c) => c.transfers || []),
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || String(err) });
     }
   });
 

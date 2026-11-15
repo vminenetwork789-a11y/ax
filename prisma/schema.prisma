@@ -84,3 +84,76 @@ model RewardLog {
   @@index([recipient])
   @@index([rank])
 }
+
+model AllSellAutoConfig {
+  id                   String   @id @default("default")
+  autoEnabled          Boolean  @default(true) @map("auto_enabled")
+  lastExecutedCycleKey String?  @map("last_executed_cycle_key")
+  lastExecutedAt       String?  @map("last_executed_at")
+  updatedAt            DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("allsell_auto_config")
+}
+
+model AllSellPayoutCycle {
+  id                       String                  @id
+  contractAddress          String                  @map("contract_address")
+  cycleKey                 String                  @map("cycle_key")
+  cycleLabelTh             String                  @map("cycle_label_th")
+  triggerType              String                  @map("trigger_type")
+  executedAt               String                  @map("executed_at")
+  totalAllSellPoolUsdt     Decimal                 @default(0) @map("total_allsell_pool_usdt") @db.Decimal(20, 6)
+  totalDistributedUsdt     Decimal                 @default(0) @map("total_distributed_usdt") @db.Decimal(20, 6)
+  carriedOverUsdt          Decimal                 @default(0) @map("carried_over_usdt") @db.Decimal(20, 6)
+  qualifiedRecipientsCount Int                     @default(0) @map("qualified_recipients_count")
+  transfers                Json                    @default("[]")
+  noteTh                   String?                 @map("note_th")
+  createdAt                DateTime                @default(now()) @map("created_at")
+
+  @@index([contractAddress])
+  @@index([executedAt])
+  @@map("allsell_payout_cycles")
+}
+
+model AllSellPayoutTransfer {
+  id              String   @id
+  cycleId         String   @map("cycle_id")
+  contractAddress String   @map("contract_address")
+  cycleKey        String   @map("cycle_key")
+  poolNumber      Int      @map("pool_number")
+  poolTitleTh     String   @map("pool_title_th")
+  mainId          Int      @map("main_id")
+  recipientWallet String   @map("recipient_wallet")
+  amountUsdt      Decimal  @map("amount_usdt") @db.Decimal(20, 6)
+  txHash          String   @map("tx_hash")
+  mode            String
+  executedAt      String   @map("executed_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@index([cycleId])
+  @@index([contractAddress])
+  @@index([recipientWallet])
+  @@map("allsell_payout_transfers")
+}
+
+model AllSellInflow {
+  id              String   @id
+  contractAddress String   @map("contract_address")
+  rank            Int
+  fromNodeId      Int      @map("from_node_id")
+  fromMainId      Int      @map("from_main_id")
+  fromNodeType    String   @map("from_node_type")
+  parentId        Int      @map("parent_id")
+  amountUsdt      Decimal  @map("amount_usdt") @db.Decimal(20, 6)
+  recipient       String
+  note            String
+  txHash          String?  @map("tx_hash")
+  blockNumber     BigInt?  @map("block_number")
+  eventTime       String   @map("event_time")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@index([contractAddress])
+  @@index([rank])
+  @@map("allsell_inflows")
+}
+
