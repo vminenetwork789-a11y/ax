@@ -501,8 +501,7 @@ contract FractalFlowMatrix27 is Ownable, ReentrancyGuard {
         address directSponsorAddr = _nodeOwner != address(0) ? _nodeOwner : rankNodes[1][r1SponsorId].owner;
         uint256 sponsorNodeInTarget = getMainIdNodeInRank(r1SponsorId, _targetRank);
 
-        uint256 extraNodeId = _createAndPlaceAutoNode(_targetRank, _nodeOwner, directSponsorAddr, sponsorNodeInTarget, true);
-        nodeDirectSponsorNodeId[_targetRank][extraNodeId] = r1SponsorId;
+        uint256 extraNodeId = _createAndPlaceAutoNode(_targetRank, _nodeOwner, directSponsorAddr, sponsorNodeInTarget, r1SponsorId, true);
         emit AutoExtraIdCreated(_nodeOwner, _targetRank, extraNodeId);
         mainIdNextExtraRank[_r1MainId] = _targetRank > 2 ? _targetRank - 1 : MAX_RANK;
     }
@@ -540,7 +539,7 @@ contract FractalFlowMatrix27 is Ownable, ReentrancyGuard {
                 _deductVaultRange(r1MainId, nodeOwner, 1, endR, totalDeduct);
 
                 for (uint256 i = 0; i < count; i++) {
-                    _createAndPlaceAutoNode(1, nodeOwner, nodeOwner, r1MainId, false);
+                    _createAndPlaceAutoNode(1, nodeOwner, nodeOwner, r1MainId, r1MainId, false);
                 }
 
                 emit AutoNewMainIdCreated(nodeOwner, count, totalDeduct);
@@ -841,28 +840,12 @@ contract FractalFlowMatrix27 is Ownable, ReentrancyGuard {
         return newNodeId;
     }
 
-    function _resolveAutoSponsor(uint8 _rank, uint256 _originId, address _sponsor) internal view returns (uint256 spId, address spAddr) {
-        spId = _originId > 0 ? nodeDirectSponsorNodeId[_rank][_originId] : 0;
-        spAddr = _originId > 0 ? rankNodes[_rank][_originId].directSponsor : _sponsor;
-        if (spId == 0 && _rank > 1 && _originId > 0) {
-            uint256 r1Main = nodeToR1MainId[_rank][_originId];
-            if (r1Main > 0 && r1Main < 1_000_000) {
-                uint256 r1SpId = nodeDirectSponsorNodeId[1][r1Main];
-                if (r1SpId > 0) {
-                    spId = getMainIdNodeInRank(r1SpId, _rank);
-                    if (spId == 0) spId = r1SpId;
-                    if (spAddr == address(0)) spAddr = rankNodes[1][r1Main].directSponsor;
-                }
-            }
-        }
-        if (spId == 0) spId = 1;
-    }
-
     function _createAndPlaceAutoNode(
         uint8 _rank,
         address _owner,
         address _sponsor,
         uint256 _sponsorNodeId,
+        uint256 _creatorR1MainId,
         bool _isExtraId
     ) internal returns (uint256) {
         uint256 effSponsor = _sponsorNodeId;
@@ -877,14 +860,20 @@ contract FractalFlowMatrix27 is Ownable, ReentrancyGuard {
         uint256 originId = effSponsor > 0 ? nodeOriginMainId[_rank][effSponsor] : 0;
         if (originId == 0) originId = effSponsor;
 
-        uint256 spId;
+        uint256 spId = _creatorR1MainId > 0 ? _creatorR1MainId : 1;
         address spAddr = _sponsor;
         if (_isExtraId) {
-            spId = originId > 0 ? nodeToR1MainId[_rank][originId] : 1;
-            if (spId == 0) spId = originId > 0 ? originId : 1;
+            if (_creatorR1MainId == 0) {
+                spId = originId > 0 ? nodeToR1MainId[_rank][originId] : 1;
+                if (spId == 0) spId = originId > 0 ? originId : 1;
+            }
+            address creatorOwner = rankNodes[1][spId].owner;
+            if (creatorOwner != address(0)) spAddr = creatorOwner;
         } else {
-            spId = originId > 0 ? originId : 1;
-            address creatorOwner = rankNodes[_rank][spId].owner;
+            if (_creatorR1MainId == 0) {
+                spId = originId > 0 ? originId : 1;
+            }
+            address creatorOwner = rankNodes[1][spId].owner;
             if (creatorOwner != address(0)) spAddr = creatorOwner;
         }
         if (spAddr != address(0)) {

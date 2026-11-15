@@ -3718,6 +3718,12 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         // If nodeId is a clone, it ALWAYS inherits the sponsor of its originMainId (never originMainId itself, except Root #1)
         if (n && n.isClone) {
           const originMain = originMainIdMap.get(nodeId) || nodeId;
+          if (extraIdSourceMainMap.has(originMain)) {
+            return extraIdSourceMainMap.get(originMain)!;
+          }
+          if (autoIdSourceMainMap.has(originMain)) {
+            return autoIdSourceMainMap.get(originMain)!;
+          }
           if (activeRank > 1) {
             const r1OriginMain =
               onChainOriginMap.get(nodeId) ||

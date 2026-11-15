@@ -2416,7 +2416,14 @@ function reconcileRankTreeLinks(nodes: IndexedTreeNode[]): IndexedTreeNode[] {
           const ownerMainsR1 = r1Nodes.filter(
             (m) => !m.isClone && !m.isExtraId && (m.owner || '').toLowerCase() === ok
           );
-          if (ownerMainsR1.length === 1) {
+          const hasValidExistingSp =
+            n.directSponsorNodeId > 0 &&
+            (ownerMainsR1.length === 0 ||
+              ownerMainsR1.some((m) => m.id === n.directSponsorNodeId));
+          if (hasValidExistingSp) {
+            const matchedSp = r1Nodes.find((m) => m.id === n.directSponsorNodeId);
+            if (matchedSp?.owner) n.directSponsor = matchedSp.owner;
+          } else if (ownerMainsR1.length === 1) {
             n.directSponsorNodeId = ownerMainsR1[0].id;
             n.directSponsor = ownerMainsR1[0].owner;
           } else if (ownerMainsR1.length > 1) {
@@ -2460,7 +2467,9 @@ function reconcileRankTreeLinks(nodes: IndexedTreeNode[]): IndexedTreeNode[] {
             n.originMainId = origR1.id;
             const spR1 = r1Nodes.find((x) => x.id === origR1.directSponsorNodeId);
             const canonSpId =
-              spR1 && spR1.isClone && spR1.originMainId > 0
+              origR1.autoSourceMainId && origR1.autoSourceMainId > 0
+                ? origR1.autoSourceMainId
+                : spR1 && spR1.isClone && spR1.originMainId > 0
                 ? spR1.originMainId
                 : origR1.directSponsorNodeId || 1;
             const canonSpNode = r1Nodes.find((x) => x.id === canonSpId) || spR1;
@@ -2483,11 +2492,15 @@ function reconcileRankTreeLinks(nodes: IndexedTreeNode[]): IndexedTreeNode[] {
                 (m.originMainId === n.originMainId || m.id === n.originMainId) &&
                 (!nOwner || (m.owner || '').toLowerCase() === nOwner)
             );
+          const isExtraClone = Boolean(localOrigMain?.isExtraId);
           const r1OriginId = localOrigMain ? localOrigMain.originMainId : n.originMainId;
           if (r1OriginId > 0) {
             n.originMainId = r1OriginId;
           }
-          if (r1OriginId === 1) {
+          if (isExtraClone && localOrigMain) {
+            n.directSponsorNodeId = localOrigMain.directSponsorNodeId || 1;
+            n.directSponsor = localOrigMain.directSponsor || n.directSponsor;
+          } else if (r1OriginId === 1) {
             n.directSponsorNodeId = 0;
             const rootR1 = r1Nodes.find((x) => x.id === 1);
             if (rootR1) n.directSponsor = rootR1.directSponsor;
@@ -2498,7 +2511,9 @@ function reconcileRankTreeLinks(nodes: IndexedTreeNode[]): IndexedTreeNode[] {
             if (origR1) {
               const spR1 = r1Nodes.find((x) => x.id === origR1.directSponsorNodeId);
               const canonSpId =
-                spR1 && spR1.isClone && spR1.originMainId > 0
+                origR1.autoSourceMainId && origR1.autoSourceMainId > 0
+                  ? origR1.autoSourceMainId
+                  : spR1 && spR1.isClone && spR1.originMainId > 0
                   ? spR1.originMainId
                   : origR1.directSponsorNodeId || 1;
               const canonSpNode = r1Nodes.find((x) => x.id === canonSpId) || spR1;
@@ -2942,8 +2957,12 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
         }
 
         if (origNode && !origNode.isClone) {
-          if (origNode.directSponsorNodeId > 0) {
-            rn.directSponsorNodeId = origNode.directSponsorNodeId;
+          const origSp =
+            origNode.autoSourceMainId && origNode.autoSourceMainId > 0
+              ? origNode.autoSourceMainId
+              : origNode.directSponsorNodeId;
+          if (origSp > 0) {
+            rn.directSponsorNodeId = origSp;
           }
           if (origNode.directSponsor && origNode.directSponsor !== ethers.ZeroAddress) {
             rn.directSponsor = origNode.directSponsor;
@@ -2963,7 +2982,14 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
           const ownerMainsR1 = r1Nodes.filter(
             (m) => !m.isClone && !m.isExtraId && (m.owner || '').toLowerCase() === ok
           );
-          if (ownerMainsR1.length === 1) {
+          const hasValidExistingSp =
+            rn.directSponsorNodeId > 0 &&
+            (ownerMainsR1.length === 0 ||
+              ownerMainsR1.some((m) => m.id === rn.directSponsorNodeId));
+          if (hasValidExistingSp) {
+            const matchedSp = r1Nodes.find((m) => m.id === rn.directSponsorNodeId);
+            if (matchedSp?.owner) rn.directSponsor = matchedSp.owner;
+          } else if (ownerMainsR1.length === 1) {
             rn.directSponsorNodeId = ownerMainsR1[0].id;
             rn.directSponsor = ownerMainsR1[0].owner;
           } else if (ownerMainsR1.length > 1) {
