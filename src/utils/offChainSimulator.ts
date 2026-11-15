@@ -1109,16 +1109,12 @@ export async function executeOffChainSimulationAndBatch(
     const count = applicantsQueue.length;
     if (count === 0) throw new Error('จำนวนโหนดที่สมัครต้องมากกว่า 0');
 
-    const rankPrice: bigint = ethers.parseUnits(String(RANK_PRICES_USDT[0] || 5), 18);
-
     let usdtAddress: string = USDT_ADDRESS;
     try {
       usdtAddress = await contract.usdt();
     } catch {
       usdtAddress = USDT_ADDRESS;
     }
-
-    const totalCost = rankPrice * BigInt(count);
 
     onProgress('กำลังตรวจสอบยอด USDT และวงเงินอนุมัติ (Allowance)...');
     const usdtContract = new ethers.Contract(
@@ -1138,6 +1134,9 @@ export async function executeOffChainSimulationAndBatch(
     } catch {
       usdtDecimals = 18;
     }
+
+    const rankPrice: bigint = ethers.parseUnits(String(RANK_PRICES_USDT[0] || 5), usdtDecimals);
+    const totalCost = rankPrice * BigInt(count);
 
     const usdtBalance: bigint = await usdtContract.balanceOf(userAddress);
     if (usdtBalance < totalCost) {

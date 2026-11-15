@@ -5,7 +5,6 @@ import path from "path";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
 import { ethers } from "ethers";
-import { exec } from "child_process";
 import { Queue, Worker, QueueEvents } from "bullmq";
 import Redis from "ioredis";
 import { EventEmitter } from "events";
@@ -18,6 +17,54 @@ queueEventsEmitter.setMaxListeners(200);
 var wssServer = null;
 function setWssServer(wss) {
   wssServer = wss;
+}
+function formatNodeIdentityLabel(rankNum, nodeId) {
+  const nId = Number(nodeId);
+  const rNum = Number(rankNum) || 1;
+  if (nId === 0) {
+    return {
+      th: "Node #0 (Root / \u0E23\u0E30\u0E1A\u0E1A)",
+      en: "Node #0 (Root System)"
+    };
+  }
+  const rankNodes = matrixDB?.nodesByRank?.[rNum] || [];
+  let node = rankNodes.find((n) => Number(n.id) === nId);
+  if (!node && rNum !== 1) {
+    node = (matrixDB?.nodesByRank?.[1] || []).find((n) => Number(n.id) === nId);
+  }
+  if (!node && matrixDB?.nodesByRank) {
+    for (let r = 1; r <= 18; r++) {
+      const list = matrixDB.nodesByRank[r] || [];
+      const cand = list.find((n) => Number(n.id) === nId);
+      if (cand) {
+        node = cand;
+        break;
+      }
+    }
+  }
+  if (!node) {
+    return {
+      th: `Node #${nId}`,
+      en: `Node #${nId}`
+    };
+  }
+  const originMainId = node.originMainId || node.id;
+  if (node.isClone) {
+    return {
+      th: `Node #${nId} (Clone #${nId} \u0E02\u0E2D\u0E07 Main ID #${originMainId})`,
+      en: `Node #${nId} (Clone #${nId} of Main ID #${originMainId})`
+    };
+  }
+  if (node.isExtraId) {
+    return {
+      th: `Node #${nId} (Extra ID #${nId})`,
+      en: `Node #${nId} (Extra ID #${nId})`
+    };
+  }
+  return {
+    th: `Node #${nId} (Main ID #${originMainId})`,
+    en: `Node #${nId} (Main ID #${originMainId})`
+  };
 }
 function getAggregatedTransactions(addressFilter) {
   const transactions = [];
@@ -37,38 +84,45 @@ function getAggregatedTransactions(addressFilter) {
         userAddress: node.owner,
         mainNodeId: node.originMainId || node.id,
         rank: 1,
-        amountUsdt: 5,
+        amountUsdt: RANK_PRICES_USDT[0] || 5,
         timestamp: nodeAny.createdAt || matrixDB.lastSyncedAt || (/* @__PURE__ */ new Date()).toISOString(),
         blockNumber: nodeAny.blockNumber,
         detailsTh: `\u0E15\u0E48\u0E2D\u0E2A\u0E32\u0E22\u0E43\u0E15\u0E49 \u0E2D\u0E31\u0E1E\u0E44\u0E25\u0E19\u0E4C #${node.parentId} (${isLeft ? "\u2199 \u0E1D\u0E31\u0E48\u0E07\u0E0B\u0E49\u0E32\u0E22" : "\u2198 \u0E1D\u0E31\u0E48\u0E07\u0E02\u0E27\u0E32"}) \u2022 \u0E1C\u0E39\u0E49\u0E41\u0E19\u0E30\u0E19\u0E33: ${node.directSponsor ? `${node.directSponsor.slice(0, 6)}...${node.directSponsor.slice(-4)}` : "Root"}`,
         detailsEn: `Placed under Parent #${node.parentId} (${isLeft ? "Left" : "Right"}) \u2022 Sponsor: ${node.directSponsor ? `${node.directSponsor.slice(0, 6)}...${node.directSponsor.slice(-4)}` : "Root"}`
       });
     });
+    const adminFreeKeys = getAdminFreeNodeKeySet();
     const upgrades = matrixDB.upgradeLogs || [];
     upgrades.forEach((u) => {
       const ownerLower = (u.owner || "").toLowerCase();
       if (lowerAddr && ownerLower !== lowerAddr) return;
-      const uCost = parseFloat(u.rankPriceUsdt) || u.costUsdt || RANK_PRICES_USDT[Number(u.toRank) - 1] || 10;
+      const isAdminFree = Boolean(u.isAdminFreeUpgrade) || adminFreeKeys.has(`${Number(u.toRank || 1)}:${Number(u.newNodeId || 0)}`);
+      const uCost = isAdminFree ? 0 : parseFloat(u.rankPriceUsdt) || u.costUsdt || RANK_PRICES_USDT[Number(u.toRank) - 1] || 10;
       transactions.push({
         id: `upg-${u.id || `${u.mainNodeId}-${u.toRank}`}`,
         category: "UPGRADE",
-        titleTh: `\u0E2D\u0E31\u0E1E\u0E40\u0E01\u0E23\u0E14\u0E1C\u0E31\u0E07\u0E41\u0E23\u0E07\u0E04\u0E4C Main ID #${u.mainNodeId} \u2192 Rank ${u.toRank}`,
-        titleEn: `Rank Upgrade Main ID #${u.mainNodeId} \u2192 Rank ${u.toRank}`,
+        titleTh: isAdminFree ? `Admin \u0E2D\u0E31\u0E1B\u0E40\u0E01\u0E23\u0E14\u0E1F\u0E23\u0E35 Main ID #${u.mainNodeId} \u2192 Rank ${u.toRank}` : `\u0E2D\u0E31\u0E1E\u0E40\u0E01\u0E23\u0E14\u0E1C\u0E31\u0E07\u0E41\u0E23\u0E07\u0E04\u0E4C Main ID #${u.mainNodeId} \u2192 Rank ${u.toRank}`,
+        titleEn: isAdminFree ? `Admin Free Upgrade Main ID #${u.mainNodeId} \u2192 Rank ${u.toRank}` : `Rank Upgrade Main ID #${u.mainNodeId} \u2192 Rank ${u.toRank}`,
         userAddress: u.owner,
         mainNodeId: Number(u.mainNodeId),
         rank: Number(u.toRank),
         amountUsdt: uCost,
         timestamp: u.createdAt || matrixDB.lastSyncedAt || (/* @__PURE__ */ new Date()).toISOString(),
         txHash: u.txHash,
-        detailsTh: `\u0E40\u0E25\u0E37\u0E48\u0E2D\u0E19\u0E41\u0E23\u0E07\u0E04\u0E4C\u0E08\u0E32\u0E01 R${u.fromRank} \u0E44\u0E1B\u0E22\u0E31\u0E07 R${u.toRank} (${uCost.toFixed(2)} USDT)`,
-        detailsEn: `Upgraded from R${u.fromRank} to R${u.toRank} (${uCost.toFixed(2)} USDT)`
+        isAdminFreeUpgrade: isAdminFree,
+        detailsTh: isAdminFree ? `Admin \u0E2D\u0E31\u0E1B\u0E40\u0E01\u0E23\u0E14\u0E1F\u0E23\u0E35\u0E08\u0E32\u0E01 R${u.fromRank} \u0E44\u0E1B\u0E22\u0E31\u0E07 R${u.toRank} (0.00 USDT \u2022 \u0E44\u0E21\u0E48\u0E08\u0E48\u0E32\u0E22\u0E04\u0E48\u0E32\u0E04\u0E2D\u0E21)` : `\u0E40\u0E25\u0E37\u0E48\u0E2D\u0E19\u0E41\u0E23\u0E07\u0E04\u0E4C\u0E08\u0E32\u0E01 R${u.fromRank} \u0E44\u0E1B\u0E22\u0E31\u0E07 R${u.toRank} (${uCost.toFixed(2)} USDT)`,
+        detailsEn: isAdminFree ? `Admin free upgrade from R${u.fromRank} to R${u.toRank} (0.00 USDT \u2022 No commission)` : `Upgraded from R${u.fromRank} to R${u.toRank} (${uCost.toFixed(2)} USDT)`
       });
     });
     const rewards = matrixDB.rewardLogs || [];
     rewards.forEach((r, idx) => {
       const recipientLower = (r.recipient || "").toLowerCase();
       if (lowerAddr && recipientLower !== lowerAddr) return;
+      const rRank = Number(r.rank || 1);
+      const fromNid = Number(r.fromNodeId || 0);
+      if (adminFreeKeys.has(`${rRank}:${fromNid}`)) return;
       const amt = parseFloat(r.amount) || 0;
+      if (amt <= 0) return;
       const rTime = r.createdAt || r.timestamp || matrixDB.lastSyncedAt || (/* @__PURE__ */ new Date()).toISOString();
       transactions.push({
         id: `rew-${r.id || idx}`,
@@ -77,12 +131,16 @@ function getAggregatedTransactions(addressFilter) {
         titleEn: `Payout / Reward (${r.rewardType})`,
         userAddress: r.recipient,
         mainNodeId: Number(r.toNodeId || 1),
-        rank: Number(r.rank || 1),
+        rank: rRank,
         amountUsdt: amt,
         timestamp: rTime,
         blockNumber: r.blockNumber,
-        detailsTh: `\u0E44\u0E14\u0E49\u0E23\u0E31\u0E1A\u0E08\u0E32\u0E01 Node #${r.fromNodeId} \u2192 Node #${r.toNodeId} (Rank ${r.rank})`,
-        detailsEn: `Received from Node #${r.fromNodeId} \u2192 Node #${r.toNodeId} (Rank ${r.rank})`
+        txHash: isRealTxHash(r.txHash) ? r.txHash : void 0,
+        rewardType: r.rewardType,
+        fromNodeId: fromNid,
+        toNodeId: Number(r.toNodeId || 0),
+        detailsTh: `\u0E44\u0E14\u0E49\u0E23\u0E31\u0E1A\u0E08\u0E32\u0E01 ${formatNodeIdentityLabel(rRank, fromNid).th} \u2192 ${formatNodeIdentityLabel(rRank, Number(r.toNodeId)).th} (Rank ${rRank})`,
+        detailsEn: `Received from ${formatNodeIdentityLabel(rRank, fromNid).en} \u2192 ${formatNodeIdentityLabel(rRank, Number(r.toNodeId)).en} (Rank ${rRank})`
       });
     });
     transactions.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
@@ -127,18 +185,32 @@ function broadcastAllMatrixUpdates() {
 }
 dotenv.config();
 process.on("unhandledRejection", (reason) => {
+  const reasonStr = reason ? reason.stack || reason.message || String(reason) : "";
+  if (reasonStr.includes("provider destroyed") || reasonStr.includes("cancelled request") || reasonStr.includes("eth_unsubscribe") || reasonStr.includes("UNSUPPORTED_OPERATION") || reasonStr.includes("WebSocket is not open") || reasonStr.includes("connection reset") || reasonStr.includes("ECONNRESET") || reasonStr.includes("ETIMEDOUT")) {
+    return;
+  }
   console.warn("[Process Guard] Unhandled Rejection:", reason);
 });
 process.on("uncaughtException", (err) => {
+  const errStr = err ? err.stack || err.message || String(err) : "";
+  if (errStr.includes("provider destroyed") || errStr.includes("cancelled request") || errStr.includes("eth_unsubscribe") || errStr.includes("UNSUPPORTED_OPERATION") || errStr.includes("WebSocket is not open")) {
+    return;
+  }
+  if (err?.code === "EADDRINUSE") {
+    console.error(`[Process Guard] Port ${PORT} is already in use:`, err);
+    process.exit(1);
+  }
   console.warn("[Process Guard] Uncaught Exception:", err);
 });
 var { Pool } = pg;
 var __filename = fileURLToPath(import.meta.url);
 var __dirname = path.dirname(__filename);
-var PORT = 3000;
+var portArgIdx = process.argv.indexOf("--port");
+var cliPort = portArgIdx !== -1 ? Number(process.argv[portArgIdx + 1]) : NaN;
+var PORT = Number.isFinite(cliPort) && cliPort > 0 ? cliPort : Number(process.env.PORT || 3e3);
 var CONFIG_FILE_PATH = path.resolve(__dirname, "prisma/contract-config.json");
 var DEFAULT_SYSTEM_CONFIG = {
-  contractAddress: process.env.OVERRIDE_CONTRACT_ADDRESS || process.env.CONTRACT_ADDRESS || "0x0742E9581217Cc8Cd6De2Aa80b7Ce9aD881DEEe3",
+  contractAddress: process.env.OVERRIDE_CONTRACT_ADDRESS || process.env.CONTRACT_ADDRESS || "0xB3832D4cc6daE0B24f1e6660d7C85dcc1F005Cd1",
   usdtAddress: process.env.USDT_ADDRESS || "0x05f24E1F598DF1aE8d0B424ce978f8ea33bB752b",
   chainId: Number(process.env.CHAIN_ID || 97),
   networkName: process.env.NETWORK_NAME || "BNB Smart Chain Testnet",
@@ -147,6 +219,11 @@ var DEFAULT_SYSTEM_CONFIG = {
   updatedAt: (/* @__PURE__ */ new Date()).toISOString()
 };
 var SERVER_LEGACY_CONTRACTS = /* @__PURE__ */ new Set([
+  "0x72f6ac64a86b1673ed55ba290ac12f1528ebba67",
+  "0xe6ef0985e12c5bc580a231dcc6d977ccede716d1",
+  "0xda9da3b56b75f5d59ac0b17b402e79dd3dddffba",
+  "0x104d65034b00f0db59497036208f3b798b4c10cc",
+  "0x0742e9581217cc8cd6de2aa80b7ce9ad881deee3",
   "0xc5cf23d0cead13a08b3b3d968a052b956a64fbc6",
   "0xe231fe72e1c2ab2617d8972c4ea15bc9122e514f",
   "0x45405293ecce73f1a8c39ca8c0cc2248d6b9ab77",
@@ -176,17 +253,171 @@ var SERVER_LEGACY_CONTRACTS = /* @__PURE__ */ new Set([
   "0x47ff540a2e04aa36cdc4a4ec6e4feadac1a71b66",
   "0xc115f39897811d83be2613e9722753cfb78d492b",
   "0x191d0c2cd0496e05aa4f91273125ddccc6645df4",
-  "0x36932dca76922f8f05513710db89238258e61378"
+  "0x36932dca76922f8f05513710db89238258e61378",
+  "0xee087e0318a8ac20229892bbc63d2fe43809234d",
+  "0x982a87f726cc1044a546fa853a425e6f445bca3d",
+  "0x3b69efbd1f615cd31e326497555bfa56a194f935",
+  "0x792cd37f508b97e4f86d8747fe7888a281dd1158",
+  "0xd3e4e4d7f367e563756d82989bb930b0261eb2ba",
+  "0x49a754084903678b7d46ff2934edb037cd1ab518",
+  "0x8b2ef84f543f5c1dfa8240a1853d63efe66006eb"
 ]);
 var SERVER_LEGACY_USDT = /* @__PURE__ */ new Set([
   "0x95856be9c16afc9c147c034cd6a514d730bd90ba"
 ]);
-var PG_DATABASE_URL = process.env.DATABASE_URL || "postgresql://user:Siriphong2541%40@187.124.138.252:32772/Aunza";
+var PG_DATABASE_URL = process.env.DATABASE_URL || "";
+function parsePostgresEndpoint(connStr) {
+  if (!connStr) {
+    return { host: "local-json-fallback", port: 0, database: "matrix-db.json" };
+  }
+  try {
+    const parsed = new URL(connStr);
+    return {
+      host: parsed.hostname || "configured",
+      port: parsed.port ? Number(parsed.port) : 5432,
+      database: parsed.pathname.replace(/^\/+/, "") || "postgres"
+    };
+  } catch {
+    return { host: "configured", port: 5432, database: "postgresql" };
+  }
+}
+var PG_ENDPOINT_INFO = parsePostgresEndpoint(PG_DATABASE_URL);
 var pgPool = null;
 var pgConnected = false;
+var pgSchemaReady = false;
 var pgLastError = null;
 var pgTablesCount = {};
+var pgSyncTimer = null;
+var pgSyncInFlight = null;
+async function ensurePostgresSchema() {
+  if (!pgPool) return;
+  await pgPool.query(`
+    CREATE TABLE IF NOT EXISTS accounts (
+      id TEXT PRIMARY KEY,
+      owner TEXT NOT NULL,
+      main_node_id INTEGER,
+      current_max_rank INTEGER DEFAULT 1,
+      sponsor_address TEXT,
+      sponsor_main_node_id INTEGER,
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS wallets (
+      address TEXT PRIMARY KEY,
+      total_nodes INTEGER DEFAULT 0,
+      max_rank INTEGER DEFAULT 1,
+      total_rewards_usdt NUMERIC(20, 6) DEFAULT 0,
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS matrix_levels (
+      rank INTEGER PRIMARY KEY,
+      price_usdt NUMERIC(20, 6) NOT NULL,
+      total_nodes INTEGER DEFAULT 1,
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS matrix_nodes (
+      id TEXT PRIMARY KEY,
+      rank INTEGER NOT NULL DEFAULT 1,
+      node_id INTEGER NOT NULL DEFAULT 0,
+      label TEXT NOT NULL,
+      category TEXT NOT NULL,
+      level INTEGER NOT NULL DEFAULT 1,
+      parent_id TEXT NOT NULL,
+      sponsor_id TEXT NOT NULL,
+      owner TEXT,
+      left_child INTEGER DEFAULT 0,
+      right_child INTEGER DEFAULT 0,
+      is_clone BOOLEAN DEFAULT FALSE,
+      is_extra_id BOOLEAN DEFAULT FALSE,
+      is_admin_free_upgrade BOOLEAN DEFAULT FALSE,
+      personal_volume_usdt NUMERIC(20, 6) DEFAULT 0,
+      direct_referrals INTEGER DEFAULT 0,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS income_channels (
+      id TEXT PRIMARY KEY,
+      rank INTEGER NOT NULL,
+      reward_type TEXT NOT NULL,
+      from_node_id INTEGER NOT NULL,
+      to_node_id INTEGER NOT NULL,
+      recipient TEXT NOT NULL,
+      amount_usdt NUMERIC(20, 6) NOT NULL,
+      tx_hash TEXT,
+      block_number BIGINT,
+      is_admin_free_upgrade BOOLEAN DEFAULT FALSE,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS activities (
+      id TEXT PRIMARY KEY,
+      date_time TEXT NOT NULL,
+      type TEXT NOT NULL,
+      title TEXT NOT NULL,
+      detail TEXT NOT NULL,
+      amount_usdt TEXT NOT NULL,
+      amount_display TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT '\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08',
+      tx_hash TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS matrix_db_snapshots (
+      contract_address TEXT PRIMARY KEY,
+      payload JSONB NOT NULL,
+      last_synced_block BIGINT DEFAULT 0,
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    ALTER TABLE matrix_nodes ADD COLUMN IF NOT EXISTS rank INTEGER NOT NULL DEFAULT 1;
+    ALTER TABLE matrix_nodes ADD COLUMN IF NOT EXISTS node_id INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE matrix_nodes ADD COLUMN IF NOT EXISTS owner TEXT;
+    ALTER TABLE matrix_nodes ADD COLUMN IF NOT EXISTS left_child INTEGER DEFAULT 0;
+    ALTER TABLE matrix_nodes ADD COLUMN IF NOT EXISTS right_child INTEGER DEFAULT 0;
+    ALTER TABLE matrix_nodes ADD COLUMN IF NOT EXISTS is_clone BOOLEAN DEFAULT FALSE;
+    ALTER TABLE matrix_nodes ADD COLUMN IF NOT EXISTS is_extra_id BOOLEAN DEFAULT FALSE;
+    ALTER TABLE matrix_nodes ADD COLUMN IF NOT EXISTS is_admin_free_upgrade BOOLEAN DEFAULT FALSE;
+  `);
+  pgSchemaReady = true;
+}
+async function hydrateMatrixDBFromPostgres() {
+  if (!pgPool || !pgConnected || !pgSchemaReady) return;
+  try {
+    const res = await pgPool.query(
+      `SELECT payload FROM matrix_db_snapshots WHERE LOWER(contract_address) = LOWER($1) LIMIT 1`,
+      [CONTRACT_ADDRESS]
+    );
+    const snap = res.rows[0]?.payload;
+    if (snap && snap.contractAddress && snap.contractAddress.toLowerCase() === CONTRACT_ADDRESS.toLowerCase()) {
+      for (let r = 1; r <= 18; r++) {
+        for (const n of snap.nodesByRank?.[r] || []) {
+          if (n?.isAdminFreeUpgrade) {
+            markNodeAsAdminFreeUpgrade(r, n.id);
+          }
+        }
+      }
+      const diskR1Count = (matrixDB.nodesByRank?.[1] || []).length;
+      const pgR1Count = (snap.nodesByRank?.[1] || []).length;
+      if (pgR1Count > diskR1Count) {
+        matrixDB = {
+          ...matrixDB,
+          ...snap,
+          nodesByRank: snap.nodesByRank || matrixDB.nodesByRank,
+          rankCounts: snap.rankCounts || matrixDB.rankCounts,
+          transactionLogs: Array.isArray(snap.transactionLogs) && snap.transactionLogs.length >= (matrixDB.transactionLogs || []).length ? snap.transactionLogs : matrixDB.transactionLogs,
+          upgradeLogs: Array.isArray(snap.upgradeLogs) && snap.upgradeLogs.length >= (matrixDB.upgradeLogs || []).length ? snap.upgradeLogs : matrixDB.upgradeLogs
+        };
+        reconcileAutoExtraIdsAcrossRanks();
+        rebuildDatabaseRewardLogsFromNodes();
+        rebuildDatabaseUpgradeLogsFromNodes();
+        saveMatrixDBToDisk(true);
+      }
+    }
+  } catch (e) {
+    console.warn("\u26A0\uFE0F [PostgreSQL] hydrateMatrixDBFromPostgres notice:", e?.message);
+  }
+}
 function initPostgresPool() {
+  if (!PG_DATABASE_URL) {
+    pgConnected = false;
+    pgLastError = "Using local JSON Matrix DB (DATABASE_URL not configured)";
+    return;
+  }
   try {
     pgPool = new Pool({
       connectionString: PG_DATABASE_URL,
@@ -196,31 +427,36 @@ function initPostgresPool() {
       ssl: false
     });
     pgPool.on("error", (err) => {
-      console.warn("\u26A0\uFE0F [PostgreSQL Pool Error]:", err.message);
       pgConnected = false;
       pgLastError = err.message;
     });
-    pgPool.query("SELECT current_database(), current_user, version()", (err, res) => {
+    pgPool.query("SELECT current_database(), current_user, version()", async (err, res) => {
       if (err) {
-        console.warn("\u26A0\uFE0F [PostgreSQL] Initial connection test failed:", err.message);
         pgConnected = false;
         pgLastError = err.message;
       } else {
         pgConnected = true;
         pgLastError = null;
-        const dbName = res.rows[0]?.current_database || "Aunza";
+        const dbName = res.rows[0]?.current_database || PG_ENDPOINT_INFO.database;
         const user = res.rows[0]?.current_user || "user";
         console.log(`\u{1F418} [PostgreSQL] Connected successfully to database: ${dbName} as ${user}`);
-        refreshPgTableCounts();
+        try {
+          await ensurePostgresSchema();
+          await hydrateMatrixDBFromPostgres();
+          await syncAllMatrixDBToPostgres();
+        } catch (schemaErr) {
+          pgLastError = schemaErr?.message || String(schemaErr);
+          console.warn("\u26A0\uFE0F [PostgreSQL] Schema/initial sync notice:", pgLastError);
+        }
       }
     });
   } catch (err) {
-    console.warn("\u26A0\uFE0F [PostgreSQL] Failed to initialize pool:", err?.message || err);
+    pgConnected = false;
     pgLastError = err?.message || String(err);
   }
 }
 async function refreshPgTableCounts() {
-  if (!pgPool) return;
+  if (!pgPool || !pgConnected) return;
   try {
     const tables = ["accounts", "matrix_levels", "income_channels", "activities", "wallets", "matrix_nodes"];
     const counts = {};
@@ -237,43 +473,246 @@ async function refreshPgTableCounts() {
     console.warn("\u26A0\uFE0F [PostgreSQL] refresh table counts error:", e.message);
   }
 }
-async function syncNodeToPostgres(node) {
-  if (!pgPool || !pgConnected) return;
-  try {
-    const nodeIdStr = `R${node.rank}-#${node.id}`;
-    const parentIdStr = node.parentId === 0 ? "ROOT" : `R${node.rank}-#${node.parentId}`;
-    const sponsorIdStr = node.directSponsorNodeId ? `R1-#${node.directSponsorNodeId}` : `R1-#1`;
-    const label = node.isClone ? `Clone R${node.rank}-#${node.id}` : `Main ID #${node.id} (Rank ${node.rank})`;
-    const category = node.isClone ? "Cloning" : node.isExtraId ? "Extra" : "Original";
-    const volume = (node.nodeVault || RANK_PRICES_USDT[node.rank - 1] * 0.35).toFixed(2);
-    await pgPool.query(
-      `INSERT INTO matrix_nodes (id, label, category, level, parent_id, sponsor_id, personal_volume_usdt, direct_referrals, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
-       ON CONFLICT (id) DO UPDATE SET
-         label = EXCLUDED.label,
-         category = EXCLUDED.category,
-         parent_id = EXCLUDED.parent_id,
-         sponsor_id = EXCLUDED.sponsor_id,
-         personal_volume_usdt = EXCLUDED.personal_volume_usdt;`,
-      [nodeIdStr, label, category, node.rank, parentIdStr, sponsorIdStr, volume, 0]
-    );
-  } catch {
+function schedulePostgresSync(immediate = false) {
+  if (!pgPool || !pgConnected || !pgSchemaReady) return;
+  if (immediate) {
+    if (pgSyncTimer) clearTimeout(pgSyncTimer);
+    pgSyncTimer = null;
+    syncAllMatrixDBToPostgres().catch(() => {
+    });
+    return;
   }
+  if (pgSyncTimer) return;
+  pgSyncTimer = setTimeout(() => {
+    pgSyncTimer = null;
+    syncAllMatrixDBToPostgres().catch(() => {
+    });
+  }, 1500);
 }
 async function syncAllMatrixDBToPostgres() {
   if (!pgPool || !pgConnected) return;
-  try {
-    for (let r = 1; r <= 27; r++) {
-      const rNodes = matrixDB.nodesByRank[r] || [];
-      if (rNodes.length <= 1 && r > 1) continue;
-      for (const n of rNodes) {
-        await syncNodeToPostgres(n);
+  if (pgSyncInFlight) return pgSyncInFlight;
+  pgSyncInFlight = (async () => {
+    try {
+      if (!pgSchemaReady) {
+        await ensurePostgresSchema();
       }
+      const client = await pgPool.connect();
+      try {
+        await client.query("BEGIN");
+        for (let r = 1; r <= 18; r++) {
+          const price = Number(RANK_PRICES_USDT[r - 1] || 0);
+          const count = Math.max(1, (matrixDB.nodesByRank[r] || []).length);
+          await client.query(
+            `INSERT INTO matrix_levels (rank, price_usdt, total_nodes, updated_at)
+             VALUES ($1, $2, $3, NOW())
+             ON CONFLICT (rank) DO UPDATE SET
+               price_usdt = EXCLUDED.price_usdt,
+               total_nodes = EXCLUDED.total_nodes,
+               updated_at = NOW()`,
+            [r, price.toFixed(6), count]
+          );
+        }
+        const walletStats = /* @__PURE__ */ new Map();
+        const adminFreeKeys = getAdminFreeNodeKeySet();
+        for (let r = 1; r <= 18; r++) {
+          const rNodes = matrixDB.nodesByRank[r] || [];
+          for (const n of rNodes) {
+            const ownerLower = String(n.owner || "").toLowerCase();
+            if (ownerLower && ownerLower !== ethers.ZeroAddress) {
+              const cur = walletStats.get(ownerLower) || { totalNodes: 0, maxRank: 1, totalRewards: 0 };
+              cur.totalNodes += 1;
+              if (r > cur.maxRank) cur.maxRank = r;
+              walletStats.set(ownerLower, cur);
+            }
+            if (r > 1 && rNodes.length <= 1 && n.id === 1 && !n.owner) continue;
+            const nodeIdStr = `R${n.rank}-#${n.id}`;
+            const parentIdStr = n.parentId === 0 ? "ROOT" : `R${n.rank}-#${n.parentId}`;
+            const sponsorIdStr = n.directSponsorNodeId ? `R1-#${n.directSponsorNodeId}` : "R1-#1";
+            const label = n.isClone ? `Clone R${n.rank}-#${n.id}` : n.isExtraId ? `Extra R${n.rank}-#${n.id}` : `Main ID #${n.id} (Rank ${n.rank})`;
+            const category = n.isClone ? "Cloning" : n.isExtraId ? "Extra" : "Original";
+            const isFree = Boolean(n.isAdminFreeUpgrade || adminFreeKeys.has(`${n.rank}:${n.id}`));
+            const volume = Number(n.nodeVault || 0).toFixed(6);
+            const directRefs = (n.leftChild ? 1 : 0) + (n.rightChild ? 1 : 0);
+            await client.query(
+              `INSERT INTO matrix_nodes (
+                 id, rank, node_id, label, category, level, parent_id, sponsor_id, owner,
+                 left_child, right_child, is_clone, is_extra_id, is_admin_free_upgrade,
+                 personal_volume_usdt, direct_referrals, created_at
+               )
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW())
+               ON CONFLICT (id) DO UPDATE SET
+                 rank = EXCLUDED.rank,
+                 node_id = EXCLUDED.node_id,
+                 label = EXCLUDED.label,
+                 category = EXCLUDED.category,
+                 parent_id = EXCLUDED.parent_id,
+                 sponsor_id = EXCLUDED.sponsor_id,
+                 owner = EXCLUDED.owner,
+                 left_child = EXCLUDED.left_child,
+                 right_child = EXCLUDED.right_child,
+                 is_clone = EXCLUDED.is_clone,
+                 is_extra_id = EXCLUDED.is_extra_id,
+                 is_admin_free_upgrade = EXCLUDED.is_admin_free_upgrade,
+                 personal_volume_usdt = EXCLUDED.personal_volume_usdt,
+                 direct_referrals = EXCLUDED.direct_referrals`,
+              [
+                nodeIdStr,
+                n.rank,
+                n.id,
+                label,
+                category,
+                n.rank,
+                parentIdStr,
+                sponsorIdStr,
+                n.owner || "",
+                Number(n.leftChild || 0),
+                Number(n.rightChild || 0),
+                Boolean(n.isClone),
+                Boolean(n.isExtraId),
+                isFree,
+                volume,
+                directRefs
+              ]
+            );
+          }
+        }
+        const r1Nodes = matrixDB.nodesByRank[1] || [];
+        const maxRankByMain = /* @__PURE__ */ new Map();
+        for (let r = 1; r <= 18; r++) {
+          for (const n of matrixDB.nodesByRank[r] || []) {
+            const mId = Number(n.originMainId || 0);
+            if (mId > 0) {
+              maxRankByMain.set(mId, Math.max(maxRankByMain.get(mId) || 1, r));
+            }
+          }
+        }
+        for (const n of r1Nodes) {
+          await client.query(
+            `INSERT INTO accounts (id, owner, main_node_id, current_max_rank, sponsor_address, sponsor_main_node_id, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, NOW())
+             ON CONFLICT (id) DO UPDATE SET
+               owner = EXCLUDED.owner,
+               main_node_id = EXCLUDED.main_node_id,
+               current_max_rank = EXCLUDED.current_max_rank,
+               sponsor_address = EXCLUDED.sponsor_address,
+               sponsor_main_node_id = EXCLUDED.sponsor_main_node_id,
+               updated_at = NOW()`,
+            [
+              `main-${n.id}`,
+              n.owner || "",
+              n.id,
+              maxRankByMain.get(n.id) || 1,
+              n.directSponsor || "",
+              Number(n.directSponsorNodeId || 0)
+            ]
+          );
+        }
+        for (const r of matrixDB.rewardLogs || []) {
+          const amt = Number(parseFloat(String(r.amount || "0")) || 0);
+          const isFree = Boolean(r.isAdminFreeUpgrade || adminFreeKeys.has(`${r.rank}:${r.fromNodeId}`));
+          if (isFree || amt <= 0) continue;
+          const recipLower = String(r.recipient || "").toLowerCase();
+          if (recipLower && recipLower !== ethers.ZeroAddress) {
+            const cur = walletStats.get(recipLower) || { totalNodes: 0, maxRank: 1, totalRewards: 0 };
+            if (!String(r.rewardType || "").toUpperCase().includes("VAULT")) {
+              cur.totalRewards += amt;
+            }
+            walletStats.set(recipLower, cur);
+          }
+          await client.query(
+            `INSERT INTO income_channels (
+               id, rank, reward_type, from_node_id, to_node_id, recipient, amount_usdt,
+               tx_hash, block_number, is_admin_free_upgrade
+             )
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+             ON CONFLICT (id) DO UPDATE SET
+               amount_usdt = EXCLUDED.amount_usdt,
+               tx_hash = COALESCE(EXCLUDED.tx_hash, income_channels.tx_hash),
+               block_number = COALESCE(EXCLUDED.block_number, income_channels.block_number)`,
+            [
+              String(r.id),
+              Number(r.rank || 1),
+              String(r.rewardType || "DIRECT"),
+              Number(r.fromNodeId || 0),
+              Number(r.toNodeId || 0),
+              String(r.recipient || ""),
+              amt.toFixed(6),
+              r.txHash || null,
+              r.blockNumber ? Number(r.blockNumber) : null,
+              false
+            ]
+          );
+        }
+        for (const [addr, st] of walletStats.entries()) {
+          await client.query(
+            `INSERT INTO wallets (address, total_nodes, max_rank, total_rewards_usdt, updated_at)
+             VALUES ($1, $2, $3, $4, NOW())
+             ON CONFLICT (address) DO UPDATE SET
+               total_nodes = EXCLUDED.total_nodes,
+               max_rank = EXCLUDED.max_rank,
+               total_rewards_usdt = EXCLUDED.total_rewards_usdt,
+               updated_at = NOW()`,
+            [addr, st.totalNodes, st.maxRank, st.totalRewards.toFixed(6)]
+          );
+        }
+        for (const tx of matrixDB.transactionLogs || []) {
+          const amtStr = tx.amountUsdt !== void 0 ? Number(tx.amountUsdt).toFixed(2) : "0.00";
+          const dt = String(tx.timestamp || (/* @__PURE__ */ new Date()).toISOString()).replace("T", " ").substring(0, 19);
+          await client.query(
+            `INSERT INTO activities (id, date_time, type, title, detail, amount_usdt, amount_display, status, tx_hash)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             ON CONFLICT (id) DO UPDATE SET
+               type = EXCLUDED.type,
+               title = EXCLUDED.title,
+               detail = EXCLUDED.detail,
+               amount_usdt = EXCLUDED.amount_usdt,
+               amount_display = EXCLUDED.amount_display,
+               tx_hash = COALESCE(EXCLUDED.tx_hash, activities.tx_hash)`,
+            [
+              String(tx.id),
+              dt,
+              String(tx.actionType || "TX"),
+              String(tx.title || tx.actionType),
+              String(tx.details || `Rank ${tx.rank || 1} Main #${tx.mainNodeId || 0}`),
+              amtStr,
+              `${amtStr} USDT`,
+              "\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08",
+              tx.txHash || null
+            ]
+          );
+        }
+        await client.query(
+          `INSERT INTO matrix_db_snapshots (contract_address, payload, last_synced_block, updated_at)
+           VALUES ($1, $2::jsonb, $3, NOW())
+           ON CONFLICT (contract_address) DO UPDATE SET
+             payload = EXCLUDED.payload,
+             last_synced_block = EXCLUDED.last_synced_block,
+             updated_at = NOW()`,
+          [
+            CONTRACT_ADDRESS.toLowerCase(),
+            JSON.stringify(matrixDB),
+            Number(matrixDB.lastSyncedBlock || 0)
+          ]
+        );
+        await client.query("COMMIT");
+        pgLastError = null;
+      } catch (txErr) {
+        await client.query("ROLLBACK").catch(() => {
+        });
+        throw txErr;
+      } finally {
+        client.release();
+      }
+      await refreshPgTableCounts();
+    } catch (e) {
+      pgLastError = e?.message || String(e);
+      console.warn("\u26A0\uFE0F [PostgreSQL] syncAllMatrixDBToPostgres notice:", pgLastError);
+    } finally {
+      pgSyncInFlight = null;
     }
-    await refreshPgTableCounts();
-  } catch (e) {
-    console.warn("\u26A0\uFE0F [PostgreSQL] syncAllMatrixDBToPostgres notice:", e?.message);
-  }
+  })();
+  return pgSyncInFlight;
 }
 initPostgresPool();
 function readContractConfigFromDB() {
@@ -329,8 +768,6 @@ async function resolveUsdtDecimals() {
   }
   return activeUsdtDecimals;
 }
-resolveUsdtDecimals().catch(() => {
-});
 function updateContractConfigInDB(newConfig) {
   activeSystemConfig = {
     ...activeSystemConfig,
@@ -425,47 +862,42 @@ var RANK_PRICES_USDT = [
   40,
   50,
   60,
-  70,
   80,
-  90,
   100,
   200,
   300,
   400,
-  500,
   600,
-  700,
   800,
-  900,
   1e3,
   2e3,
   3e3,
-  4e3,
-  5e3,
-  6e3,
-  8e3,
-  1e4
+  5e3
 ];
+var DEFAULT_BOT_WALLET = "0xB3832D4cc6daE0B24f1e6660d7C85dcc1F005Cd1";
+var LEGACY_BOT_WALLET = "0xbFD03d4D69221085a63Dd372A5d59f952C084a56";
 var MATRIX_DB_FILE_PATH = path.resolve(__dirname, "prisma/matrix-db.json");
 function createEmptyMatrixDB(contractAddr = CONTRACT_ADDRESS, usdtAddr = USDT_ADDRESS) {
   const defaultCounts = {};
-  for (let r = 1; r <= 27; r++) defaultCounts[r] = 1;
+  for (let r = 1; r <= 18; r++) defaultCounts[r] = 1;
   return {
     contractAddress: contractAddr,
     usdtAddress: usdtAddr,
     lastSyncedBlock: 0,
     lastSyncedAt: (/* @__PURE__ */ new Date()).toISOString(),
     systemWallets: {
-      allSellWallet: "0xBeFEdbB942A73957F6123bA0B3aA27B4A081F710",
-      botWallet: "0xbFD0A57Ac58165A863A9F4d9E5C1B57996B24a56",
-      familyPool: "0x225D2016F610C99051EfD91F812B2736647B275A",
+      allSellWallet: "0xBeFEB9871a20656aeF7E8d218f751e9C23FAF710",
+      botWallet: DEFAULT_BOT_WALLET,
+      customBotWallet: DEFAULT_BOT_WALLET,
+      familyPool: "0x225DF4b5961f757f54728138F289Eaf49D4F275A",
       rootOwner: "0x622E20082e63c7220c5AF0A77Cbc437a98505311"
     },
     rankCounts: defaultCounts,
     nodesByRank: {},
     userRankVaults: {},
     rewardLogs: [],
-    upgradeLogs: []
+    upgradeLogs: [],
+    transactionLogs: []
   };
 }
 function loadMatrixDBFromDisk() {
@@ -474,11 +906,48 @@ function loadMatrixDBFromDisk() {
       const raw = fs.readFileSync(MATRIX_DB_FILE_PATH, "utf8");
       const parsed = JSON.parse(raw);
       if (parsed && parsed.contractAddress && parsed.contractAddress.toLowerCase() === CONTRACT_ADDRESS.toLowerCase()) {
-        return {
+        let strippedAny = false;
+        if (parsed.nodesByRank) {
+          for (let r = 1; r <= 18; r++) {
+            const rList = parsed.nodesByRank[r];
+            if (!Array.isArray(rList)) continue;
+            const realNodes = rList.filter((n) => !n.isSyntheticExtra);
+            if (realNodes.length !== rList.length) {
+              strippedAny = true;
+            }
+            const realIds = new Set(realNodes.map((n) => n.id));
+            for (const n of realNodes) {
+              if (n.leftChild > 0 && !realIds.has(n.leftChild)) n.leftChild = 0;
+              if (n.rightChild > 0 && !realIds.has(n.rightChild)) n.rightChild = 0;
+              if (n.rawNodeVault !== void 0 && n.rawNodeVault >= 0) {
+                n.nodeVault = Number(n.rawNodeVault);
+                n.reconciledBaseVault = Number(n.rawNodeVault);
+              }
+            }
+            parsed.nodesByRank[r] = realNodes;
+            if (parsed.rankCounts) {
+              parsed.rankCounts[r] = Math.max(1, realNodes.length);
+            }
+          }
+        }
+        const loaded = {
           ...createEmptyMatrixDB(CONTRACT_ADDRESS, USDT_ADDRESS),
           ...parsed,
-          upgradeLogs: Array.isArray(parsed.upgradeLogs) ? parsed.upgradeLogs : []
+          upgradeLogs: Array.isArray(parsed.upgradeLogs) ? parsed.upgradeLogs : [],
+          transactionLogs: Array.isArray(parsed.transactionLogs) ? parsed.transactionLogs : []
         };
+        if (!loaded.systemWallets.customBotWallet && (!loaded.systemWallets.botWallet || loaded.systemWallets.botWallet.toLowerCase() === LEGACY_BOT_WALLET.toLowerCase())) {
+          loaded.systemWallets.botWallet = DEFAULT_BOT_WALLET;
+          loaded.systemWallets.customBotWallet = DEFAULT_BOT_WALLET;
+          strippedAny = true;
+        }
+        if (strippedAny) {
+          try {
+            fs.writeFileSync(MATRIX_DB_FILE_PATH, JSON.stringify(loaded, null, 2), "utf8");
+          } catch {
+          }
+        }
+        return loaded;
       }
     }
   } catch (err) {
@@ -488,8 +957,124 @@ function loadMatrixDBFromDisk() {
 }
 var matrixDB = loadMatrixDBFromDisk();
 var dbWriteTimer = null;
+var ADMIN_UPGRADE_SELECTORS = /* @__PURE__ */ new Set(["0x6c2d42b4", "0x854562dc"]);
+var knownAdminFreeNodeKeys = /* @__PURE__ */ new Set();
+var inspectedAdminTxCache = /* @__PURE__ */ new Map();
+var ADMIN_NODE_CREATED_IFACE = new ethers.Interface([
+  "event NodeCreated(uint8 indexed rank, uint256 indexed nodeId, address indexed owner, address directSponsor, uint256 parentId, bool isLeft, bool isClone, bool isExtraId)",
+  "event RankUpgraded(address indexed user, uint8 fromRank, uint8 toRank, uint256 newNodeId, bool isAutoUpgrade)"
+]);
+for (let r = 1; r <= 18; r++) {
+  for (const n of matrixDB.nodesByRank[r] || []) {
+    if (n?.isAdminFreeUpgrade) {
+      knownAdminFreeNodeKeys.add(`${r}:${n.id}`);
+    }
+  }
+}
+function getAdminFreeNodeKeySet() {
+  const keys = new Set(knownAdminFreeNodeKeys);
+  for (let r = 1; r <= 18; r++) {
+    for (const n of matrixDB.nodesByRank[r] || []) {
+      if (n?.isAdminFreeUpgrade) {
+        keys.add(`${r}:${n.id}`);
+      }
+    }
+  }
+  return keys;
+}
+function markNodeAsAdminFreeUpgrade(rank, nodeId) {
+  if (rank < 2 || rank > 18 || nodeId <= 1) return false;
+  const key = `${rank}:${nodeId}`;
+  let changed = !knownAdminFreeNodeKeys.has(key);
+  knownAdminFreeNodeKeys.add(key);
+  const list = matrixDB.nodesByRank[rank] || [];
+  const target = list.find((n) => n.id === nodeId);
+  if (target && !target.isAdminFreeUpgrade) {
+    target.isAdminFreeUpgrade = true;
+    changed = true;
+  }
+  return changed;
+}
+async function inspectAndTagAdminUpgradeTx(txHash, provider, preFetchedReceipt) {
+  if (!isRealTxHash(txHash)) {
+    return { isAdminTx: false, taggedNodes: [], newlyTagged: false };
+  }
+  const hashLower = txHash.toLowerCase();
+  const cached = inspectedAdminTxCache.get(hashLower);
+  if (cached === false && !preFetchedReceipt) {
+    return { isAdminTx: false, taggedNodes: [], newlyTagged: false };
+  }
+  let activeProvider = provider;
+  if (!activeProvider) {
+    try {
+      activeProvider = getProvider();
+    } catch {
+      activeProvider = void 0;
+    }
+  }
+  if (!activeProvider && !preFetchedReceipt) {
+    return { isAdminTx: Boolean(cached), taggedNodes: [], newlyTagged: false };
+  }
+  try {
+    let isAdminTx = cached === true;
+    if (!isAdminTx && activeProvider) {
+      const tx = await Promise.race([
+        activeProvider.getTransaction(txHash),
+        new Promise((resolve) => setTimeout(() => resolve(null), 5e3))
+      ]);
+      const selector = String(tx?.data || "").slice(0, 10).toLowerCase();
+      if (ADMIN_UPGRADE_SELECTORS.has(selector)) {
+        isAdminTx = true;
+      } else if (tx && selector) {
+        inspectedAdminTxCache.set(hashLower, false);
+        return { isAdminTx: false, taggedNodes: [], newlyTagged: false };
+      }
+    }
+    if (!isAdminTx) {
+      return { isAdminTx: false, taggedNodes: [], newlyTagged: false };
+    }
+    inspectedAdminTxCache.set(hashLower, true);
+    const receipt = preFetchedReceipt || (activeProvider ? await Promise.race([
+      activeProvider.getTransactionReceipt(txHash),
+      new Promise((resolve) => setTimeout(() => resolve(null), 6e3))
+    ]) : null);
+    const taggedNodes = [];
+    let newlyTagged = false;
+    for (const log of receipt?.logs || []) {
+      try {
+        const parsed = ADMIN_NODE_CREATED_IFACE.parseLog(log);
+        if (parsed && parsed.name === "NodeCreated") {
+          const evRank = Number(parsed.args.rank || 0);
+          const evNodeId = Number(parsed.args.nodeId || 0);
+          if (evRank >= 2 && evRank <= 18 && evNodeId > 1) {
+            taggedNodes.push({ rank: evRank, nodeId: evNodeId });
+            if (markNodeAsAdminFreeUpgrade(evRank, evNodeId)) {
+              newlyTagged = true;
+            }
+          }
+        }
+      } catch {
+      }
+    }
+    if (Array.isArray(matrixDB.transactionLogs)) {
+      for (const t of matrixDB.transactionLogs) {
+        if (t.txHash.toLowerCase() === hashLower && (t.actionType === "UPGRADE" || t.actionType === "CLONE_BOT")) {
+          t.actionType = "ADMIN_UPGRADE";
+          t.amountUsdt = 0;
+          if (!t.title.includes("Admin")) {
+            t.title = `Admin \u0E2D\u0E31\u0E1E\u0E1F\u0E23\u0E35: ${t.title}`;
+          }
+        }
+      }
+    }
+    return { isAdminTx: true, taggedNodes, newlyTagged };
+  } catch {
+    return { isAdminTx: Boolean(cached), taggedNodes: [], newlyTagged: false };
+  }
+}
 function saveMatrixDBToDisk(immediate = false) {
   broadcastAllMatrixUpdates();
+  schedulePostgresSync(immediate);
   const writeNow = () => {
     try {
       const dir = path.dirname(MATRIX_DB_FILE_PATH);
@@ -511,6 +1096,73 @@ function saveMatrixDBToDisk(immediate = false) {
     writeNow();
   }, 800);
 }
+function isRealTxHash(hash) {
+  return /^0x[a-fA-F0-9]{64}$/.test(String(hash || "").trim());
+}
+function recordRealTransactionLog(input) {
+  const hash = String(input.txHash || "").trim();
+  if (!isRealTxHash(hash)) return null;
+  if (!Array.isArray(matrixDB.transactionLogs)) {
+    matrixDB.transactionLogs = [];
+  }
+  const hashLower = hash.toLowerCase();
+  const normRank = Number(input.rank || 0) || void 0;
+  const normNode = Number(input.nodeId || 0) || void 0;
+  const normMain = Number(input.mainNodeId || 0) || void 0;
+  const cleanUser = String(input.userAddress || "").trim();
+  const ts = input.timestamp || (/* @__PURE__ */ new Date()).toISOString();
+  const existing = matrixDB.transactionLogs.find(
+    (t) => t.txHash.toLowerCase() === hashLower && t.actionType === input.actionType && Number(t.rank || 0) === Number(normRank || 0) && Number(t.nodeId || t.mainNodeId || 0) === Number(normNode || normMain || 0)
+  );
+  if (existing) {
+    if (!existing.blockNumber && input.blockNumber) existing.blockNumber = input.blockNumber;
+    if (!existing.amountUsdt && input.amountUsdt) existing.amountUsdt = input.amountUsdt;
+    if (!existing.mainNodeId && normMain) existing.mainNodeId = normMain;
+    if (!existing.nodeId && normNode) existing.nodeId = normNode;
+    if (!existing.userAddress && cleanUser) existing.userAddress = cleanUser;
+    if (!existing.details && input.details) existing.details = input.details;
+    if (input.timestamp && (!existing.timestamp || input.source === "ONCHAIN_EVENT")) {
+      existing.timestamp = input.timestamp;
+    }
+    saveMatrixDBToDisk(Boolean(input.immediateSave));
+    return existing;
+  }
+  const record = {
+    id: `tx-${hashLower.slice(2, 12)}-${input.actionType}-${normRank || 0}-${normNode || normMain || 0}`,
+    txHash: hash,
+    actionType: input.actionType,
+    title: input.title,
+    userAddress: cleanUser || ethers.ZeroAddress,
+    mainNodeId: normMain,
+    nodeId: normNode,
+    rank: normRank,
+    amountUsdt: input.amountUsdt !== void 0 ? Number(input.amountUsdt) : void 0,
+    blockNumber: input.blockNumber ? Number(input.blockNumber) : void 0,
+    source: input.source,
+    explorerUrl: `https://testnet.bscscan.com/tx/${hash}`,
+    details: input.details,
+    timestamp: ts
+  };
+  matrixDB.transactionLogs.unshift(record);
+  matrixDB.transactionLogs.sort((a, b) => {
+    const bDiff = Number(b.blockNumber || 0) - Number(a.blockNumber || 0);
+    if (bDiff !== 0) return bDiff;
+    return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
+  });
+  if (matrixDB.transactionLogs.length > 1500) {
+    matrixDB.transactionLogs = matrixDB.transactionLogs.slice(0, 1500);
+  }
+  if (normRank && (normMain || normNode) && Array.isArray(matrixDB.upgradeLogs)) {
+    for (const u of matrixDB.upgradeLogs) {
+      if (u.toRank === normRank && (Number(u.mainNodeId) === normMain || Number(u.newNodeId) === normNode) && !isRealTxHash(u.txHash)) {
+        u.txHash = hash;
+        if (record.blockNumber) u.blockNumber = record.blockNumber;
+      }
+    }
+  }
+  saveMatrixDBToDisk(Boolean(input.immediateSave));
+  return record;
+}
 var inMemoryDB = {
   users: /* @__PURE__ */ new Map(),
   nodes: /* @__PURE__ */ new Map(),
@@ -520,9 +1172,11 @@ var inMemoryDB = {
 function ensurePersistentNodeTimestamps() {
   let missingAny = false;
   const seenTimes = /* @__PURE__ */ new Set();
-  for (let r = 1; r <= 27; r++) {
+  const staleCutoffMs = 17939e8;
+  for (let r = 1; r <= 18; r++) {
     for (const n of matrixDB.nodesByRank[r] || []) {
-      if (!n.createdAt || seenTimes.has(n.createdAt)) {
+      const tMs = n.createdAt ? new Date(n.createdAt).getTime() : 0;
+      if (!n.createdAt || !tMs || tMs <= staleCutoffMs || seenTimes.has(n.createdAt)) {
         missingAny = true;
         break;
       }
@@ -532,40 +1186,53 @@ function ensurePersistentNodeTimestamps() {
   }
   if (!missingAny) return;
   const orderedNodes = [];
-  for (let r = 1; r <= 27; r++) {
+  for (let r = 1; r <= 18; r++) {
     const rList = (matrixDB.nodesByRank[r] || []).slice().sort((a, b) => a.id - b.id);
     for (const n of rList) {
       orderedNodes.push(n);
     }
   }
   const totalCount = orderedNodes.length;
-  const fixedAnchorMs = 17938536e5;
+  const anchorMs = Date.now();
   orderedNodes.forEach((n, idx) => {
-    const stepsFromEnd = Math.max(0, totalCount - 1 - idx);
-    n.createdAt = new Date(fixedAnchorMs - stepsFromEnd * 37e3).toISOString();
+    const tMs = n.createdAt ? new Date(n.createdAt).getTime() : 0;
+    if (!n.createdAt || !tMs || tMs <= staleCutoffMs) {
+      const stepsFromEnd = Math.max(0, totalCount - 1 - idx);
+      n.createdAt = new Date(anchorMs - stepsFromEnd * 2e3).toISOString();
+    }
   });
 }
 function rebuildDatabaseRewardLogsFromNodes() {
   ensurePersistentNodeTimestamps();
   const r1Nodes = matrixDB.nodesByRank[1] || [];
-  if (r1Nodes.length <= 1) return;
+  if (r1Nodes.length <= 1) {
+    matrixDB.rewardLogs = [];
+    inMemoryDB.rewardLogs = matrixDB.rewardLogs;
+    return;
+  }
   const rootOwnerAddr = r1Nodes[0]?.owner || matrixDB.systemWallets.rootOwner;
-  const allSellAddr = matrixDB.systemWallets.allSellWallet || "0xBeFEdbB942A73957F6123bA0B3aA27B4A081F710";
-  const botAddr = matrixDB.systemWallets.botWallet || "0xbFD0A57Ac58165A863A9F4d9E5C1B57996B24a56";
-  const familyAddr = matrixDB.systemWallets.familyPool || "0x225D2016F610C99051EfD91F812B2736647B275A";
-  const liveTxEvents = matrixDB.rewardLogs.filter(
-    (l) => l.txHash && !l.id.startsWith("db-chain-")
-  );
+  const allSellAddr = matrixDB.systemWallets.allSellWallet || "0xBeFEB9871a20656aeF7E8d218f751e9C23FAF710";
+  const botAddr = matrixDB.systemWallets.customBotWallet || matrixDB.systemWallets.botWallet || DEFAULT_BOT_WALLET;
+  const familyAddr = matrixDB.systemWallets.familyPool || "0x225DF4b5961f757f54728138F289Eaf49D4F275A";
+  const adminFreeKeys = getAdminFreeNodeKeySet();
+  const liveTxEvents = matrixDB.rewardLogs.filter((l) => {
+    if (!l.txHash || l.id.startsWith("db-chain-")) return false;
+    const rNum = Number(l.rank || 1);
+    const fromNid = Number(l.fromNodeId || 0);
+    if (adminFreeKeys.has(`${rNum}:${fromNid}`)) return false;
+    const rLen = matrixDB.nodesByRank[rNum]?.length || 1;
+    return fromNid <= rLen;
+  });
   const seenKeys = /* @__PURE__ */ new Set();
   for (const ev of liveTxEvents) {
     seenKeys.add(`${ev.rank || 1}:${ev.fromNodeId}:${ev.rewardType}:${ev.toNodeId}`);
   }
   const reconstructed = [...liveTxEvents];
-  const baseBlock = matrixDB.lastSyncedBlock || 140018600;
-  for (let rankNum = 1; rankNum <= 27; rankNum++) {
+  const baseBlock = matrixDB.lastSyncedBlock || 9985e4;
+  for (let rankNum = 1; rankNum <= 18; rankNum++) {
     const rNodes = matrixDB.nodesByRank[rankNum] || [];
     if (rNodes.length <= 1) continue;
-    const unitPrice = RANK_PRICES_USDT[rankNum - 1] || 5;
+    const unitPrice = RANK_PRICES_USDT[rankNum - 1] || 10;
     const directAmt = (unitPrice * 0.3).toFixed(2);
     const vaultAmt = (unitPrice * 0.35).toFixed(2);
     const levelUnit = unitPrice * 0.02;
@@ -590,13 +1257,24 @@ function rebuildDatabaseRewardLogsFromNodes() {
     const resolveSponsorNodeId = (nodeId) => {
       const n = nodesMap.get(nodeId);
       if (!n || nodeId === 1) return 1;
-      if (rankNum > 1 && n.originMainId > 1) {
-        const origR1 = r1Nodes.find((x) => x.id === n.originMainId);
-        if (origR1 && origR1.directSponsorNodeId > 0) {
-          return origR1.directSponsorNodeId;
+      if (rankNum > 1) {
+        const localOrigNode = !n.isClone && !n.isExtraId ? n : rNodes.find(
+          (x) => !x.isClone && !x.isExtraId && (x.id === n.originMainId || x.originMainId === n.originMainId)
+        );
+        const r1OriginId = localOrigNode?.originMainId || n.originMainId;
+        if (r1OriginId === 1) return 1;
+        if (r1OriginId > 1) {
+          const origR1 = r1Nodes.find((x) => x.id === r1OriginId && !x.isClone && !x.isExtraId);
+          if (origR1 && origR1.directSponsorNodeId > 0) {
+            const spR1 = r1Nodes.find((x) => x.id === origR1.directSponsorNodeId);
+            return spR1 && spR1.isClone && spR1.originMainId > 0 ? spR1.originMainId : origR1.directSponsorNodeId;
+          }
         }
       }
-      if (n.directSponsorNodeId > 0) return n.directSponsorNodeId;
+      if (n.directSponsorNodeId > 0) {
+        const spR1 = r1Nodes.find((x) => x.id === n.directSponsorNodeId);
+        return spR1 && spR1.isClone && spR1.originMainId > 0 ? spR1.originMainId : n.directSponsorNodeId;
+      }
       const spKey = (n.directSponsor || "").toLowerCase();
       if (!spKey || spKey === ethers.ZeroAddress) return 1;
       if (rankNum > 1) {
@@ -622,27 +1300,34 @@ function rebuildDatabaseRewardLogsFromNodes() {
     for (const id of sortedIds) {
       if (id <= 1) continue;
       const child = nodesMap.get(id);
+      if (child.isAdminFreeUpgrade || adminFreeKeys.has(`${rankNum}:${id}`)) continue;
       const parent = nodesMap.get(child.parentId);
       if (!parent || parent.leftChild !== id) continue;
       const syntheticTx = `0x${rankNum.toString(16).padStart(2, "0")}${id.toString(16).padStart(4, "0")}db48acb86c42a389efda47cc1b16938eea73f1f892000000000000${id.toString(16).padStart(4, "0")}`;
       const eventTime = child.createdAt || new Date(
-        17938536e5 - (Math.max(0, rNodes.length - id) * 45e3 + Math.max(0, 27 - rankNum) * 19e3)
+        Date.now() - (Math.max(0, rNodes.length - id) * 2e3 + Math.max(0, 18 - rankNum) * 1e3)
       ).toISOString();
       const parentOrigin = nodesMap.get(parent.originMainId || parent.id) || parent;
       const isParentExtraLineage = Boolean(parent.isExtraId || parentOrigin.isExtraId);
+      const isId1CloneChild = child.isClone && (child.originMainId === 1 || parent.id === 1);
+      const childDirectSpNodeId = resolveSponsorNodeId(id);
+      const childDirectSpNode = rankNum > 1 ? r1Nodes.find((x) => x.id === childDirectSpNodeId) || nodesMap.get(childDirectSpNodeId) : nodesMap.get(childDirectSpNodeId);
+      const childDirectRecip = isId1CloneChild ? familyAddr : childDirectSpNode?.owner || child.directSponsor || rootOwnerAddr;
+      const childDirectType = isId1CloneChild ? "DIRECT_ID1_CLONE_FAMILY_POOL" : "DIRECT";
       if (isParentExtraLineage) {
         const extraSpNodeId = parentOrigin.directSponsorNodeId > 0 ? parentOrigin.directSponsorNodeId : parent.directSponsorNodeId > 0 ? parent.directSponsorNodeId : resolveSponsorNodeId(parentOrigin.id);
         const extraSpNode = rankNum > 1 ? r1Nodes.find((x) => x.id === extraSpNodeId) || nodesMap.get(extraSpNodeId) : nodesMap.get(extraSpNodeId);
         const extraSpRecip = extraSpNode?.owner || parentOrigin.directSponsor || parent.directSponsor || rootOwnerAddr;
         const fullLevelAmt = (unitPrice * 0.3).toFixed(2);
-        if (!seenKeys.has(`${rankNum}:${id}:DIRECT:${extraSpNodeId}`)) {
+        const targetDirectNodeKey = isId1CloneCloneTarget(isId1CloneChild, childDirectSpNodeId);
+        if (!seenKeys.has(`${rankNum}:${id}:${childDirectType}:${targetDirectNodeKey}`)) {
           reconstructed.push({
             id: `db-chain-r${rankNum}-${id}-direct`,
             fromNodeId: String(id),
-            toNodeId: String(extraSpNodeId),
-            recipient: extraSpRecip,
+            toNodeId: isId1CloneChild ? "0" : String(childDirectSpNodeId),
+            recipient: childDirectRecip,
             rank: rankNum,
-            rewardType: "DIRECT",
+            rewardType: childDirectType,
             amount: directAmt,
             txHash: syntheticTx,
             blockNumber: baseBlock - (rNodes.length - id),
@@ -707,11 +1392,9 @@ function rebuildDatabaseRewardLogsFromNodes() {
         }
         continue;
       }
-      const spNodeId = resolveSponsorNodeId(id);
-      const spNode = rankNum > 1 ? r1Nodes.find((x) => x.id === spNodeId) || nodesMap.get(spNodeId) : nodesMap.get(spNodeId);
-      const isId1CloneChild = child.isClone && (child.originMainId === 1 || parent.id === 1);
-      const directRecip = isId1CloneChild ? familyAddr : spNode?.owner || child.directSponsor || rootOwnerAddr;
-      const directType = isId1CloneChild ? "DIRECT_ID1_CLONE_FAMILY_POOL" : "DIRECT";
+      const spNodeId = childDirectSpNodeId;
+      const directRecip = childDirectRecip;
+      const directType = childDirectType;
       if (!seenKeys.has(`${rankNum}:${id}:${directType}:${isId1CloneCloneTarget(isId1CloneChild, spNodeId)}`)) {
         reconstructed.push({
           id: `db-chain-r${rankNum}-${id}-direct`,
@@ -820,6 +1503,9 @@ function rebuildDatabaseRewardLogsFromNodes() {
   matrixDB.rewardLogs = reconstructed.slice(0, 500);
   inMemoryDB.rewardLogs = matrixDB.rewardLogs;
 }
+function isNodeFlaggedAdminFree(rankNum, nodeId) {
+  return knownAdminFreeNodeKeys.has(`${rankNum}:${nodeId}`);
+}
 function rebuildDatabaseUpgradeLogsFromNodes() {
   const r1Nodes = matrixDB.nodesByRank[1] || [];
   if (r1Nodes.length === 0) return;
@@ -856,7 +1542,7 @@ function rebuildDatabaseUpgradeLogsFromNodes() {
   }
   const baseBlock = matrixDB.lastSyncedBlock || 140018600;
   const upgrades = [];
-  for (let rankNum = 2; rankNum <= 27; rankNum++) {
+  for (let rankNum = 2; rankNum <= 18; rankNum++) {
     const rNodes = matrixDB.nodesByRank[rankNum] || [];
     if (rNodes.length <= 1) continue;
     const prevRankNodes = matrixDB.nodesByRank[rankNum - 1] || [];
@@ -892,8 +1578,15 @@ function rebuildDatabaseUpgradeLogsFromNodes() {
       let vaultDeducted = Math.min(rankPrice, rawDiff);
       let walletPaid = Math.max(0, Number((rankPrice - vaultDeducted).toFixed(2)));
       let upgradeMode = "MANUAL_WALLET";
+      const isAdminFree = Boolean(
+        node.isAdminFreeUpgrade || isNodeFlaggedAdminFree(rankNum, node.id)
+      );
       if (node.isClone) {
         upgradeMode = "CLONE_IN_RANK";
+        vaultDeducted = 0;
+        walletPaid = 0;
+      } else if (isAdminFree) {
+        upgradeMode = "MANUAL_WALLET";
         vaultDeducted = 0;
         walletPaid = 0;
       } else if (node.isExtraId) {
@@ -927,16 +1620,17 @@ function rebuildDatabaseUpgradeLogsFromNodes() {
         side,
         directSponsor: node.directSponsor || matrixDB.systemWallets.rootOwner,
         directSponsorNodeId: String(spNodeIdInR),
-        rankPriceUsdt: rankPrice.toFixed(2),
+        rankPriceUsdt: isAdminFree ? "0.00" : rankPrice.toFixed(2),
         vaultDeductedUsdt: vaultDeducted.toFixed(2),
         walletPaidUsdt: walletPaid.toFixed(2),
         upgradeMode,
         isClone: node.isClone,
         isExtraId: node.isExtraId,
+        isAdminFreeUpgrade: isAdminFree,
         txHash: liveMeta?.txHash || syntheticTx,
         blockNumber: liveMeta?.blockNumber || baseBlock - Math.max(0, rNodes.length - node.id),
         createdAt: liveMeta?.createdAt || node.createdAt || new Date(
-          17938536e5 - Math.max(0, rNodes.length - node.id) * 45e3 - Math.max(0, 27 - rankNum) * 19e3
+          Date.now() - Math.max(0, rNodes.length - node.id) * 2e3 - Math.max(0, 18 - rankNum) * 1e3
         ).toISOString()
       });
     }
@@ -966,7 +1660,7 @@ async function registerUserAccount(owner, sponsor, sponsorMainNodeId) {
     currentMaxRank: 1,
     createdAt: (/* @__PURE__ */ new Date()).toISOString(),
     updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
-    vaults: Array.from({ length: 27 }, (_, i) => ({
+    vaults: Array.from({ length: 18 }, (_, i) => ({
       id: `v-${owner}-${i + 1}`,
       owner,
       rank: i + 1,
@@ -1004,11 +1698,13 @@ function reconcileRankTreeLinks(nodes) {
   nodes.sort((a, b) => a.id - b.id);
   const byId = /* @__PURE__ */ new Map();
   const ownerFirstMain = /* @__PURE__ */ new Map();
+  const rankNum = nodes[0]?.rank || 1;
+  const r1Nodes = matrixDB?.nodesByRank?.[1] || [];
   for (const n of nodes) {
     byId.set(n.id, n);
     const ok = (n.owner || "").toLowerCase();
     if (!n.isClone && !n.isExtraId && !ownerFirstMain.has(ok)) {
-      ownerFirstMain.set(ok, n.id);
+      ownerFirstMain.set(ok, rankNum === 1 ? n.id : n.originMainId > 0 ? n.originMainId : n.id);
     }
   }
   const cloneCountByOrigin = /* @__PURE__ */ new Map();
@@ -1017,8 +1713,10 @@ function reconcileRankTreeLinks(nodes) {
       n.isExtraId = false;
       const ok = (n.owner || "").toLowerCase();
       const fallbackMain = ownerFirstMain.get(ok) || 1;
-      const candidateOrig = byId.get(n.originMainId);
-      if (!n.originMainId || n.originMainId === n.id || !candidateOrig || candidateOrig.isClone) {
+      const candidateOrig = rankNum === 1 ? byId.get(n.originMainId) : r1Nodes.find((x) => x.id === n.originMainId && !x.isClone) || nodes.find(
+        (x) => !x.isClone && (x.originMainId === n.originMainId || x.id === n.originMainId)
+      ) || byId.get(n.originMainId);
+      if (!n.originMainId || rankNum === 1 && n.originMainId === n.id || !candidateOrig || candidateOrig.isClone) {
         n.originMainId = fallbackMain;
       }
       const origId = n.originMainId > 0 ? n.originMainId : fallbackMain;
@@ -1031,18 +1729,36 @@ function reconcileRankTreeLinks(nodes) {
       n.cloneRound = 0;
     }
     if (n.id <= 1 || n.parentId <= 0) continue;
-    const parent = byId.get(n.parentId);
+  }
+  const childrenByParent = /* @__PURE__ */ new Map();
+  for (const n of nodes) {
+    if (n.id <= 1 || n.parentId <= 0) continue;
+    if (!byId.has(n.parentId)) continue;
+    const list = childrenByParent.get(n.parentId) || [];
+    list.push(n);
+    childrenByParent.set(n.parentId, list);
+  }
+  for (const [pId, children] of childrenByParent.entries()) {
+    const parent = byId.get(pId);
     if (!parent) continue;
-    if (parent.leftChild === n.id || parent.rightChild === n.id) continue;
-    if (!parent.leftChild || parent.leftChild <= 0 || !byId.has(parent.leftChild)) {
-      parent.leftChild = n.id;
-    } else if (!parent.rightChild || parent.rightChild <= 0 || !byId.has(parent.rightChild)) {
-      parent.rightChild = n.id;
+    children.sort((a, b) => a.id - b.id);
+    const leftNode = children[0];
+    const rightNode = children.length > 1 ? children[1] : void 0;
+    parent.leftChild = leftNode ? leftNode.id : 0;
+    parent.rightChild = rightNode ? rightNode.id : 0;
+    if (leftNode) leftNode.isLeft = true;
+    if (rightNode) rightNode.isLeft = false;
+  }
+  for (const p of nodes) {
+    if (!childrenByParent.has(p.id)) {
+      if (p.leftChild > 0 && !byId.has(p.leftChild)) p.leftChild = 0;
+      if (p.rightChild > 0 && !byId.has(p.rightChild)) p.rightChild = 0;
+    } else {
+      const cList = childrenByParent.get(p.id);
+      if (cList.length < 2) p.rightChild = 0;
     }
   }
-  const rankNum = nodes[0]?.rank || 1;
   if (rankNum >= 1 && nodes.length > 1) {
-    const r1Nodes = matrixDB?.nodesByRank?.[1] || [];
     const r9Nodes = matrixDB?.nodesByRank?.[9] || [];
     const r4Nodes = matrixDB?.nodesByRank?.[4] || [];
     if (rankNum > 1 && r1Nodes.length > 0) {
@@ -1065,13 +1781,53 @@ function reconcileRankTreeLinks(nodes) {
             n.directSponsor = eligibleMain.owner;
           }
         } else if (!n.isClone && !n.isExtraId && n.id > 1) {
-          const origR1 = n.originMainId > 1 ? r1Nodes.find((x) => x.id === n.originMainId && !x.isClone && !x.isExtraId) : r1Nodes.find(
-            (x) => x.id > 1 && !x.isClone && !x.isExtraId && (x.owner || "").toLowerCase() === (n.owner || "").toLowerCase()
+          const ok = (n.owner || "").toLowerCase();
+          const ownerMainsR1 = r1Nodes.filter(
+            (x) => x.id > 1 && !x.isClone && !x.isExtraId && (x.owner || "").toLowerCase() === ok
           );
+          let origR1 = n.originMainId > 1 ? r1Nodes.find(
+            (x) => x.id === n.originMainId && !x.isClone && !x.isExtraId && (x.owner || "").toLowerCase() === ok
+          ) : void 0;
+          if (!origR1 && n.directSponsorNodeId > 1 && ownerMainsR1.length > 1) {
+            origR1 = ownerMainsR1.find((x) => x.directSponsorNodeId === n.directSponsorNodeId);
+          }
+          if (!origR1 && ownerMainsR1.length > 0) {
+            origR1 = ownerMainsR1[0];
+          }
           if (origR1) {
             n.originMainId = origR1.id;
-            n.directSponsorNodeId = origR1.directSponsorNodeId || 1;
-            n.directSponsor = origR1.directSponsor || n.directSponsor;
+            const spR1 = r1Nodes.find((x) => x.id === origR1.directSponsorNodeId);
+            const canonSpId = spR1 && spR1.isClone && spR1.originMainId > 0 ? spR1.originMainId : origR1.directSponsorNodeId || 1;
+            const canonSpNode = r1Nodes.find((x) => x.id === canonSpId) || spR1;
+            n.directSponsorNodeId = canonSpId;
+            n.directSponsor = canonSpNode?.owner || origR1.directSponsor || n.directSponsor;
+          }
+        } else if (n.isClone) {
+          const nOwner = (n.owner || "").toLowerCase();
+          const localOrigMain = nodes.find(
+            (m) => !m.isClone && !m.isExtraId && (m.originMainId === n.originMainId || m.id === n.originMainId) && (!nOwner || (m.owner || "").toLowerCase() === nOwner)
+          ) || nodes.find(
+            (m) => !m.isClone && (m.originMainId === n.originMainId || m.id === n.originMainId) && (!nOwner || (m.owner || "").toLowerCase() === nOwner)
+          );
+          const r1OriginId = localOrigMain ? localOrigMain.originMainId : n.originMainId;
+          if (r1OriginId > 0) {
+            n.originMainId = r1OriginId;
+          }
+          if (r1OriginId === 1) {
+            n.directSponsorNodeId = 0;
+            const rootR1 = r1Nodes.find((x) => x.id === 1);
+            if (rootR1) n.directSponsor = rootR1.directSponsor;
+          } else {
+            const origR1 = r1Nodes.find(
+              (x) => x.id === r1OriginId && !x.isClone && !x.isExtraId
+            );
+            if (origR1) {
+              const spR1 = r1Nodes.find((x) => x.id === origR1.directSponsorNodeId);
+              const canonSpId = spR1 && spR1.isClone && spR1.originMainId > 0 ? spR1.originMainId : origR1.directSponsorNodeId || 1;
+              const canonSpNode = r1Nodes.find((x) => x.id === canonSpId) || spR1;
+              n.directSponsorNodeId = canonSpId;
+              n.directSponsor = canonSpNode?.owner || origR1.directSponsor || n.directSponsor;
+            }
           }
         }
       }
@@ -1083,83 +1839,6 @@ function reconcileRankTreeLinks(nodes) {
       if (!p || p.leftChild !== n.id && p.rightChild !== n.id) {
         needsReplay = true;
         break;
-      }
-      if (n.isClone && n.cloneRound === 1) {
-        const origId = n.originMainId || n.id;
-        const origNode = nodes.find(
-          (prev) => !prev.isClone && (prev.id === origId || !prev.isExtraId && prev.originMainId === origId)
-        ) || byId.get(origId);
-        const spMainId = origId === 1 || origNode?.id === 1 ? 1 : origNode?.directSponsorNodeId || n.directSponsorNodeId || 1;
-        const spNodeInRank = nodes.find(
-          (prev) => prev.id < n.id && !prev.isClone && !prev.isExtraId && (spMainId === 1 ? prev.id === 1 : prev.originMainId === spMainId)
-        );
-        if (spNodeInRank) {
-          const spOrigTag = spNodeInRank.originMainId || spNodeInRank.id;
-          const isUnderSp = p.id === spNodeInRank.id || p.isClone && ((p.originMainId || p.id) === spNodeInRank.id || (p.originMainId || p.id) === spOrigTag);
-          if (!isUnderSp) {
-            const spHadOpenSlot = nodes.some((prev) => {
-              if (prev.id >= n.id) return false;
-              const isSpOrClone = prev.id === spNodeInRank.id || prev.isClone && ((prev.originMainId || prev.id) === spNodeInRank.id || (prev.originMainId || prev.id) === spOrigTag);
-              if (!isSpOrClone) return false;
-              const leftOpenAtTime = !prev.leftChild || prev.leftChild <= 0 || prev.leftChild > n.id;
-              const rightOpenAtTime = !prev.rightChild || prev.rightChild <= 0 || prev.rightChild > n.id;
-              return leftOpenAtTime || rightOpenAtTime;
-            });
-            if (spHadOpenSlot) {
-              needsReplay = true;
-              break;
-            }
-          }
-        }
-      } else if (n.isExtraId && !n.isClone) {
-        const spMainId = n.directSponsorNodeId > 0 ? n.directSponsorNodeId : 1;
-        const spNodeInRank = nodes.find(
-          (prev) => prev.id < n.id && !prev.isClone && !prev.isExtraId && (spMainId === 1 ? prev.id === 1 : prev.originMainId === spMainId)
-        );
-        if (spNodeInRank) {
-          const spOrigTag = spNodeInRank.originMainId || spNodeInRank.id;
-          const isUnderSp = p.id === spNodeInRank.id || p.isClone && ((p.originMainId || p.id) === spNodeInRank.id || (p.originMainId || p.id) === spOrigTag);
-          if (!isUnderSp) {
-            needsReplay = true;
-            break;
-          }
-        }
-      } else if (!n.isClone && !n.isExtraId && rankNum > 1) {
-        const spMainId = n.directSponsorNodeId > 0 ? n.directSponsorNodeId : 1;
-        if (spMainId > 1) {
-          const sponsorBefore = nodes.some(
-            (prev) => prev.id < n.id && !prev.isClone && !prev.isExtraId && prev.originMainId === spMainId
-          );
-          if (!sponsorBefore && p.isClone) {
-            needsReplay = true;
-            break;
-          }
-        }
-      }
-    }
-    if (!needsReplay && rankNum > 1) {
-      const rightTriggerCountByOrig = /* @__PURE__ */ new Map();
-      const actualCloneCountByOrig = /* @__PURE__ */ new Map();
-      for (const n of nodes) {
-        const origKey = n.isClone ? n.originMainId || n.id : n.isExtraId ? n.id : n.originMainId || n.id;
-        if (n.isClone) {
-          actualCloneCountByOrig.set(origKey, (actualCloneCountByOrig.get(origKey) || 0) + 1);
-        }
-        if (n.rightChild > 0 && byId.has(n.rightChild)) {
-          rightTriggerCountByOrig.set(origKey, (rightTriggerCountByOrig.get(origKey) || 0) + 1);
-        }
-      }
-      for (const [origKey, trigCnt] of rightTriggerCountByOrig.entries()) {
-        if ((actualCloneCountByOrig.get(origKey) || 0) !== trigCnt) {
-          needsReplay = true;
-          break;
-        }
-      }
-      for (const [origKey, cloneCnt] of actualCloneCountByOrig.entries()) {
-        if ((rightTriggerCountByOrig.get(origKey) || 0) !== cloneCnt) {
-          needsReplay = true;
-          break;
-        }
       }
     }
     const leftCountBeforeByMain = /* @__PURE__ */ new Map();
@@ -1239,12 +1918,15 @@ function reconcileRankTreeLinks(nodes) {
             nodeVault: 0,
             rawNodeVault: 0,
             reconciledBaseVault: 0,
+            isLocalUpgrade: template?.isLocalUpgrade,
+            isAdminFreeUpgrade: template?.isAdminFreeUpgrade,
             originType: "CLONE"
           };
           const cParent = placedNodes.find((p) => p.id === cSlot.parentId);
           placedNodes.push(cloneNode);
           if (cParent) {
-            if (cSlot.isLeft) {
+            const placeLeft = !cParent.leftChild || cParent.leftChild <= 0 || cSlot.isLeft;
+            if (placeLeft) {
               cParent.leftChild = cloneNode.id;
             } else {
               cParent.rightChild = cloneNode.id;
@@ -1253,6 +1935,7 @@ function reconcileRankTreeLinks(nodes) {
           }
         }
       };
+      let replayedAdminUpgrades = 0;
       for (const n of nonCloneList) {
         n.leftChild = 0;
         n.rightChild = 0;
@@ -1260,11 +1943,19 @@ function reconcileRankTreeLinks(nodes) {
         const spNodeInRank = placedNodes.find(
           (p) => !p.isClone && !p.isExtraId && (spMainId === 1 ? p.id === 1 : p.id === spMainId || p.originMainId === spMainId)
         );
-        const slot = spNodeInRank ? findExtraIdPlacementInRankNodes(placedNodes, spNodeInRank.id) : findShallowestLeftToRightSlotInRankNodes(placedNodes, 1);
+        let slot;
+        if (n.isAdminFreeUpgrade) {
+          const adminRoundIdx = replayedAdminUpgrades % 2;
+          replayedAdminUpgrades++;
+          slot = adminRoundIdx === 0 && spNodeInRank ? findExtraIdPlacementInRankNodes(placedNodes, spNodeInRank.id) : findShallowestLeftToRightSlotInRankNodes(placedNodes, 1);
+        } else {
+          slot = spNodeInRank ? findExtraIdPlacementInRankNodes(placedNodes, spNodeInRank.id) : findShallowestLeftToRightSlotInRankNodes(placedNodes, 1);
+        }
         const targetParent = placedNodes.find((p) => p.id === slot.parentId) || rootNode;
         n.parentId = targetParent.id;
         placedNodes.push(n);
-        if (slot.isLeft) {
+        const placeLeft = !targetParent.leftChild || targetParent.leftChild <= 0 || slot.isLeft;
+        if (placeLeft) {
           targetParent.leftChild = n.id;
         } else {
           targetParent.rightChild = n.id;
@@ -1279,58 +1970,10 @@ function reconcileRankTreeLinks(nodes) {
         byId.set(pn.id, pn);
       }
     }
-    const rUnitVault = Number(((RANK_PRICES_USDT[rankNum - 1] || 5) * 0.35).toFixed(4));
-    let reclaimedVault = 0;
-    const leftCountAfterByMain = /* @__PURE__ */ new Map();
     for (const m of nodes) {
-      if (m.isClone || m.isExtraId) continue;
-      let leftCount = 0;
-      const mOrig = m.originMainId || m.id;
-      for (const cand of nodes) {
-        const cOrig = cand.originMainId || cand.id;
-        if ((cand.id === m.id || cand.isClone && (cOrig === m.id || cOrig === mOrig)) && cand.leftChild > 0 && byId.has(cand.leftChild)) {
-          leftCount++;
-        }
-      }
-      leftCountAfterByMain.set(m.id, leftCount);
-      const maxPossibleVault = Number((leftCount * rUnitVault).toFixed(4));
-      const curVault = Number(m.nodeVault || 0);
-      if (curVault > maxPossibleVault) {
-        reclaimedVault = Number((reclaimedVault + (curVault - maxPossibleVault)).toFixed(4));
-        m.nodeVault = maxPossibleVault;
-      }
-      if ((m.rawNodeVault || 0) > maxPossibleVault) m.rawNodeVault = maxPossibleVault;
-      if ((m.reconciledBaseVault || 0) > maxPossibleVault) m.reconciledBaseVault = maxPossibleVault;
-    }
-    if (reclaimedVault > 0) {
-      for (const m of nodes) {
-        if (m.isClone || m.isExtraId || reclaimedVault <= 0) continue;
-        const beforeLc = leftCountBeforeByMain.get(m.id) || 0;
-        const afterLc = leftCountAfterByMain.get(m.id) || 0;
-        let gainedCount = Math.max(0, afterLc - beforeLc);
-        if (gainedCount === 0 && !needsReplay) {
-          const mOrig = m.originMainId || m.id;
-          for (const cand of nodes) {
-            const cOrig = cand.originMainId || cand.id;
-            if (cand.isClone && (cOrig === m.id || cOrig === mOrig) && cand.leftChild > 0) {
-              const lcNode = byId.get(cand.leftChild);
-              if (lcNode && lcNode.isClone && lcNode.cloneRound === 1) {
-                gainedCount++;
-              }
-            }
-          }
-        }
-        if (gainedCount > 0) {
-          const gainedVault = Number((gainedCount * rUnitVault).toFixed(4));
-          const maxPossibleVault = Number((afterLc * rUnitVault).toFixed(4));
-          const addVault = Math.min(reclaimedVault, gainedVault);
-          if (addVault > 0 && (m.nodeVault || 0) + addVault <= maxPossibleVault + 1e-6) {
-            m.nodeVault = Number(((m.nodeVault || 0) + addVault).toFixed(4));
-            m.rawNodeVault = Number(((m.rawNodeVault || 0) + addVault).toFixed(4));
-            m.reconciledBaseVault = Number(((m.reconciledBaseVault || 0) + addVault).toFixed(4));
-            reclaimedVault = Number(Math.max(0, reclaimedVault - addVault).toFixed(4));
-          }
-        }
+      if (m.rawNodeVault !== void 0 && m.rawNodeVault >= 0) {
+        m.nodeVault = Number(m.rawNodeVault);
+        m.reconciledBaseVault = Number(m.rawNodeVault);
       }
     }
   }
@@ -1367,14 +2010,6 @@ function findExtraIdPlacementInRankNodes(rNodes, sponsorMainId) {
       }
     }
   }
-  for (const cand of sorted) {
-    if (isSponsorClone(cand)) {
-      const cSlot = findShallowestLeftToRightSlotInRankNodes(rNodes, cand.id);
-      if (cSlot && cSlot.parentId > 0) {
-        return cSlot;
-      }
-    }
-  }
   return findShallowestLeftToRightSlotInRankNodes(rNodes, mainNode.id);
 }
 function findClonePlacementInRankNodes(rNodes, triggerParent) {
@@ -1386,8 +2021,11 @@ function findClonePlacementInRankNodes(rNodes, triggerParent) {
   ).length;
   const roundIndex = existingClonesCount % 2;
   const cloneRound = roundIndex + 1;
+  const trigOwner = (triggerParent.owner || "").toLowerCase();
   const originNode = rNodes.find(
     (n) => !n.isClone && !n.isExtraId && (n.id === cloneOriginMainId || n.originMainId === cloneOriginMainId)
+  ) || rNodes.find(
+    (n) => !n.isClone && (n.id === cloneOriginMainId || n.originMainId === cloneOriginMainId) && (!trigOwner || (n.owner || "").toLowerCase() === trigOwner)
   ) || byId.get(cloneOriginMainId) || triggerParent;
   const rankNum = originNode.rank || triggerParent.rank || 1;
   let sponsorNodeInRankId = 0;
@@ -1438,7 +2076,7 @@ function reconcileRank1AutoMainIds() {
   const autoMainSourceMap = /* @__PURE__ */ new Map();
   const r1Nodes = matrixDB.nodesByRank[1] || [];
   if (r1Nodes.length === 0) return autoMainSourceMap;
-  for (let r = 1; r <= 27; r++) {
+  for (let r = 1; r <= 18; r++) {
     const rList = matrixDB.nodesByRank[r] || [];
     if (rList.length === 0) continue;
     const sortedR = [...rList].sort((a, b) => a.id - b.id);
@@ -1532,9 +2170,9 @@ function reconcileRank1AutoMainIds() {
     }
   }
   const getMainCurrentRank = (r1MainId) => {
-    if (r1MainId === 1) return 27;
+    if (r1MainId === 1) return 18;
     let cur = 1;
-    for (let r = 27; r >= 2; r--) {
+    for (let r = 18; r >= 2; r--) {
       const rList = matrixDB.nodesByRank[r] || [];
       if (rList.some((x) => !x.isClone && !x.isExtraId && x.originMainId === r1MainId)) {
         cur = r;
@@ -1567,6 +2205,59 @@ function reconcileRank1AutoMainIds() {
   const extraR2To3VaultByMain = /* @__PURE__ */ new Map();
   const extraR2To3MinR1IdByMain = /* @__PURE__ */ new Map();
   const usedExtraR2To3 = /* @__PURE__ */ new Set();
+  const activeContractLower = (matrixDB.contractAddress || CONTRACT_ADDRESS).toLowerCase();
+  const LEGACY_CONTRACT_PRICES_USDT = activeContractLower === "0xaa38a606402df541ee4df81ae0c8bcdacdd12fe6" ? [
+    10,
+    20,
+    30,
+    40,
+    50,
+    60,
+    80,
+    100,
+    200,
+    300,
+    500,
+    700,
+    900,
+    1e3,
+    2e3,
+    3e3,
+    4e3,
+    5e3
+  ] : [
+    10,
+    20,
+    30,
+    40,
+    50,
+    60,
+    80,
+    100,
+    200,
+    300,
+    500,
+    700,
+    1e3,
+    1500,
+    2e3,
+    4e3,
+    6e3,
+    1e4
+  ];
+  const usesLegacyOnChainScale = activeContractLower === "0xaa38a606402df541ee4df81ae0c8bcdacdd12fe6" || activeContractLower === "0x49a754084903678b7d46ff2934edb037cd1ab518" || activeContractLower === "0x8b2ef84f543f5c1dfa8240a1853d63efe66006eb" || sortedR1.some((m) => {
+    if (m.isClone || m.isExtraId || m.id <= 1) return false;
+    const rawV = Number(m.rawNodeVault ?? m.nodeVault ?? 0);
+    if (rawV <= 0) return false;
+    let lc = 0;
+    for (const sn of sortedR1) {
+      const snOrig = sn.originMainId || sn.id;
+      if ((sn.id === m.id || sn.isClone && snOrig === m.id) && sn.leftChild > 0) {
+        lc++;
+      }
+    }
+    return lc > 0 && rawV > lc * 1.75 + 0.1;
+  });
   for (const mNode of sortedR1) {
     if (mNode.isClone || mNode.isExtraId) continue;
     const win5Start = getMainWindow5Start(mNode.id);
@@ -1578,6 +2269,8 @@ function reconcileRank1AutoMainIds() {
     }
     let totalGross1To3 = 0;
     let totalRem1To3 = 0;
+    let legacyGross1To3 = 0;
+    let legacyRem1To3 = 0;
     let extraR2To3 = 0;
     let extraR2To3Rem = 0;
     let extraMinR1Id = mNode.id;
@@ -1586,15 +2279,19 @@ function reconcileRank1AutoMainIds() {
       const rList = matrixDB.nodesByRank[r] || [];
       const correspMain = r === 1 ? mNode : rList.find((x) => !x.isClone && !x.isExtraId && x.originMainId === mNode.id);
       if (!correspMain) continue;
-      const rUnitVault = Number(((RANK_PRICES_USDT[r - 1] || 5) * 0.35).toFixed(4));
+      const newRankPrice = RANK_PRICES_USDT[r - 1] || 5;
+      const oldRankPrice = LEGACY_CONTRACT_PRICES_USDT[r - 1] || newRankPrice;
+      const rUnitVault = Number((newRankPrice * 0.35).toFixed(4));
+      const legacyUnitVault = Number((oldRankPrice * 0.35).toFixed(4));
       let leftCount = 0;
       for (const sn of rList) {
         const snOrig = sn.originMainId || sn.id;
         const isSameMain = sn.id === correspMain.id || sn.isClone && (snOrig === correspMain.id || snOrig === mNode.id);
         if (isSameMain && sn.leftChild > 0) {
+          const lcNode = rList.find((rn) => rn.id === sn.leftChild);
+          if (lcNode?.isAdminFreeUpgrade) continue;
           leftCount++;
           if (r > 1) {
-            const lcNode = rList.find((rn) => rn.id === sn.leftChild);
             if (lcNode && !lcNode.isClone && !lcNode.isExtraId) {
               const r1Orig = lcNode.originMainId || 0;
               if (r1Orig > mNode.id && r1Orig < 1e6) {
@@ -1607,32 +2304,39 @@ function reconcileRank1AutoMainIds() {
         }
       }
       const grossR = Number((leftCount * rUnitVault).toFixed(4));
-      const remR = Number((correspMain.nodeVault ?? 0).toFixed(4));
+      const rawRemR = Number((correspMain.rawNodeVault ?? correspMain.nodeVault ?? 0).toFixed(4));
+      const remR = usesLegacyOnChainScale ? Number((rawRemR * (newRankPrice / oldRankPrice)).toFixed(4)) : rawRemR;
       totalGross1To3 = Number((totalGross1To3 + grossR).toFixed(4));
       totalRem1To3 = Number((totalRem1To3 + remR).toFixed(4));
+      legacyGross1To3 = Number((legacyGross1To3 + leftCount * legacyUnitVault).toFixed(4));
+      legacyRem1To3 = Number((legacyRem1To3 + rawRemR).toFixed(4));
       if (r > 1) {
         extraR2To3 = Number((extraR2To3 + grossR).toFixed(4));
         extraR2To3Rem = Number((extraR2To3Rem + remR).toFixed(4));
       }
     }
+    const r1EntryPrice2 = RANK_PRICES_USDT[0] || 5;
+    const r1UnitVault = Number((r1EntryPrice2 * 0.35).toFixed(4));
     const deducted = Math.max(0, Number((totalGross1To3 - totalRem1To3).toFixed(4)));
-    const maxPossibleSpawns = Math.floor((deducted + 1e-4) / 5);
+    const scaledSpawns = Math.floor((deducted + 1e-4) / r1EntryPrice2);
+    const legacyDeducted = Math.max(0, Number((legacyGross1To3 - legacyRem1To3).toFixed(4)));
+    const legacySpawns = usesLegacyOnChainScale ? Math.floor((legacyDeducted + 1e-4) / 10) : 0;
+    const maxPossibleSpawns = Math.max(scaledSpawns, legacySpawns);
     let expectedSpawns = 0;
     if (mNode.id === 1) {
       expectedSpawns = maxPossibleSpawns;
     } else if (maxPossibleSpawns > 0) {
       for (let c = maxPossibleSpawns; c >= 1; c--) {
-        const pool2GrossNeeded = Number((totalRem1To3 + c * 5).toFixed(4));
-        const units175 = pool2GrossNeeded / 1.75;
-        if (pool2GrossNeeded <= totalGross1To3 + 0.01 && Math.abs(units175 - Math.round(units175)) < 0.01) {
+        const pool2GrossNeeded = Number((totalRem1To3 + c * r1EntryPrice2).toFixed(4));
+        const unitsVault = pool2GrossNeeded / r1UnitVault;
+        if (pool2GrossNeeded <= totalGross1To3 + 0.01 && Math.abs(unitsVault - Math.round(unitsVault)) < 0.01) {
           expectedSpawns = c;
           break;
         }
       }
     }
     expectedAutoSpawnsByMain.set(mNode.id, expectedSpawns);
-    const effectiveExtraR2To3 = Math.max(0, Number((extraR2To3 - extraR2To3Rem).toFixed(4)));
-    extraR2To3VaultByMain.set(mNode.id, expectedSpawns > 0 ? effectiveExtraR2To3 : 0);
+    extraR2To3VaultByMain.set(mNode.id, expectedSpawns > 0 ? extraR2To3 : 0);
     extraR2To3MinR1IdByMain.set(mNode.id, extraMinR1Id);
   }
   const ownerPrimaryMap = /* @__PURE__ */ new Map();
@@ -1724,377 +2428,221 @@ function reconcileRank1AutoMainIds() {
 }
 function reconcileAutoExtraIdsAcrossRanks() {
   const createdExtraNodes = [];
-  for (let r = 1; r <= 27; r++) {
+  for (let r = 1; r <= 18; r++) {
     const rList = matrixDB.nodesByRank[r];
     if (!Array.isArray(rList) || rList.length === 0) continue;
-    const realNodes = rList.filter((n) => !n.isSyntheticExtra);
+    const onChainMainOrigins = new Set(
+      rList.filter((n) => !n.isSyntheticExtra && !n.isLocalUpgrade && !n.isClone && !n.isExtraId).map((n) => n.originMainId || n.id)
+    );
+    const hasUnmergedLocalNonClones = rList.some(
+      (n) => !n.isSyntheticExtra && n.isLocalUpgrade && !n.isClone && (n.isExtraId || !onChainMainOrigins.has(n.originMainId || n.id))
+    );
+    const onChainClones = rList.filter((n) => !n.isSyntheticExtra && !n.isLocalUpgrade && n.isClone);
+    const realNodes = rList.filter((n) => {
+      if (n.isSyntheticExtra) return false;
+      if (n.isLocalUpgrade) {
+        if (!n.isClone && !n.isExtraId && onChainMainOrigins.has(n.originMainId || n.id)) {
+          return false;
+        }
+        if (n.isClone) {
+          const nParent = rList.find((p) => p.id === n.parentId);
+          const nIsLeft = n.isLeft !== void 0 ? n.isLeft : nParent ? nParent.leftChild === n.id ? true : nParent.rightChild === n.id ? false : void 0 : void 0;
+          const alreadyOnChain = onChainClones.some((c) => {
+            if (c.id === n.id) return true;
+            if (c.parentId !== n.parentId) return false;
+            if ((c.originMainId || c.id) !== (n.originMainId || n.id)) return false;
+            const cParent = rList.find((p) => p.id === c.parentId);
+            const cIsLeft = c.isLeft !== void 0 ? c.isLeft : cParent ? cParent.leftChild === c.id ? true : cParent.rightChild === c.id ? false : void 0 : void 0;
+            return nIsLeft !== void 0 && cIsLeft !== void 0 && nIsLeft === cIsLeft;
+          });
+          if (alreadyOnChain) return false;
+          const parentIsLocal = rList.some(
+            (p) => p.id === n.parentId && p.isLocalUpgrade && !p.isSyntheticExtra
+          );
+          if (!hasUnmergedLocalNonClones && !parentIsLocal) {
+            return false;
+          }
+        }
+      }
+      return true;
+    });
     const realIds = new Set(realNodes.map((n) => n.id));
     for (const n of realNodes) {
       if (n.leftChild > 0 && !realIds.has(n.leftChild)) n.leftChild = 0;
       if (n.rightChild > 0 && !realIds.has(n.rightChild)) n.rightChild = 0;
-      if (n.reconciledBaseVault === void 0) {
-        n.reconciledBaseVault = Number(n.nodeVault ?? n.rawNodeVault ?? 0);
-      } else {
-        n.nodeVault = Number(n.reconciledBaseVault);
+      if (!n.isLocalUpgrade) {
+        const baseRaw = Number(n.rawNodeVault ?? n.reconciledBaseVault ?? n.nodeVault ?? 0);
+        n.rawNodeVault = baseRaw;
+        n.nodeVault = baseRaw;
       }
     }
     matrixDB.nodesByRank[r] = reconcileRankTreeLinks(realNodes);
     matrixDB.rankCounts[r] = Math.max(1, matrixDB.nodesByRank[r].length);
   }
-  const realAutoMainSourceMap = reconcileRank1AutoMainIds();
+  const r1AllNodes = matrixDB.nodesByRank[1] || [];
+  const autoMainSourceMap = reconcileRank1AutoMainIds();
   const r1Nodes = matrixDB.nodesByRank[1] || [];
-  if (r1Nodes.length === 0) return createdExtraNodes;
-  const r1Mains = r1Nodes.filter((n) => !n.isClone && !n.isExtraId).sort((a, b) => a.id - b.id);
-  for (const r1Main of r1Mains) {
-    if (r1Main.id <= 1) continue;
-    const getCorrespMain = (targetRank) => {
-      const rList = matrixDB.nodesByRank[targetRank] || [];
-      if (targetRank === 1) return rList.find((n) => n.id === r1Main.id);
-      return rList.find((n) => !n.isClone && !n.isExtraId && n.originMainId === r1Main.id);
-    };
-    let currentRank = 1;
-    for (let r = 27; r >= 1; r--) {
-      if (getCorrespMain(r)) {
-        currentRank = r;
-        break;
-      }
+  const activeContractAddrLower = (matrixDB.contractAddress || CONTRACT_ADDRESS).toLowerCase();
+  const LEGACY_CONTRACT_PRICES_USDT = activeContractAddrLower === "0xaa38a606402df541ee4df81ae0c8bcdacdd12fe6" ? [
+    10,
+    20,
+    30,
+    40,
+    50,
+    60,
+    80,
+    100,
+    200,
+    300,
+    500,
+    700,
+    900,
+    1e3,
+    2e3,
+    3e3,
+    4e3,
+    5e3
+  ] : [
+    10,
+    20,
+    30,
+    40,
+    50,
+    60,
+    80,
+    100,
+    200,
+    300,
+    500,
+    700,
+    1e3,
+    1500,
+    2e3,
+    4e3,
+    6e3,
+    1e4
+  ];
+  const isLegacyContract = activeContractAddrLower === "0xaa38a606402df541ee4df81ae0c8bcdacdd12fe6" || activeContractAddrLower === "0x49a754084903678b7d46ff2934edb037cd1ab518" || activeContractAddrLower === "0x8b2ef84f543f5c1dfa8240a1853d63efe66006eb";
+  const resolveExtraSpawnerMainIdLocal = (extraNode) => {
+    const extraOwner = (extraNode.owner || "").toLowerCase();
+    const ownerMains = r1Nodes.filter(
+      (m) => !m.isClone && !m.isExtraId && (m.owner || "").toLowerCase() === extraOwner
+    );
+    if (ownerMains.length === 1) return ownerMains[0].id;
+    if (ownerMains.length > 1) {
+      const r4Nodes = matrixDB.nodesByRank[4] || [];
+      const eligibleMain = ownerMains.find(
+        (m) => m.id === 1 || r4Nodes.some((x) => !x.isClone && !x.isExtraId && x.originMainId === m.id)
+      );
+      if (eligibleMain) return eligibleMain.id;
+      return ownerMains[0].id;
     }
-    if (currentRank <= 1) continue;
-    const hasRealOnChainAuto = Array.from(realAutoMainSourceMap.values()).includes(r1Main.id);
-    let hasRealOnChainExtra = false;
-    let totalOnChainRemVault = 0;
-    for (let r = 1; r <= currentRank; r++) {
+    return extraNode.directSponsorNodeId > 0 ? extraNode.directSponsorNodeId : 1;
+  };
+  for (const mNode of r1Nodes) {
+    if (mNode.isClone || mNode.isExtraId) continue;
+    const correspByRank = /* @__PURE__ */ new Map();
+    const grossByRank = /* @__PURE__ */ new Map();
+    for (let r = 1; r <= 18; r++) {
       const rList = matrixDB.nodesByRank[r] || [];
-      if (r >= 2 && rList.some((n) => !n.isSyntheticExtra && n.isExtraId && !n.isClone && (n.owner || "").toLowerCase() === (r1Main.owner || "").toLowerCase())) {
-        hasRealOnChainExtra = true;
-      }
-      const mInR = getCorrespMain(r);
-      if (mInR) totalOnChainRemVault += Number(mInR.reconciledBaseVault ?? mInR.nodeVault ?? 0);
-    }
-    if (!hasRealOnChainAuto && !hasRealOnChainExtra && totalOnChainRemVault <= 1e-6) {
-      for (let r = 1; r <= currentRank; r++) {
-        const rList = matrixDB.nodesByRank[r] || [];
-        const mInR = getCorrespMain(r);
-        if (!mInR) continue;
-        const rUnitVault = Number(((RANK_PRICES_USDT[r - 1] || 5) * 0.35).toFixed(4));
-        const nextRankPrice = RANK_PRICES_USDT[r] || 10;
-        let leftCount = 0;
-        for (const sn of rList) {
-          if (sn.isSyntheticExtra) continue;
-          const snOrig = sn.originMainId || sn.id;
-          const isSameMain = sn.id === mInR.id || sn.isClone && (snOrig === mInR.id || snOrig === r1Main.id);
-          if (isSameMain && sn.leftChild > 0) {
+      const corresp = r === 1 ? mNode : rList.find((x) => !x.isClone && !x.isExtraId && x.originMainId === mNode.id);
+      if (!corresp) continue;
+      correspByRank.set(r, corresp);
+      const rUnitVault = Number(((RANK_PRICES_USDT[r - 1] || 5) * 0.35).toFixed(4));
+      let leftCount = 0;
+      for (const sn of rList) {
+        const snOrig = sn.originMainId || sn.id;
+        const isSameMain = sn.id === corresp.id || sn.isClone && !sn.isExtraId && (snOrig === corresp.id || snOrig === mNode.id);
+        if (isSameMain && sn.leftChild > 0) {
+          const lcNode = rList.find((rn) => rn.id === sn.leftChild);
+          if (!lcNode?.isAdminFreeUpgrade) {
             leftCount++;
           }
         }
-        const grossR = Number((leftCount * rUnitVault).toFixed(4));
-        if (grossR > 0 && grossR < nextRankPrice) {
-          mInR.nodeVault = grossR;
-        }
       }
+      grossByRank.set(r, Number((leftCount * rUnitVault).toFixed(4)));
     }
-    const window5Start = Math.max(1, currentRank - 4);
-    if (window5Start > 1) {
-      const eligiblePool2Nodes = [];
+    if (mNode.id === 1) {
+      let spawnedAutoCount = 0;
+      for (const [, src] of autoMainSourceMap.entries()) {
+        if (src === 1) spawnedAutoCount++;
+      }
+      const totalAutoDeduct = Number((spawnedAutoCount * (RANK_PRICES_USDT[0] || 5)).toFixed(4));
+      let totalGrossR1To3 = 0;
+      let totalScaledRawR1To3 = 0;
+      const scaledRawByR = /* @__PURE__ */ new Map();
       for (let r = 1; r <= 3; r++) {
-        if (r < window5Start) {
-          const mNode = getCorrespMain(r);
-          if (mNode) eligiblePool2Nodes.push(mNode);
+        const cNode = correspByRank.get(r);
+        if (!cNode) continue;
+        const gVal = grossByRank.get(r) || 0;
+        totalGrossR1To3 = Number((totalGrossR1To3 + gVal).toFixed(4));
+        const rawV = Number(cNode.rawNodeVault ?? cNode.nodeVault ?? 0);
+        const newRankPrice = RANK_PRICES_USDT[r - 1] || 5;
+        const oldRankPrice = LEGACY_CONTRACT_PRICES_USDT[r - 1] || newRankPrice;
+        const scaledV = isLegacyContract ? Number((rawV * (newRankPrice / oldRankPrice)).toFixed(4)) : rawV;
+        scaledRawByR.set(r, scaledV);
+        totalScaledRawR1To3 = Number((totalScaledRawR1To3 + scaledV).toFixed(4));
+      }
+      const expectedRemR1To3 = Math.max(0, Number((totalGrossR1To3 - totalAutoDeduct).toFixed(4)));
+      if (Math.abs(totalScaledRawR1To3 - expectedRemR1To3) <= 0.05 || totalScaledRawR1To3 <= expectedRemR1To3) {
+        for (let r = 1; r <= 3; r++) {
+          const cNode = correspByRank.get(r);
+          if (!cNode) continue;
+          cNode.nodeVault = Number((scaledRawByR.get(r) || 0).toFixed(4));
+          cNode.reconciledBaseVault = cNode.nodeVault;
+        }
+      } else {
+        let remAutoDeduct = totalAutoDeduct;
+        for (let r = 1; r <= 3; r++) {
+          const cNode = correspByRank.get(r);
+          if (!cNode) continue;
+          const gVal = grossByRank.get(r) || 0;
+          const used = Math.min(gVal, remAutoDeduct);
+          cNode.nodeVault = Number(Math.max(0, gVal - used).toFixed(4));
+          cNode.reconciledBaseVault = cNode.nodeVault;
+          remAutoDeduct = Number(Math.max(0, remAutoDeduct - used).toFixed(4));
         }
       }
-      const r1EntryPrice = RANK_PRICES_USDT[0] || 5;
-      const r1UnitVault = Number((r1EntryPrice * 0.35).toFixed(4));
-      let autoGuard = 0;
-      while (autoGuard < 25) {
-        autoGuard++;
-        const availAutoPool = Number(
-          eligiblePool2Nodes.reduce((sum, n) => sum + Number(n.nodeVault || 0), 0).toFixed(4)
-        );
-        if (availAutoPool + 1e-6 < r1EntryPrice) break;
-        let remDeduct = r1EntryPrice;
-        for (const pNode of eligiblePool2Nodes) {
-          if (remDeduct <= 1e-6) break;
-          const v = Number(pNode.nodeVault || 0);
-          if (v <= 1e-6) continue;
-          const d = Math.min(v, remDeduct);
-          pNode.nodeVault = Number(Math.max(0, v - d).toFixed(4));
-          remDeduct = Number(Math.max(0, remDeduct - d).toFixed(4));
+      let totalExtraDeduct = 0;
+      for (let r = 1; r <= 18; r++) {
+        const rList = matrixDB.nodesByRank[r] || [];
+        const rPrice = RANK_PRICES_USDT[r - 1] || 10;
+        for (const n of rList) {
+          if (n.isExtraId && !n.isClone && resolveExtraSpawnerMainIdLocal(n) === 1) {
+            totalExtraDeduct = Number((totalExtraDeduct + rPrice).toFixed(4));
+          }
         }
-        const r1TargetNodes = matrixDB.nodesByRank[1] || [];
-        const placement = findExtraIdPlacementInRankNodes(r1TargetNodes, r1Main.id);
-        const newAutoId = r1TargetNodes.reduce((m, n) => Math.max(m, n.id), 0) + 1;
-        const newAutoNode = {
-          id: newAutoId,
-          rank: 1,
-          owner: r1Main.owner,
-          directSponsor: r1Main.owner,
-          parentId: placement.parentId,
-          leftChild: 0,
-          rightChild: 0,
-          isClone: false,
-          isExtraId: false,
-          isSyntheticExtra: true,
-          originMainId: newAutoId,
-          cloneRound: 0,
-          directSponsorNodeId: r1Main.id,
-          nodeVault: 0,
-          rawNodeVault: 0,
-          originType: "AUTO_NEW_MAIN"
-        };
-        r1TargetNodes.push(newAutoNode);
-        const parentNode = r1TargetNodes.find((n) => n.id === placement.parentId);
-        const rightTriggerQueue = [];
-        if (parentNode) {
-          if (placement.isLeft) {
-            parentNode.leftChild = newAutoId;
-            const pMainNode = !parentNode.isClone ? parentNode : r1TargetNodes.find((x) => !x.isClone && x.id === (parentNode.originMainId || parentNode.id)) || parentNode;
-            pMainNode.nodeVault = Number(((pMainNode.nodeVault || 0) + r1UnitVault).toFixed(4));
+      }
+      let remExtraDeduct = totalExtraDeduct;
+      for (let r = 4; r <= 18; r++) {
+        const cNode = correspByRank.get(r);
+        if (!cNode) continue;
+        const gVal = grossByRank.get(r) || 0;
+        const used = Math.min(gVal, remExtraDeduct);
+        cNode.nodeVault = Number(Math.max(0, gVal - used).toFixed(4));
+        cNode.reconciledBaseVault = cNode.nodeVault;
+        remExtraDeduct = Number(Math.max(0, remExtraDeduct - used).toFixed(4));
+      }
+    } else {
+      for (let r = 1; r <= 18; r++) {
+        const cNode = correspByRank.get(r);
+        if (!cNode) continue;
+        const gVal = grossByRank.get(r) || 0;
+        if (cNode.isLocalUpgrade) {
+          cNode.nodeVault = Number(Math.min(gVal, Number(cNode.nodeVault ?? 0)).toFixed(4));
+          cNode.reconciledBaseVault = cNode.nodeVault;
+        } else {
+          const rawV = Number(cNode.rawNodeVault ?? cNode.nodeVault ?? 0);
+          if (rawV <= 0 || gVal <= 0) {
+            cNode.nodeVault = 0;
           } else {
-            parentNode.rightChild = newAutoId;
-            rightTriggerQueue.push(parentNode);
+            const newRankPrice = RANK_PRICES_USDT[r - 1] || 5;
+            const oldRankPrice = LEGACY_CONTRACT_PRICES_USDT[r - 1] || newRankPrice;
+            const scaledV = isLegacyContract || rawV > gVal + 1e-4 ? Number((rawV * (newRankPrice / oldRankPrice)).toFixed(4)) : rawV;
+            cNode.nodeVault = Number(Math.min(gVal, scaledV).toFixed(4));
           }
+          cNode.reconciledBaseVault = cNode.nodeVault;
         }
-        let cloneSafety = 0;
-        while (rightTriggerQueue.length > 0 && cloneSafety < 25) {
-          cloneSafety++;
-          const trigParent = rightTriggerQueue.shift();
-          const clonePlace = findClonePlacementInRankNodes(r1TargetNodes, trigParent);
-          const nextCloneId = r1TargetNodes.reduce((m, n) => Math.max(m, n.id), 0) + 1;
-          const origNode = r1TargetNodes.find((n) => n.id === clonePlace.cloneOriginMainId) || trigParent;
-          const newCloneNode = {
-            id: nextCloneId,
-            rank: 1,
-            owner: trigParent.owner,
-            directSponsor: origNode.directSponsor || trigParent.directSponsor || trigParent.owner,
-            parentId: clonePlace.parentId,
-            leftChild: 0,
-            rightChild: 0,
-            isClone: true,
-            isExtraId: false,
-            isSyntheticExtra: true,
-            originMainId: clonePlace.cloneOriginMainId,
-            cloneRound: clonePlace.cloneRound,
-            directSponsorNodeId: clonePlace.targetSponsorNodeId,
-            nodeVault: 0,
-            rawNodeVault: 0,
-            originType: "CLONE"
-          };
-          r1TargetNodes.push(newCloneNode);
-          const cParent = r1TargetNodes.find((n) => n.id === clonePlace.parentId);
-          if (cParent) {
-            if (clonePlace.isLeft) {
-              cParent.leftChild = nextCloneId;
-              const cpMain = !cParent.isClone ? cParent : r1TargetNodes.find((x) => !x.isClone && x.id === (cParent.originMainId || cParent.id)) || cParent;
-              cpMain.nodeVault = Number(((cpMain.nodeVault || 0) + r1UnitVault).toFixed(4));
-            } else {
-              cParent.rightChild = nextCloneId;
-              rightTriggerQueue.push(cParent);
-            }
-          }
-        }
-        matrixDB.nodesByRank[1] = reconcileRankTreeLinks(r1TargetNodes);
-        matrixDB.rankCounts[1] = Math.max(matrixDB.rankCounts[1] || 1, r1TargetNodes.length);
-      }
-    }
-  }
-  reconcileRank1AutoMainIds();
-  for (const r1Main of r1Mains) {
-    const ownerKey = (r1Main.owner || "").toLowerCase();
-    const ownerR1Mains = r1Mains.filter((n) => (n.owner || "").toLowerCase() === ownerKey);
-    const mainIdx = Math.max(0, ownerR1Mains.findIndex((m) => m.id === r1Main.id));
-    const getCorrespMainInRank = (targetRank) => {
-      const rList = matrixDB.nodesByRank[targetRank] || [];
-      if (targetRank === 1 || r1Main.id === 1) {
-        return rList.find((n) => n.id === r1Main.id);
-      }
-      return rList.find((n) => !n.isClone && !n.isExtraId && n.originMainId === r1Main.id);
-    };
-    let currentRank = r1Main.id === 1 ? 27 : 1;
-    if (r1Main.id !== 1) {
-      for (let r = 27; r >= 1; r--) {
-        if (getCorrespMainInRank(r)) {
-          currentRank = r;
-          break;
-        }
-      }
-    }
-    const window5Start = Math.max(1, currentRank - 4);
-    const eligiblePool3Nodes = [];
-    for (let r = 4; r <= 27; r++) {
-      if (currentRank === 27 || r < window5Start) {
-        const mNode = getCorrespMainInRank(r);
-        if (mNode) {
-          eligiblePool3Nodes.push(mNode);
-        }
-      }
-    }
-    let extraLeftPoolBonus = 0;
-    for (let r = 2; r <= 27; r++) {
-      const rList = matrixDB.nodesByRank[r] || [];
-      const correspMain = getCorrespMainInRank(r);
-      if (!correspMain) continue;
-      const rUnitVault = Number(((RANK_PRICES_USDT[r - 1] || 10) * 0.35).toFixed(4));
-      const maxRealExtraIdInRank = rList.reduce(
-        (m, x) => !x.isSyntheticExtra && x.isExtraId ? Math.max(m, x.id) : m,
-        0
-      );
-      for (const n of rList) {
-        if (n.isSyntheticExtra) continue;
-        const nOrig = !n.isClone ? n : rList.find(
-          (x) => !x.isClone && (x.owner || "").toLowerCase() === (n.owner || "").toLowerCase() && (x.originMainId === n.originMainId || x.id === n.originMainId)
-        ) || n;
-        const isExtraLineage = !n.isClone ? Boolean(n.isExtraId) : Boolean(n.isExtraId || nOrig.isExtraId);
-        if (isExtraLineage && n.leftChild > 0 && n.leftChild > maxRealExtraIdInRank) {
-          const spId = nOrig.directSponsorNodeId > 0 ? nOrig.directSponsorNodeId : n.directSponsorNodeId > 0 ? n.directSponsorNodeId : 1;
-          if (spId === correspMain.id) {
-            extraLeftPoolBonus = Number((extraLeftPoolBonus + rUnitVault).toFixed(4));
-          }
-        }
-      }
-    }
-    if (eligiblePool3Nodes.length === 0 && extraLeftPoolBonus <= 0) continue;
-    const minRank2Price = RANK_PRICES_USDT[1] || 10;
-    let spawnedInPass = true;
-    let safety = 0;
-    while (spawnedInPass && safety < 50) {
-      spawnedInPass = false;
-      safety++;
-      for (let targetRank = 27; targetRank >= 2; targetRank--) {
-        const r4To27Bal = eligiblePool3Nodes.reduce((sum, n) => sum + Number(n.nodeVault || 0), 0);
-        const availExtraPool = Number((extraLeftPoolBonus + r4To27Bal).toFixed(4));
-        if (availExtraPool + 1e-6 < minRank2Price) break;
-        const targetPrice = RANK_PRICES_USDT[targetRank - 1] || 10;
-        if (availExtraPool + 1e-6 < targetPrice) continue;
-        const targetMainInRank = getCorrespMainInRank(targetRank);
-        if (!targetMainInRank) continue;
-        let remToDeduct = targetPrice;
-        if (extraLeftPoolBonus > 1e-6) {
-          const dBonus = Math.min(extraLeftPoolBonus, remToDeduct);
-          extraLeftPoolBonus = Number(Math.max(0, extraLeftPoolBonus - dBonus).toFixed(4));
-          remToDeduct = Number(Math.max(0, remToDeduct - dBonus).toFixed(4));
-        }
-        for (const pNode of eligiblePool3Nodes) {
-          if (remToDeduct <= 1e-6) break;
-          const v = Number(pNode.nodeVault || 0);
-          if (v <= 1e-6) continue;
-          const deduct = Math.min(v, remToDeduct);
-          pNode.nodeVault = Number(Math.max(0, v - deduct).toFixed(4));
-          remToDeduct = Number(Math.max(0, remToDeduct - deduct).toFixed(4));
-        }
-        if (!matrixDB.nodesByRank[targetRank]) {
-          matrixDB.nodesByRank[targetRank] = [];
-        }
-        const targetRankNodes = matrixDB.nodesByRank[targetRank];
-        const r1SponsorId = r1Main.directSponsorNodeId > 0 ? r1Main.directSponsorNodeId : 1;
-        const sponsorNodeInTarget = targetRankNodes.find(
-          (n) => !n.isClone && !n.isExtraId && (r1SponsorId === 1 ? n.id === 1 : n.originMainId === r1SponsorId)
-        );
-        const placement = sponsorNodeInTarget ? findExtraIdPlacementInRankNodes(targetRankNodes, sponsorNodeInTarget.id) : findShallowestLeftToRightSlotInRankNodes(targetRankNodes, 1);
-        const maxId = targetRankNodes.reduce((m, n) => Math.max(m, n.id), 0);
-        const newExtraId = maxId + 1;
-        const newExtraNode = {
-          id: newExtraId,
-          rank: targetRank,
-          owner: r1Main.owner,
-          directSponsor: r1Main.directSponsor || r1Main.owner,
-          parentId: placement.parentId,
-          leftChild: 0,
-          rightChild: 0,
-          isClone: false,
-          isExtraId: true,
-          isSyntheticExtra: true,
-          originMainId: newExtraId,
-          cloneRound: 0,
-          directSponsorNodeId: r1SponsorId,
-          nodeVault: 0,
-          rawNodeVault: 0
-        };
-        targetRankNodes.push(newExtraNode);
-        const parentNode = targetRankNodes.find((n) => n.id === placement.parentId);
-        const rightSlotTriggerQueue = [];
-        if (parentNode) {
-          if (placement.isLeft) {
-            parentNode.leftChild = newExtraId;
-            const pMainNode = !parentNode.isClone ? parentNode : targetRankNodes.find(
-              (x) => !x.isClone && (x.owner || "").toLowerCase() === (parentNode.owner || "").toLowerCase() && (x.originMainId === parentNode.originMainId || x.id === parentNode.originMainId)
-            ) || parentNode;
-            const vaultAdd = Number((targetPrice * 0.35).toFixed(4));
-            const isParentExtraLineage = !parentNode.isClone ? Boolean(parentNode.isExtraId) : Boolean(parentNode.isExtraId || pMainNode.isExtraId);
-            if (isParentExtraLineage) {
-              const spId = pMainNode.directSponsorNodeId > 0 ? pMainNode.directSponsorNodeId : parentNode.directSponsorNodeId > 0 ? parentNode.directSponsorNodeId : targetMainInRank.id;
-              if (spId === targetMainInRank.id) {
-                extraLeftPoolBonus = Number((extraLeftPoolBonus + vaultAdd).toFixed(4));
-              }
-            } else {
-              pMainNode.nodeVault = Number(((pMainNode.nodeVault || 0) + vaultAdd).toFixed(4));
-            }
-          } else {
-            parentNode.rightChild = newExtraId;
-            rightSlotTriggerQueue.push(parentNode);
-          }
-        }
-        let cloneSafety = 0;
-        while (rightSlotTriggerQueue.length > 0 && cloneSafety < 25) {
-          cloneSafety++;
-          const triggerParent = rightSlotTriggerQueue.shift();
-          const clonePlacement = findClonePlacementInRankNodes(targetRankNodes, triggerParent);
-          const nextCloneId = targetRankNodes.reduce((m, n) => Math.max(m, n.id), 0) + 1;
-          const originNode = targetRankNodes.find((n) => n.id === clonePlacement.cloneOriginMainId) || triggerParent;
-          const newCloneNode = {
-            id: nextCloneId,
-            rank: targetRank,
-            owner: triggerParent.owner,
-            directSponsor: originNode.directSponsor || triggerParent.directSponsor || triggerParent.owner,
-            parentId: clonePlacement.parentId,
-            leftChild: 0,
-            rightChild: 0,
-            isClone: true,
-            isExtraId: false,
-            isSyntheticExtra: true,
-            originMainId: clonePlacement.cloneOriginMainId,
-            cloneRound: clonePlacement.cloneRound,
-            directSponsorNodeId: clonePlacement.targetSponsorNodeId,
-            nodeVault: 0,
-            rawNodeVault: 0
-          };
-          targetRankNodes.push(newCloneNode);
-          const cloneParent = targetRankNodes.find((n) => n.id === clonePlacement.parentId);
-          if (cloneParent) {
-            if (clonePlacement.isLeft) {
-              cloneParent.leftChild = nextCloneId;
-              const cpMainNode = !cloneParent.isClone ? cloneParent : targetRankNodes.find(
-                (x) => !x.isClone && (x.owner || "").toLowerCase() === (cloneParent.owner || "").toLowerCase() && (x.originMainId === cloneParent.originMainId || x.id === cloneParent.originMainId)
-              ) || cloneParent;
-              const vaultAdd = Number((targetPrice * 0.35).toFixed(4));
-              const isCloneParentExtraLineage = !cloneParent.isClone ? Boolean(cloneParent.isExtraId) : Boolean(cloneParent.isExtraId || cpMainNode.isExtraId);
-              if (isCloneParentExtraLineage) {
-                const spId = cpMainNode.directSponsorNodeId > 0 ? cpMainNode.directSponsorNodeId : cloneParent.directSponsorNodeId > 0 ? cloneParent.directSponsorNodeId : targetMainInRank.id;
-                if (spId === targetMainInRank.id) {
-                  extraLeftPoolBonus = Number((extraLeftPoolBonus + vaultAdd).toFixed(4));
-                }
-              } else {
-                cpMainNode.nodeVault = Number(((cpMainNode.nodeVault || 0) + vaultAdd).toFixed(4));
-              }
-            } else {
-              cloneParent.rightChild = nextCloneId;
-              rightSlotTriggerQueue.push(cloneParent);
-            }
-          }
-        }
-        matrixDB.nodesByRank[targetRank] = reconcileRankTreeLinks(targetRankNodes);
-        matrixDB.rankCounts[targetRank] = Math.max(
-          matrixDB.rankCounts[targetRank] || 1,
-          targetRankNodes.length
-        );
-        createdExtraNodes.push({
-          mainId: r1Main.id,
-          targetRank,
-          nodeId: newExtraId,
-          parentId: placement.parentId,
-          isLeft: placement.isLeft,
-          deductedUsdt: targetPrice
-        });
-        spawnedInPass = true;
       }
     }
   }
@@ -2104,7 +2652,7 @@ async function createMatrixNodeData(params) {
   const { nodeId, rank, owner, sponsor, parentId, isLeft, isClone, isExtraId, origin } = params;
   const strNodeId = nodeId.toString();
   const strParentId = parentId.toString();
-  const rankNum = Math.min(Math.max(Number(rank) || 1, 1), 27);
+  const rankNum = Math.min(Math.max(Number(rank) || 1, 1), 18);
   const numNodeId = Number(nodeId);
   const numParentId = Number(parentId) || 0;
   const newNode = {
@@ -2208,9 +2756,9 @@ async function getUserProfileWithVaults(owner) {
     const ownedR1 = r1Nodes.filter((n) => n.owner.toLowerCase() === key);
     if (ownedR1.length > 0) {
       const firstMain = ownedR1.find((n) => !n.isClone && !n.isExtraId) || ownedR1[0];
-      let maxRank = firstMain.id === 1 ? 27 : 1;
+      let maxRank = firstMain.id === 1 ? 18 : 1;
       if (firstMain.id !== 1) {
-        for (let r = 27; r >= 2; r--) {
+        for (let r = 18; r >= 2; r--) {
           const rList = matrixDB.nodesByRank[r] || [];
           if (rList.some(
             (n) => !n.isClone && !n.isExtraId && n.originMainId === firstMain.id
@@ -2222,7 +2770,7 @@ async function getUserProfileWithVaults(owner) {
       }
       const sponsorAddr = firstMain.directSponsor || ethers.ZeroAddress;
       const sponsorMainId = firstMain.directSponsorNodeId > 0 ? String(firstMain.directSponsorNodeId) : "1";
-      const dbVaults = Array.from({ length: 27 }, (_, idx) => {
+      const dbVaults = Array.from({ length: 18 }, (_, idx) => {
         const r = idx + 1;
         const rNodes = (matrixDB.nodesByRank[r] || []).filter((n) => n.owner.toLowerCase() === key);
         const rMains = rNodes.filter((n) => !n.isClone && !n.isExtraId);
@@ -2257,7 +2805,7 @@ async function getUserProfileWithVaults(owner) {
         owner,
         sponsor: sponsorAddr,
         sponsorMainNodeId: sponsorMainId,
-        currentMaxRank: firstMain.id === 1 ? 27 : maxRank,
+        currentMaxRank: firstMain.id === 1 ? 18 : maxRank,
         createdAt: matrixDB.lastSyncedAt || (/* @__PURE__ */ new Date()).toISOString(),
         updatedAt: matrixDB.lastSyncedAt || (/* @__PURE__ */ new Date()).toISOString(),
         vaults: dbVaults,
@@ -2348,16 +2896,544 @@ async function simulateFindPlacement(rank, sponsorAddress, _round) {
   const p = findRankPlacement(rank, sponsorAddress);
   return { parentId: String(p.parentId), isLeft: p.isLeft };
 }
-function startEventListener() {
+var WSS_ENDPOINTS = [
+  process.env.WSS_URL || "wss://bsc-testnet-rpc.publicnode.com",
+  "wss://bsc-testnet.publicnode.com"
+].filter(Boolean);
+var BOT_HTTP_RPC_URL = process.env.HTTP_RPC_URL || "https://data-seed-prebsc-1-s1.bnbchain.org:8545";
+var BOT_PRIVATE_KEY = (process.env.BOT_PRIVATE_KEY || process.env.DEPLOYER_PRIVATE_KEY || process.env.ALLSELL_WALLET_PRIVATE_KEY || "").trim();
+var INITIAL_RECONNECT_DELAY_MS = Number(process.env.INITIAL_RECONNECT_DELAY_MS || 2e3);
+var MAX_RECONNECT_DELAY_MS = Number(process.env.MAX_RECONNECT_DELAY_MS || 6e4);
+var HEARTBEAT_INTERVAL_MS = Number(process.env.HEARTBEAT_INTERVAL_MS || 3e4);
+var HEARTBEAT_TIMEOUT_MS = 1e4;
+var WS_BOT_ABI = [
+  "event UserRegistered(address indexed user, address indexed sponsor, uint256 indexed sponsorNodeId, uint256 mainNodeId)",
+  "event BatchRegistered(address indexed user, uint256 count, uint256 totalCost)",
+  "event CloneQueued(uint8 indexed rank, uint256 indexed parentId, uint256 pendingCount)",
+  "event NodeCreated(uint8 indexed rank, uint256 indexed nodeId, address indexed owner, address directSponsor, uint256 parentId, bool isLeft, bool isClone, bool isExtraId)",
+  "event RewardDistributed(uint256 indexed fromNodeId, uint256 indexed toNodeId, address indexed recipient, uint8 rank, string rewardType, uint256 amount)",
+  "event RankUpgraded(address indexed user, uint8 fromRank, uint8 toRank, uint256 newNodeId, bool isAutoUpgrade)",
+  "event AutoNewMainIdCreated(address indexed user, uint256 count, uint256 vaultDiff)",
+  "event AutoExtraIdCreated(address indexed user, uint8 indexed rank, uint256 nodeId)",
+  "function totalNodesInRank(uint8) external view returns (uint256)",
+  "function getMainIdCurrentRank(uint256 _r1MainId) external view returns (uint8)",
+  "function getMainIdNodeInRank(uint256 _r1MainId, uint8 _rank) external view returns (uint256)",
+  "function getMainIdThreePools(address _user, uint256 _mainNodeIdRank1) external view returns (uint8 currentRank, uint8 window5Start, uint8 window5End, uint256 upgradeRankPool, uint256 newAutoIdPool, uint256 newExtraIdPool)",
+  "function getPendingCloneCount() external view returns (uint256)",
+  "function processCloneQueue(uint256 _maxIterations) external",
+  "function processPendingExtraIdQueue(uint256 _r1MainId, uint8 _maxBatch) external returns (uint8 processed)",
+  "function checkAndProcessAutoNewMainIdForNode(uint256 _mainNodeId) external",
+  "function checkAndProcessAutoExtraIdForNode(address _user, uint8 _currentRank, uint256 _sponsorNodeId) external"
+];
+var wsBotProvider = null;
+var wsBotContract = null;
+var wsHeartbeatTimer = null;
+var wsReconnectTimer = null;
+var wsReconnectAttempts = 0;
+var wsEndpointIndex = 0;
+var wsIsReconnecting = false;
+var wsIsProcessingQueue = false;
+var wsLastHeartbeatBlock = 0;
+var wsLastHeartbeatAt = null;
+var wsConnectedAt = null;
+var wsLastDisconnectReason = null;
+var wsTotalEventsReceived = 0;
+var wsRecentEvents = [];
+function recordWsBotEvent(event, details) {
+  wsTotalEventsReceived += 1;
+  wsRecentEvents = [
+    { event, details, timestamp: (/* @__PURE__ */ new Date()).toISOString() },
+    ...wsRecentEvents.slice(0, 29)
+  ];
+}
+function getBotHttpProvider() {
+  const fetchReq = new ethers.FetchRequest(BOT_HTTP_RPC_URL);
+  fetchReq.timeout = 12e3;
+  return new ethers.JsonRpcProvider(
+    fetchReq,
+    { chainId: 97, name: "bnbt" },
+    { staticNetwork: true, polling: false, batchMaxCount: 1 }
+  );
+}
+async function cleanupWebSocket() {
+  if (wsHeartbeatTimer) {
+    clearInterval(wsHeartbeatTimer);
+    wsHeartbeatTimer = null;
+  }
+  if (wsBotContract) {
+    try {
+      wsBotContract.removeAllListeners?.()?.catch?.(() => {
+      });
+    } catch {
+    }
+    wsBotContract = null;
+  }
+  if (wsBotProvider) {
+    try {
+      const reqs = wsBotProvider._requests;
+      if (reqs && typeof reqs.values === "function") {
+        for (const r of reqs.values()) {
+          if (r && r.promise && typeof r.promise.catch === "function") {
+            r.promise.catch(() => {
+            });
+          }
+        }
+      }
+    } catch {
+    }
+    try {
+      const rawWs = wsBotProvider.websocket;
+      if (rawWs) {
+        if (typeof rawWs.removeAllListeners === "function") {
+          rawWs.removeAllListeners();
+        }
+        if (typeof rawWs.on === "function") {
+          rawWs.on("error", () => {
+          });
+        }
+        rawWs.onerror = () => {
+        };
+        rawWs.onclose = () => {
+        };
+      }
+    } catch {
+    }
+    try {
+      await wsBotProvider.destroy().catch?.(() => {
+      });
+    } catch {
+    }
+    wsBotProvider = null;
+  }
+  eventListenerActive = false;
+}
+function scheduleReconnect(reason) {
+  if (wsIsReconnecting) return;
+  wsIsReconnecting = true;
+  wsLastDisconnectReason = reason;
+  if (wsReconnectTimer) {
+    clearTimeout(wsReconnectTimer);
+    wsReconnectTimer = null;
+  }
+  const baseDelay = Math.min(
+    MAX_RECONNECT_DELAY_MS,
+    INITIAL_RECONNECT_DELAY_MS * Math.pow(2, wsReconnectAttempts)
+  );
+  const jitter = Math.floor(Math.random() * 1e3);
+  const totalDelayMs = baseDelay + jitter;
+  wsReconnectAttempts += 1;
+  wsEndpointIndex = (wsEndpointIndex + 1) % WSS_ENDPOINTS.length;
+  console.warn(
+    `\u26A0\uFE0F [WS-Bot] \u0E2A\u0E32\u0E22 WebSocket \u0E2B\u0E25\u0E38\u0E14 (${reason}) | \u0E40\u0E15\u0E23\u0E35\u0E22\u0E21\u0E15\u0E48\u0E2D\u0E2A\u0E32\u0E22\u0E43\u0E2B\u0E21\u0E48\u0E04\u0E23\u0E31\u0E49\u0E07\u0E17\u0E35\u0E48 #${wsReconnectAttempts} \u0E43\u0E19\u0E2D\u0E35\u0E01 ${(totalDelayMs / 1e3).toFixed(2)} \u0E27\u0E34\u0E19\u0E32\u0E17\u0E35 (Base: ${baseDelay}ms + Jitter: ${jitter}ms)`
+  );
+  wsReconnectTimer = setTimeout(() => {
+    wsIsReconnecting = false;
+    startEventListener().catch(() => {
+    });
+  }, totalDelayMs);
+}
+function startWsHeartbeat() {
+  if (wsHeartbeatTimer) {
+    clearInterval(wsHeartbeatTimer);
+  }
+  wsHeartbeatTimer = setInterval(async () => {
+    if (!wsBotProvider || wsIsReconnecting) return;
+    try {
+      const blockNumber = await Promise.race([
+        wsBotProvider.getBlockNumber(),
+        new Promise(
+          (_, reject) => setTimeout(() => reject(new Error("Heartbeat getBlockNumber timeout")), HEARTBEAT_TIMEOUT_MS)
+        )
+      ]);
+      wsLastHeartbeatBlock = blockNumber;
+      wsLastHeartbeatAt = (/* @__PURE__ */ new Date()).toISOString();
+    } catch (err) {
+      const msg = err?.message || String(err);
+      console.warn(`\u274C [WS-Bot Heartbeat] \u0E15\u0E23\u0E27\u0E08\u0E1E\u0E1A\u0E2A\u0E32\u0E22\u0E04\u0E49\u0E32\u0E07 (Silent Drop): ${msg}`);
+      await cleanupWebSocket();
+      scheduleReconnect(`Heartbeat Timeout (${msg})`);
+    }
+  }, HEARTBEAT_INTERVAL_MS);
+}
+async function checkAndProcessBotCloneQueue(triggerReason) {
+  if (wsIsProcessingQueue) return;
+  wsIsProcessingQueue = true;
+  try {
+    if (triggerMatrixDatabaseSync) {
+      await triggerMatrixDatabaseSync(CONTRACT_ADDRESS, false);
+    }
+    const httpProvider = getBotHttpProvider();
+    const readContract = new ethers.Contract(CONTRACT_ADDRESS, WS_BOT_ABI, httpProvider);
+    const hasValidKey = Boolean(BOT_PRIVATE_KEY && BOT_PRIVATE_KEY.length >= 64);
+    const pkHex = BOT_PRIVATE_KEY.startsWith("0x") ? BOT_PRIVATE_KEY : `0x${BOT_PRIVATE_KEY}`;
+    const botSigner = hasValidKey ? new ethers.Wallet(pkHex, httpProvider) : null;
+    const writeContract = botSigner ? new ethers.Contract(CONTRACT_ADDRESS, WS_BOT_ABI, botSigner) : null;
+    let didExecuteOnChain = false;
+    let botHasGas = false;
+    if (botSigner) {
+      try {
+        const bal = await httpProvider.getBalance(botSigner.address);
+        botHasGas = bal > ethers.parseEther("0.0002");
+      } catch {
+        botHasGas = false;
+      }
+    }
+    if (writeContract && botHasGas) {
+      let pendingCount = 0n;
+      try {
+        pendingCount = await readContract.getPendingCloneCount();
+      } catch {
+        pendingCount = 0n;
+      }
+      if (pendingCount > 0n) {
+        try {
+          const batchSize = pendingCount > 5n ? 5n : pendingCount;
+          await writeContract.processCloneQueue.staticCall(batchSize);
+          console.log(
+            `\u{1F680} [WS-Bot] (${triggerReason}) \u0E2A\u0E48\u0E07\u0E18\u0E38\u0E23\u0E01\u0E23\u0E23\u0E21 processCloneQueue(${batchSize.toString()}) \u0E1C\u0E48\u0E32\u0E19 HTTP Provider...`
+          );
+          const tx = await writeContract.processCloneQueue(batchSize);
+          const receipt = await tx.wait(1);
+          const txHash = receipt?.hash || tx.hash;
+          recordRealTransactionLog({
+            txHash,
+            actionType: "CLONE_BOT",
+            title: `Bot \u0E23\u0E31\u0E19\u0E04\u0E34\u0E27\u0E42\u0E04\u0E25\u0E19\u0E19\u0E34\u0E48\u0E07\u0E2D\u0E31\u0E15\u0E42\u0E19\u0E21\u0E31\u0E15\u0E34 (Batch ${batchSize.toString()})`,
+            userAddress: botSigner?.address || "",
+            blockNumber: receipt?.blockNumber,
+            source: "WS_BOT",
+            details: `Trigger: ${triggerReason} | Pending: ${pendingCount.toString()}`
+          });
+          recordWsBotEvent("processCloneQueue", `TX: ${txHash} (Batch: ${batchSize.toString()})`);
+          didExecuteOnChain = true;
+        } catch {
+        }
+      }
+    }
+    if (writeContract && botHasGas && triggerComputeMainIdStats) {
+      const r1Nodes = matrixDB.nodesByRank[1] || [];
+      const mainNodes = r1Nodes.filter((n) => !n.isClone && !n.isExtraId);
+      for (const mainNode of mainNodes) {
+        const stats = triggerComputeMainIdStats(mainNode.id);
+        if (!stats) continue;
+        const rank1Price = RANK_PRICES_USDT[0] || 5;
+        if (stats.window5Start > 1 && stats.newAutoIdPool + 1e-6 >= rank1Price) {
+          try {
+            await writeContract.checkAndProcessAutoNewMainIdForNode.staticCall(mainNode.id);
+            console.log(
+              `\u{1F916} [WS-Bot] (${triggerReason}) Main #${mainNode.id} \u0E21\u0E35 Auto ID Pool = ${stats.newAutoIdPool.toFixed(
+                2
+              )} USDT (>= ${rank1Price} USDT) -> \u0E2A\u0E31\u0E48\u0E07 checkAndProcessAutoNewMainIdForNode(${mainNode.id})`
+            );
+            const tx = await writeContract.checkAndProcessAutoNewMainIdForNode(mainNode.id);
+            const receipt = await tx.wait(1);
+            const txHash = receipt?.hash || tx.hash;
+            recordRealTransactionLog({
+              txHash,
+              actionType: "AUTO_ID",
+              title: `Bot \u0E41\u0E15\u0E01 Auto New Main ID \u0E08\u0E32\u0E01 Main #${mainNode.id}`,
+              userAddress: mainNode.owner,
+              mainNodeId: mainNode.id,
+              rank: 1,
+              amountUsdt: rank1Price,
+              blockNumber: receipt?.blockNumber,
+              source: "WS_BOT",
+              details: `Trigger: ${triggerReason}`
+            });
+            recordWsBotEvent(
+              "AutoNewMainId",
+              `Main #${mainNode.id} \u0E41\u0E15\u0E01 Auto ID \u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08 (TX: ${txHash.slice(0, 10)}...)`
+            );
+            didExecuteOnChain = true;
+          } catch {
+          }
+        }
+        const minExtraPrice = RANK_PRICES_USDT[1] || 10;
+        if (stats.currentRank >= 2 && stats.newExtraIdPool + 1e-6 >= minExtraPrice) {
+          let eligibleTargetRank = 0;
+          for (let r = Math.min(18, stats.currentRank); r >= 2; r--) {
+            const rPrice = RANK_PRICES_USDT[r - 1] || 10;
+            const hasNodeInR = (matrixDB.nodesByRank[r] || []).some(
+              (n) => !n.isClone && !n.isExtraId && (r === 1 ? n.id === mainNode.id : n.originMainId === mainNode.id)
+            );
+            if (hasNodeInR && stats.newExtraIdPool + 1e-6 >= rPrice) {
+              eligibleTargetRank = r;
+              break;
+            }
+          }
+          if (eligibleTargetRank >= 2) {
+            try {
+              await writeContract.processPendingExtraIdQueue.staticCall(mainNode.id, 2);
+              console.log(
+                `\u{1F916} [WS-Bot] (${triggerReason}) Main #${mainNode.id} \u0E21\u0E35 Extra ID Pool = ${stats.newExtraIdPool.toFixed(
+                  2
+                )} USDT \u0E1E\u0E23\u0E49\u0E2D\u0E21\u0E2D\u0E2D\u0E01 Extra ID \u0E43\u0E19 R${eligibleTargetRank} -> \u0E2A\u0E31\u0E48\u0E07 processPendingExtraIdQueue(${mainNode.id}, 2)`
+              );
+              const tx = await writeContract.processPendingExtraIdQueue(mainNode.id, 2);
+              const receipt = await tx.wait(1);
+              const txHash = receipt?.hash || tx.hash;
+              recordRealTransactionLog({
+                txHash,
+                actionType: "EXTRA_ID",
+                title: `Bot \u0E41\u0E15\u0E01 Extra ID (R${eligibleTargetRank}) \u0E08\u0E32\u0E01 Main #${mainNode.id}`,
+                userAddress: mainNode.owner,
+                mainNodeId: mainNode.id,
+                rank: eligibleTargetRank,
+                amountUsdt: RANK_PRICES_USDT[eligibleTargetRank - 1] || 10,
+                blockNumber: receipt?.blockNumber,
+                source: "WS_BOT",
+                details: `Trigger: ${triggerReason}`
+              });
+              recordWsBotEvent(
+                "AutoExtraIdQueue",
+                `Main #${mainNode.id} \u0E41\u0E15\u0E01 Extra ID R${eligibleTargetRank} \u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08 (TX: ${txHash.slice(
+                  0,
+                  10
+                )}...)`
+              );
+              didExecuteOnChain = true;
+            } catch {
+            }
+          }
+        }
+      }
+    }
+    if (didExecuteOnChain && triggerMatrixDatabaseSync) {
+      await triggerMatrixDatabaseSync(CONTRACT_ADDRESS, true);
+    }
+  } catch (err) {
+    if (triggerMatrixDatabaseSync) {
+      triggerMatrixDatabaseSync(CONTRACT_ADDRESS, false).catch(() => {
+      });
+    }
+  } finally {
+    wsIsProcessingQueue = false;
+  }
+}
+var triggerMatrixDatabaseSync = null;
+var triggerComputeMainIdStats = null;
+async function startEventListener() {
   if (!CONTRACT_ADDRESS) return;
-  eventListenerActive = true;
-  console.log(`\u{1F7E2} Blockchain Sync Indexer active for: ${CONTRACT_ADDRESS} (Database-First Polling Mode)`);
+  if (wsReconnectTimer) {
+    clearTimeout(wsReconnectTimer);
+    wsReconnectTimer = null;
+  }
+  wsIsReconnecting = false;
+  await cleanupWebSocket();
+  const activeWssUrl = WSS_ENDPOINTS[wsEndpointIndex % WSS_ENDPOINTS.length];
+  try {
+    wsBotProvider = new ethers.WebSocketProvider(activeWssUrl, {
+      chainId: 97,
+      name: "bnbt"
+    });
+    wsBotProvider.on("error", (err) => {
+      const msg = err?.message || String(err ?? "unknown");
+      wsLastDisconnectReason = `Provider Error: ${msg}`;
+    });
+    const rawWs = wsBotProvider.websocket;
+    const onSocketClose = async (code) => {
+      await cleanupWebSocket();
+      scheduleReconnect(`WebSocket Close (code=${String(code ?? "unknown")})`);
+    };
+    const onSocketError = (err) => {
+      const msg = err?.message || String(err ?? "unknown");
+      wsLastDisconnectReason = `Socket Error: ${msg}`;
+    };
+    if (rawWs) {
+      if (typeof rawWs.on === "function") {
+        rawWs.on("close", onSocketClose);
+        rawWs.on("error", onSocketError);
+      } else if (typeof rawWs.addEventListener === "function") {
+        rawWs.addEventListener("close", onSocketClose);
+        rawWs.addEventListener("error", onSocketError);
+      }
+    }
+    const initialBlock = await Promise.race([
+      wsBotProvider.getBlockNumber(),
+      new Promise(
+        (_, reject) => setTimeout(() => reject(new Error("WebSocket initial handshake timeout")), 12e3)
+      )
+    ]);
+    wsReconnectAttempts = 0;
+    wsLastHeartbeatBlock = initialBlock;
+    wsLastHeartbeatAt = (/* @__PURE__ */ new Date()).toISOString();
+    wsConnectedAt = wsLastHeartbeatAt;
+    eventListenerActive = true;
+    console.log(
+      `\u{1F7E2} [WS-Bot] \u0E40\u0E0A\u0E37\u0E48\u0E2D\u0E21\u0E15\u0E48\u0E2D WebSocket (${activeWssUrl}) \u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08\u0E17\u0E35\u0E48\u0E1A\u0E25\u0E47\u0E2D\u0E01 #${initialBlock} \u0E2A\u0E33\u0E2B\u0E23\u0E31\u0E1A\u0E2A\u0E31\u0E0D\u0E0D\u0E32 ${CONTRACT_ADDRESS}`
+    );
+    wsBotContract = new ethers.Contract(CONTRACT_ADDRESS, WS_BOT_ABI, wsBotProvider);
+    wsBotContract.on(
+      "UserRegistered",
+      (user, _sponsor, sponsorNodeId, mainNodeId, payload) => {
+        const txHash = payload?.log?.transactionHash || payload?.transactionHash;
+        const blockNumber = payload?.log?.blockNumber || payload?.blockNumber;
+        recordRealTransactionLog({
+          txHash,
+          actionType: "REGISTER",
+          title: `\u0E2A\u0E21\u0E31\u0E04\u0E23\u0E2A\u0E21\u0E32\u0E0A\u0E34\u0E01 Main ID #${mainNodeId.toString()}`,
+          userAddress: user,
+          mainNodeId: Number(mainNodeId),
+          nodeId: Number(mainNodeId),
+          rank: 1,
+          amountUsdt: RANK_PRICES_USDT[0] || 5,
+          blockNumber,
+          source: "ONCHAIN_EVENT",
+          details: `Sponsor #${sponsorNodeId.toString()}`
+        });
+        recordWsBotEvent("UserRegistered", `Main #${mainNodeId.toString()} (${user.slice(0, 8)}...)`);
+      }
+    );
+    wsBotContract.on(
+      "BatchRegistered",
+      (user, count, totalCost, payload) => {
+        const txHash = payload?.log?.transactionHash || payload?.transactionHash;
+        const blockNumber = payload?.log?.blockNumber || payload?.blockNumber;
+        const costNum = Number(ethers.formatUnits(totalCost, activeUsdtDecimals || 18));
+        recordRealTransactionLog({
+          txHash,
+          actionType: "BATCH_REGISTER",
+          title: `\u0E2A\u0E21\u0E31\u0E04\u0E23\u0E41\u0E1A\u0E1A\u0E01\u0E25\u0E38\u0E48\u0E21 (Batch ${count.toString()} \u0E42\u0E2B\u0E19\u0E14)`,
+          userAddress: user,
+          rank: 1,
+          amountUsdt: Number.isFinite(costNum) ? costNum : Number(count) * 5,
+          blockNumber,
+          source: "ONCHAIN_EVENT",
+          details: `Batch ${count.toString()} Nodes`
+        });
+        recordWsBotEvent("BatchRegistered", `${user.slice(0, 8)}... (${count.toString()} nodes)`);
+      }
+    );
+    wsBotContract.on("CloneQueued", (rank, parentId, pendingCount) => {
+      const details = `Rank ${rank.toString()} | Parent #${parentId.toString()} | Pending: ${pendingCount.toString()}`;
+      recordWsBotEvent("CloneQueued", details);
+      checkAndProcessBotCloneQueue(`CloneQueued(R${rank},#${parentId})`).catch(() => {
+      });
+    });
+    wsBotContract.on(
+      "NodeCreated",
+      async (rank, nodeId, owner, _directSponsor, parentId, isLeft, isClone, isExtraId, payload) => {
+        const leg = isLeft ? "LEFT" : "RIGHT";
+        const kind = isExtraId ? "EXTRA_ID" : isClone ? "CLONE" : "MAIN";
+        const txHash = payload?.log?.transactionHash || payload?.transactionHash;
+        const blockNumber = payload?.log?.blockNumber || payload?.blockNumber;
+        const rNum = Number(rank);
+        const nidNum = Number(nodeId);
+        let isAdminFreeTx = false;
+        if (rNum >= 2 && isRealTxHash(txHash)) {
+          const inspected = await inspectAndTagAdminUpgradeTx(txHash, getBotHttpProvider()).catch(() => ({
+            isAdminTx: false,
+            taggedNodes: [],
+            newlyTagged: false
+          }));
+          isAdminFreeTx = inspected.isAdminTx;
+          if (isAdminFreeTx) {
+            markNodeAsAdminFreeUpgrade(rNum, nidNum);
+          }
+        }
+        recordRealTransactionLog({
+          txHash,
+          actionType: isAdminFreeTx ? "ADMIN_UPGRADE" : isExtraId ? "EXTRA_ID" : isClone ? "CLONE_BOT" : rNum === 1 ? "REGISTER" : "UPGRADE",
+          title: isAdminFreeTx ? isClone ? `Admin \u0E2D\u0E31\u0E1E\u0E1F\u0E23\u0E35 (\u0E42\u0E04\u0E25\u0E19\u0E19\u0E34\u0E48\u0E07 R${rNum}-#${nodeId.toString()})` : `Admin \u0E2D\u0E31\u0E1E\u0E1F\u0E23\u0E35 R${rNum}-#${nodeId.toString()}` : isExtraId ? `\u0E2A\u0E23\u0E49\u0E32\u0E07 Extra ID R${rNum}-#${nodeId.toString()}` : isClone ? `\u0E2A\u0E23\u0E49\u0E32\u0E07\u0E42\u0E04\u0E25\u0E19\u0E19\u0E34\u0E48\u0E07 R${rNum}-#${nodeId.toString()}` : rNum === 1 ? `\u0E2A\u0E23\u0E49\u0E32\u0E07\u0E42\u0E2B\u0E19\u0E14 R1-#${nodeId.toString()}` : `\u0E2A\u0E23\u0E49\u0E32\u0E07\u0E42\u0E2B\u0E19\u0E14 R${rNum}-#${nodeId.toString()}`,
+          userAddress: owner,
+          nodeId: nidNum,
+          rank: rNum,
+          amountUsdt: isAdminFreeTx ? 0 : RANK_PRICES_USDT[rNum - 1] || 0,
+          blockNumber,
+          source: "ONCHAIN_EVENT",
+          details: isAdminFreeTx ? `Parent #${parentId.toString()} [${leg}] \u2022 Admin Free (0 \u0E04\u0E48\u0E32\u0E04\u0E2D\u0E21)` : `Parent #${parentId.toString()} [${leg}]`
+        });
+        recordWsBotEvent(
+          "NodeCreated",
+          `R${rank.toString()} #${nodeId.toString()} (${kind}${isAdminFreeTx ? "/ADMIN_FREE" : ""}) -> Parent #${parentId.toString()} [${leg}] (${owner.slice(0, 8)}...)`
+        );
+        checkAndProcessBotCloneQueue(`NodeCreated(R${rank},#${nodeId},${leg})`).catch(() => {
+        });
+      }
+    );
+    wsBotContract.on(
+      "RankUpgraded",
+      async (user, fromRank, toRank, newNodeId, isAutoUpgrade, payload) => {
+        const txHash = payload?.log?.transactionHash || payload?.transactionHash;
+        const blockNumber = payload?.log?.blockNumber || payload?.blockNumber;
+        const toR = Number(toRank);
+        const nidNum = Number(newNodeId);
+        let isAdminFreeTx = false;
+        if (toR >= 2 && isRealTxHash(txHash)) {
+          const inspected = await inspectAndTagAdminUpgradeTx(txHash, getBotHttpProvider()).catch(() => ({
+            isAdminTx: false,
+            taggedNodes: [],
+            newlyTagged: false
+          }));
+          isAdminFreeTx = inspected.isAdminTx;
+          if (isAdminFreeTx) {
+            markNodeAsAdminFreeUpgrade(toR, nidNum);
+          }
+        }
+        recordRealTransactionLog({
+          txHash,
+          actionType: isAdminFreeTx ? "ADMIN_UPGRADE" : "UPGRADE",
+          title: isAdminFreeTx ? `Admin \u0E2D\u0E31\u0E1B\u0E40\u0E01\u0E23\u0E14\u0E1F\u0E23\u0E35 R${fromRank.toString()} \u2192 R${toR} (Node #${newNodeId.toString()})` : `\u0E2D\u0E31\u0E1B\u0E40\u0E01\u0E23\u0E14\u0E41\u0E23\u0E07\u0E04\u0E4C R${fromRank.toString()} \u2192 R${toR} (Node #${newNodeId.toString()})`,
+          userAddress: user,
+          nodeId: nidNum,
+          rank: toR,
+          amountUsdt: isAdminFreeTx ? 0 : RANK_PRICES_USDT[toR - 1] || 0,
+          blockNumber,
+          source: "ONCHAIN_EVENT",
+          details: isAdminFreeTx ? "Admin Free Upgrade (0 \u0E04\u0E48\u0E32\u0E04\u0E2D\u0E21)" : isAutoUpgrade ? "Auto-Vault Upgrade" : "Wallet Upgrade"
+        });
+        recordWsBotEvent(
+          "RankUpgraded",
+          `${user.slice(0, 8)}... R${fromRank.toString()}->R${toRank.toString()} (#${newNodeId.toString()}, auto=${isAutoUpgrade}, adminFree=${isAdminFreeTx})`
+        );
+        checkAndProcessBotCloneQueue(`RankUpgraded(R${toRank},#${newNodeId})`).catch(() => {
+        });
+      }
+    );
+    wsBotContract.on("AutoNewMainIdCreated", (user, count, _vaultDiff, payload) => {
+      const txHash = payload?.log?.transactionHash || payload?.transactionHash;
+      const blockNumber = payload?.log?.blockNumber || payload?.blockNumber;
+      recordRealTransactionLog({
+        txHash,
+        actionType: "AUTO_ID",
+        title: `\u0E41\u0E15\u0E01 Auto New Main ID (+${count.toString()} \u0E23\u0E2B\u0E31\u0E2A)`,
+        userAddress: user,
+        rank: 1,
+        amountUsdt: Number(count) * (RANK_PRICES_USDT[0] || 5),
+        blockNumber,
+        source: "ONCHAIN_EVENT"
+      });
+    });
+    wsBotContract.on("AutoExtraIdCreated", (user, rank, nodeId, payload) => {
+      const txHash = payload?.log?.transactionHash || payload?.transactionHash;
+      const blockNumber = payload?.log?.blockNumber || payload?.blockNumber;
+      const rNum = Number(rank);
+      recordRealTransactionLog({
+        txHash,
+        actionType: "EXTRA_ID",
+        title: `\u0E41\u0E15\u0E01 Extra ID R${rNum}-#${nodeId.toString()}`,
+        userAddress: user,
+        nodeId: Number(nodeId),
+        rank: rNum,
+        amountUsdt: RANK_PRICES_USDT[rNum - 1] || 10,
+        blockNumber,
+        source: "ONCHAIN_EVENT"
+      });
+    });
+    startWsHeartbeat();
+    checkAndProcessBotCloneQueue("RECONNECT_RECOVERY").catch(() => {
+    });
+  } catch (err) {
+    const msg = err?.message || String(err);
+    await cleanupWebSocket();
+    scheduleReconnect(`Handshake Error (${msg})`);
+  }
 }
 var reservationsMap = /* @__PURE__ */ new Map();
 var reservationHistory = [];
 var totalCompletedJobs = 0;
 var totalFailedJobs = 0;
-var RESERVATION_LEASE_MS = 90 * 1e3;
+var RESERVATION_LEASE_MS = 45 * 1e3;
 setInterval(() => {
   const now = Date.now();
   for (const [ticketId, res] of reservationsMap.entries()) {
@@ -2372,59 +3448,85 @@ async function fetchTreeWithVirtualLocks(rank = 1) {
   const ownerFirstNodeMap = /* @__PURE__ */ new Map();
   const ownerLatestNodeMap = /* @__PURE__ */ new Map();
   let totalNodes = 0;
-  try {
-    const provider = getProvider();
-    const contract = new ethers.Contract(CONTRACT_ADDRESS, MATRIX_READ_ABI, provider);
-    const onChainCount = Number(await contract.totalNodesInRank(rank));
-    totalNodes = Math.max(0, onChainCount);
-    if (totalNodes > 0) {
-      const batchPromises = [];
-      for (let i = 1; i <= Math.min(totalNodes, 500); i++) {
-        batchPromises.push(
-          contract.rankNodes(rank, i).then((node) => ({
-            id: node[0].toString(),
-            owner: (node[1] || "").toLowerCase(),
-            directSponsor: (node[2] || "").toLowerCase(),
-            parentId: node[3].toString(),
-            leftChild: node[4].toString(),
-            rightChild: node[5].toString(),
-            isClone: Boolean(node[6]),
-            isExtraId: Boolean(node[7])
-          })).catch(() => null)
-        );
+  const dbRankNodes = (matrixDB.nodesByRank[rank] || []).filter((n) => !n.isSyntheticExtra);
+  if (dbRankNodes.length > 0) {
+    const sorted = [...dbRankNodes].sort((a, b) => a.id - b.id);
+    for (const n of sorted) {
+      const idStr = String(n.id);
+      const ownerKey = (n.owner || "").toLowerCase();
+      nodesMap.set(idStr, {
+        id: idStr,
+        owner: ownerKey,
+        directSponsor: (n.directSponsor || "").toLowerCase(),
+        parentId: String(n.parentId || 0),
+        leftChild: String(n.leftChild || 0),
+        rightChild: String(n.rightChild || 0),
+        isClone: Boolean(n.isClone),
+        isExtraId: Boolean(n.isExtraId)
+      });
+      if (ownerKey) {
+        if (!ownerFirstNodeMap.has(ownerKey)) {
+          ownerFirstNodeMap.set(ownerKey, idStr);
+        }
+        ownerLatestNodeMap.set(ownerKey, idStr);
       }
-      const results = await Promise.all(batchPromises);
-      if (rank === 1 && results.some((r) => r && r.id !== "0")) {
-        inMemoryDB.nodes.clear();
-      }
-      for (const res of results) {
-        if (res && res.id !== "0") {
-          nodesMap.set(res.id, res);
-          const ownerKey = res.owner.toLowerCase();
-          if (!ownerFirstNodeMap.has(ownerKey)) {
-            ownerFirstNodeMap.set(ownerKey, res.id);
-          }
-          ownerLatestNodeMap.set(ownerKey, res.id);
-          if (rank === 1) {
-            inMemoryDB.nodes.set(res.id, {
-              id: res.id,
-              rank: 1,
-              owner: res.owner,
-              sponsor: res.directSponsor,
-              parentId: res.parentId,
-              leftChild: res.leftChild,
-              rightChild: res.rightChild,
-              isClone: res.isClone,
-              isExtraId: res.isExtraId,
-              origin: res.isClone ? "CLONE" : "REGISTRATION",
-              createdAt: (/* @__PURE__ */ new Date()).toISOString()
-            });
+      totalNodes = Math.max(totalNodes, n.id);
+    }
+  } else {
+    try {
+      const provider = getProvider();
+      const contract = new ethers.Contract(CONTRACT_ADDRESS, MATRIX_READ_ABI, provider);
+      const onChainCount = Number(await contract.totalNodesInRank(rank));
+      totalNodes = Math.max(0, onChainCount);
+      if (totalNodes > 0) {
+        const batchPromises = [];
+        for (let i = 1; i <= Math.min(totalNodes, 500); i++) {
+          batchPromises.push(
+            contract.rankNodes(rank, i).then((node) => ({
+              id: node[0].toString(),
+              owner: (node[1] || "").toLowerCase(),
+              directSponsor: (node[2] || "").toLowerCase(),
+              parentId: node[3].toString(),
+              leftChild: node[4].toString(),
+              rightChild: node[5].toString(),
+              isClone: Boolean(node[6]),
+              isExtraId: Boolean(node[7])
+            })).catch(() => null)
+          );
+        }
+        const results = await Promise.all(batchPromises);
+        if (rank === 1 && results.some((r) => r && r.id !== "0")) {
+          inMemoryDB.nodes.clear();
+        }
+        for (const res of results) {
+          if (res && res.id !== "0") {
+            nodesMap.set(res.id, res);
+            const ownerKey = res.owner.toLowerCase();
+            if (!ownerFirstNodeMap.has(ownerKey)) {
+              ownerFirstNodeMap.set(ownerKey, res.id);
+            }
+            ownerLatestNodeMap.set(ownerKey, res.id);
+            if (rank === 1) {
+              inMemoryDB.nodes.set(res.id, {
+                id: res.id,
+                rank: 1,
+                owner: res.owner,
+                sponsor: res.directSponsor,
+                parentId: res.parentId,
+                leftChild: res.leftChild,
+                rightChild: res.rightChild,
+                isClone: res.isClone,
+                isExtraId: res.isExtraId,
+                origin: res.isClone ? "CLONE" : "REGISTRATION",
+                createdAt: (/* @__PURE__ */ new Date()).toISOString()
+              });
+            }
           }
         }
       }
+    } catch (err) {
+      console.warn("[Queue Engine] Notice fetching on-chain nodes for simulation:", err);
     }
-  } catch (err) {
-    console.warn("[Queue Engine] Notice fetching on-chain nodes for simulation:", err);
   }
   if (!nodesMap.has("1")) {
     nodesMap.set("1", {
@@ -2763,26 +3865,7 @@ var InMemoryFifoMutexQueue = class {
       const reservation = await processPlacementJob(item.data);
       activeTicketId = reservation.ticketId;
       this.currentActiveTicketId = activeTicketId;
-      console.log(`\u23F3 [FIFO Queue 1-by-1] Ticket ${activeTicketId} issued to ${reservation.owner}. Waiting for on-chain tx completion...`);
       item.resolve(reservation);
-      await new Promise((resolveWait) => {
-        let settled = false;
-        const onSettled = (status) => {
-          if (settled) return;
-          settled = true;
-          queueEventsEmitter.removeListener(`ticket:${activeTicketId}:settled`, onSettled);
-          clearTimeout(timeoutTimer);
-          console.log(`\u{1F7E2} [FIFO Queue 1-by-1] Ticket ${activeTicketId} settled with status '${status}'. Unlocking queue for next item...`);
-          resolveWait();
-        };
-        queueEventsEmitter.once(`ticket:${activeTicketId}:settled`, onSettled);
-        const timeoutTimer = setTimeout(() => {
-          if (!settled) {
-            console.warn(`\u26A0\uFE0F [FIFO Queue 1-by-1] Ticket ${activeTicketId} 90s timeout reached without on-chain confirmation. Proceeding to next queue item...`);
-            onSettled("TIMEOUT");
-          }
-        }, 9e4);
-      });
       totalCompletedJobs++;
     } catch (err) {
       totalFailedJobs++;
@@ -2968,7 +4051,8 @@ async function startApp() {
       });
       matrixDB = createEmptyMatrixDB(CONTRACT_ADDRESS, USDT_ADDRESS);
       saveMatrixDBToDisk(true);
-      syncAllMatrixDatabase(CONTRACT_ADDRESS, true).catch(() => {
+      broadcastAllMatrixUpdates();
+      syncAllMatrixDatabase(CONTRACT_ADDRESS, true).then(() => broadcastAllMatrixUpdates()).catch(() => {
       });
       try {
         startEventListener();
@@ -2989,7 +4073,8 @@ async function startApp() {
       const resetConfig = updateContractConfigInDB(DEFAULT_SYSTEM_CONFIG);
       matrixDB = createEmptyMatrixDB(CONTRACT_ADDRESS, USDT_ADDRESS);
       saveMatrixDBToDisk(true);
-      syncAllMatrixDatabase(CONTRACT_ADDRESS, true).catch(() => {
+      broadcastAllMatrixUpdates();
+      syncAllMatrixDatabase(CONTRACT_ADDRESS, true).then(() => broadcastAllMatrixUpdates()).catch(() => {
       });
       try {
         startEventListener();
@@ -3011,10 +4096,26 @@ async function startApp() {
       source: "DATABASE_FIRST",
       postgres: {
         connected: pgConnected,
-        host: "187.124.138.252:32772",
-        database: "Aunza",
+        host: PG_ENDPOINT_INFO.host,
+        port: PG_ENDPOINT_INFO.port,
+        database: PG_ENDPOINT_INFO.database,
         tableCounts: pgTablesCount,
         lastError: pgLastError
+      },
+      wsBot: {
+        connected: eventListenerActive && wsBotProvider !== null,
+        activeWssUrl: WSS_ENDPOINTS[wsEndpointIndex % WSS_ENDPOINTS.length],
+        fallbackHttpRpcUrl: BOT_HTTP_RPC_URL,
+        reconnectAttempts: wsReconnectAttempts,
+        initialReconnectDelayMs: INITIAL_RECONNECT_DELAY_MS,
+        maxReconnectDelayMs: MAX_RECONNECT_DELAY_MS,
+        heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
+        lastHeartbeatBlock: wsLastHeartbeatBlock,
+        lastHeartbeatAt: wsLastHeartbeatAt,
+        connectedAt: wsConnectedAt,
+        lastDisconnectReason: wsLastDisconnectReason,
+        totalEventsReceived: wsTotalEventsReceived,
+        recentEvents: wsRecentEvents
       },
       contractAddress: CONTRACT_ADDRESS,
       usdtAddress: USDT_ADDRESS,
@@ -3029,14 +4130,63 @@ async function startApp() {
       serverTime: (/* @__PURE__ */ new Date()).toISOString()
     });
   });
+  app.get("/api/ws-bot/status", (_req, res) => {
+    res.json({
+      success: true,
+      connected: eventListenerActive && wsBotProvider !== null,
+      contractAddress: CONTRACT_ADDRESS,
+      activeWssUrl: WSS_ENDPOINTS[wsEndpointIndex % WSS_ENDPOINTS.length],
+      fallbackHttpRpcUrl: BOT_HTTP_RPC_URL,
+      hasBotPrivateKey: Boolean(BOT_PRIVATE_KEY && BOT_PRIVATE_KEY.length >= 64),
+      reconnectAttempts: wsReconnectAttempts,
+      isReconnecting: wsIsReconnecting,
+      isProcessingQueue: wsIsProcessingQueue,
+      initialReconnectDelayMs: INITIAL_RECONNECT_DELAY_MS,
+      maxReconnectDelayMs: MAX_RECONNECT_DELAY_MS,
+      heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
+      lastHeartbeatBlock: wsLastHeartbeatBlock,
+      lastHeartbeatAt: wsLastHeartbeatAt,
+      connectedAt: wsConnectedAt,
+      lastDisconnectReason: wsLastDisconnectReason,
+      totalEventsReceived: wsTotalEventsReceived,
+      recentEvents: wsRecentEvents
+    });
+  });
+  app.post("/api/ws-bot/reconnect", async (_req, res) => {
+    try {
+      wsReconnectAttempts = 0;
+      await startEventListener();
+      res.json({
+        success: true,
+        message: "\u0E2A\u0E31\u0E48\u0E07\u0E40\u0E0A\u0E37\u0E48\u0E2D\u0E21\u0E15\u0E48\u0E2D WebSocketProvider \u0E43\u0E2B\u0E21\u0E48\u0E41\u0E25\u0E30\u0E23\u0E35\u0E40\u0E0B\u0E47\u0E15\u0E15\u0E31\u0E27\u0E19\u0E31\u0E1A Exponential Backoff \u0E40\u0E23\u0E35\u0E22\u0E1A\u0E23\u0E49\u0E2D\u0E22\u0E41\u0E25\u0E49\u0E27",
+        connected: eventListenerActive && wsBotProvider !== null,
+        lastHeartbeatBlock: wsLastHeartbeatBlock
+      });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err?.message || String(err) });
+    }
+  });
+  app.post("/api/ws-bot/trigger-check", async (_req, res) => {
+    try {
+      await checkAndProcessBotCloneQueue("MANUAL_API_TRIGGER");
+      res.json({
+        success: true,
+        message: "\u{1F916} \u0E1A\u0E2D\u0E17\u0E15\u0E23\u0E27\u0E08\u0E2A\u0E2D\u0E1A\u0E04\u0E34\u0E27 Auto ID, Extra ID, Clone Queue \u0E41\u0E25\u0E30\u0E0B\u0E34\u0E07\u0E04\u0E4C\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E1A\u0E25\u0E47\u0E2D\u0E01\u0E40\u0E0A\u0E19\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08!",
+        lastSyncedBlock: matrixDB.lastSyncedBlock,
+        recentEvents: wsRecentEvents.slice(0, 10)
+      });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err?.message || String(err) });
+    }
+  });
   app.get("/api/db/postgres", async (_req, res) => {
     await refreshPgTableCounts();
     res.json({
       success: true,
       connected: pgConnected,
-      host: "187.124.138.252",
-      port: 32772,
-      database: "Aunza",
+      host: PG_ENDPOINT_INFO.host,
+      port: PG_ENDPOINT_INFO.port,
+      database: PG_ENDPOINT_INFO.database,
       contractAddress: CONTRACT_ADDRESS,
       tableCounts: pgTablesCount,
       lastError: pgLastError
@@ -3048,7 +4198,7 @@ async function startApp() {
       version: "v2.7.0 (Solidity ^0.8.20)",
       contractAddress: CONTRACT_ADDRESS,
       usdtAddress: USDT_ADDRESS,
-      maxRank: 27,
+      maxRank: 18,
       maxLevels: 15,
       network: {
         name: "BNB Smart Chain Testnet",
@@ -3123,7 +4273,8 @@ async function startApp() {
             nodeVault: rawVaultVal,
             rawNodeVault: rawVaultVal,
             reconciledBaseVault: rawVaultVal,
-            originType
+            originType,
+            createdAt: (/* @__PURE__ */ new Date()).toISOString()
           };
         }
         return null;
@@ -3135,13 +4286,13 @@ async function startApp() {
     }
     return null;
   }
-  async function syncRankIntoDatabase(rank, targetContract = CONTRACT_ADDRESS, forceRefresh = false) {
-    const rankNum = Math.min(Math.max(Number(rank) || 1, 1), 27);
+  async function syncRankIntoDatabase(rank, targetContract = CONTRACT_ADDRESS, forceRefresh = false, bypassCooldown = false) {
+    const rankNum = Math.min(Math.max(Number(rank) || 1, 1), 18);
     const cacheKey = `${targetContract.toLowerCase()}:${rankNum}`;
     const now = Date.now();
     const lastTs = rankSyncTimestamps.get(cacheKey) || 0;
     const existingNodes = matrixDB.nodesByRank[rankNum] || [];
-    if (!forceRefresh && existingNodes.length > 0 && targetContract.toLowerCase() === matrixDB.contractAddress.toLowerCase() && now - lastTs < 12e3) {
+    if (!forceRefresh && !bypassCooldown && existingNodes.length > 0 && targetContract.toLowerCase() === matrixDB.contractAddress.toLowerCase() && now - lastTs < 12e3) {
       return reconcileRankTreeLinks(existingNodes);
     }
     if (rankSyncInFlight.has(cacheKey)) {
@@ -3160,7 +4311,7 @@ async function startApp() {
           totalNodes = Math.max(1, realExisting.filter((n) => !n.isLocalUpgrade).length || 1);
         }
         const localUpgradedNodes = realExisting.filter(
-          (n) => n.isLocalUpgrade && n.id > totalNodes
+          (n) => n.isLocalUpgrade || n.isAdminFreeUpgrade
         );
         const maxFetch = Math.max(totalNodes, 1);
         const mergedMap = /* @__PURE__ */ new Map();
@@ -3184,6 +4335,128 @@ async function startApp() {
             idsToFetch.push(i);
           }
         }
+        const reattachLocalUpgradesIntoMergedMap = (targetMap, locals) => {
+          if (!locals || locals.length === 0) return;
+          const sortedLocals = [...locals].sort((a, b) => a.id - b.id);
+          const idRemap = /* @__PURE__ */ new Map();
+          const syncedNonCloneOrigins = /* @__PURE__ */ new Set();
+          for (const loc of sortedLocals) {
+            if (loc.isClone) continue;
+            const matchingChainNode = Array.from(targetMap.values()).find((n) => {
+              if (n.isLocalUpgrade || n.isClone) return false;
+              if (loc.isExtraId) {
+                return n.isExtraId && n.id === loc.id && (n.owner || "").toLowerCase() === (loc.owner || "").toLowerCase();
+              }
+              return !n.isExtraId && n.originMainId === loc.originMainId;
+            });
+            if (matchingChainNode) {
+              syncedNonCloneOrigins.add(loc.originMainId || loc.id);
+              if (loc.isAdminFreeUpgrade || knownAdminFreeNodeKeys.has(`${rankNum}:${matchingChainNode.id}`)) {
+                matchingChainNode.isAdminFreeUpgrade = true;
+                knownAdminFreeNodeKeys.add(`${rankNum}:${matchingChainNode.id}`);
+              }
+              continue;
+            }
+            if (!loc.isLocalUpgrade) continue;
+            const locCopy = { ...loc };
+            if (locCopy.parentId > 0 && idRemap.has(locCopy.parentId)) {
+              locCopy.parentId = idRemap.get(locCopy.parentId);
+            }
+            if (targetMap.has(locCopy.id)) {
+              const maxCurrentId = Array.from(targetMap.keys()).reduce((m, k) => Math.max(m, k), 0);
+              const newAssignedId = maxCurrentId + 1;
+              idRemap.set(loc.id, newAssignedId);
+              locCopy.id = newAssignedId;
+            }
+            const parentInMerged = targetMap.get(locCopy.parentId);
+            if (parentInMerged) {
+              if (locCopy.isLeft === true) {
+                if (parentInMerged.leftChild === 0 || parentInMerged.leftChild === loc.id) {
+                  parentInMerged.leftChild = locCopy.id;
+                } else if (parentInMerged.rightChild === 0 || parentInMerged.rightChild === loc.id) {
+                  parentInMerged.rightChild = locCopy.id;
+                  locCopy.isLeft = false;
+                }
+              } else if (locCopy.isLeft === false) {
+                if (parentInMerged.rightChild === 0 || parentInMerged.rightChild === loc.id) {
+                  parentInMerged.rightChild = locCopy.id;
+                } else if (parentInMerged.leftChild === 0 || parentInMerged.leftChild === loc.id) {
+                  parentInMerged.leftChild = locCopy.id;
+                  locCopy.isLeft = true;
+                }
+              } else if (parentInMerged.leftChild === 0 || parentInMerged.leftChild === loc.id) {
+                parentInMerged.leftChild = locCopy.id;
+                locCopy.isLeft = true;
+              } else if (parentInMerged.rightChild === 0 || parentInMerged.rightChild === loc.id) {
+                parentInMerged.rightChild = locCopy.id;
+                locCopy.isLeft = false;
+              }
+            }
+            targetMap.set(locCopy.id, locCopy);
+          }
+          const hasAnyUnmergedLocalNonClone = sortedLocals.some(
+            (l) => !l.isClone && l.isLocalUpgrade && !syncedNonCloneOrigins.has(l.originMainId || l.id)
+          );
+          for (const loc of sortedLocals) {
+            if (!loc.isClone) continue;
+            const remappedParentId = loc.parentId > 0 && idRemap.has(loc.parentId) ? idRemap.get(loc.parentId) : loc.parentId;
+            const existingChainClone = (targetMap.has(loc.id) && !targetMap.get(loc.id).isLocalUpgrade && targetMap.get(loc.id).isClone ? targetMap.get(loc.id) : void 0) || Array.from(targetMap.values()).find((n) => {
+              if (n.isLocalUpgrade || !n.isClone) return false;
+              if (n.parentId !== remappedParentId) return false;
+              if ((n.originMainId || n.id) !== (loc.originMainId || loc.id)) return false;
+              const np = targetMap.get(n.parentId);
+              const nIsLeft = n.isLeft !== void 0 ? n.isLeft : np ? np.leftChild === n.id ? true : np.rightChild === n.id ? false : void 0 : void 0;
+              if (loc.isLeft !== void 0 && nIsLeft !== void 0) {
+                return nIsLeft === loc.isLeft;
+              }
+              return n.id === loc.id;
+            });
+            if (existingChainClone) {
+              if (loc.isAdminFreeUpgrade) {
+                existingChainClone.isAdminFreeUpgrade = true;
+              }
+              continue;
+            }
+            if (!loc.isLocalUpgrade) continue;
+            const parentInMerged = targetMap.get(remappedParentId);
+            if (!parentInMerged) continue;
+            const slotOccupiedOnChain = loc.isLeft === true && parentInMerged.leftChild > 0 && !targetMap.get(parentInMerged.leftChild)?.isLocalUpgrade || loc.isLeft === false && parentInMerged.rightChild > 0 && !targetMap.get(parentInMerged.rightChild)?.isLocalUpgrade;
+            if (slotOccupiedOnChain && !hasAnyUnmergedLocalNonClone) continue;
+            const cloneCopy = {
+              ...loc,
+              parentId: remappedParentId,
+              originType: loc.originType || "CLONE"
+            };
+            if (targetMap.has(cloneCopy.id)) {
+              const maxCurrentId = Array.from(targetMap.keys()).reduce((m, k) => Math.max(m, k), 0);
+              const newAssignedId = maxCurrentId + 1;
+              idRemap.set(loc.id, newAssignedId);
+              cloneCopy.id = newAssignedId;
+            }
+            if (cloneCopy.isLeft === true) {
+              if (parentInMerged.leftChild === 0 || parentInMerged.leftChild === loc.id) {
+                parentInMerged.leftChild = cloneCopy.id;
+              } else if (parentInMerged.rightChild === 0 || parentInMerged.rightChild === loc.id) {
+                parentInMerged.rightChild = cloneCopy.id;
+                cloneCopy.isLeft = false;
+              }
+            } else if (cloneCopy.isLeft === false) {
+              if (parentInMerged.rightChild === 0 || parentInMerged.rightChild === loc.id) {
+                parentInMerged.rightChild = cloneCopy.id;
+              } else if (parentInMerged.leftChild === 0 || parentInMerged.leftChild === loc.id) {
+                parentInMerged.leftChild = cloneCopy.id;
+                cloneCopy.isLeft = true;
+              }
+            } else if (parentInMerged.leftChild === 0 || parentInMerged.leftChild === loc.id) {
+              parentInMerged.leftChild = cloneCopy.id;
+              cloneCopy.isLeft = true;
+            } else if (parentInMerged.rightChild === 0 || parentInMerged.rightChild === loc.id) {
+              parentInMerged.rightChild = cloneCopy.id;
+              cloneCopy.isLeft = false;
+            }
+            targetMap.set(cloneCopy.id, cloneCopy);
+          }
+        };
         if (idsToFetch.length === 0 && maxExistingChainId >= maxFetch) {
           rankSyncTimestamps.set(cacheKey, Date.now());
           const mainNodesToRefresh = Array.from(mergedMap.values()).filter(
@@ -3204,9 +4477,7 @@ async function startApp() {
               })
             );
           }
-          for (const loc of localUpgradedNodes) {
-            mergedMap.set(loc.id, { ...loc });
-          }
+          reattachLocalUpgradesIntoMergedMap(mergedMap, localUpgradedNodes);
           const fastList = reconcileRankTreeLinks(Array.from(mergedMap.values()));
           matrixDB.nodesByRank[rankNum] = fastList;
           matrixDB.rankCounts[rankNum] = Math.max(1, fastList.length);
@@ -3222,8 +4493,11 @@ async function startApp() {
           );
           for (const item of chunkResults) {
             if (item) {
-              const prevCreatedAt = mergedMap.get(item.id)?.createdAt;
-              item.createdAt = prevCreatedAt || (/* @__PURE__ */ new Date()).toISOString();
+              const prevExisting = mergedMap.get(item.id);
+              item.createdAt = prevExisting?.createdAt || (/* @__PURE__ */ new Date()).toISOString();
+              if (prevExisting?.isAdminFreeUpgrade || knownAdminFreeNodeKeys.has(`${rankNum}:${item.id}`)) {
+                item.isAdminFreeUpgrade = true;
+              }
               mergedMap.set(item.id, item);
               newlyFetchedNodes.push(item);
             }
@@ -3245,21 +4519,17 @@ async function startApp() {
             );
             for (const pItem of refreshedNodes) {
               if (pItem) {
-                const prevCreatedAt = mergedMap.get(pItem.id)?.createdAt;
-                if (prevCreatedAt) pItem.createdAt = prevCreatedAt;
+                const prevExisting = mergedMap.get(pItem.id);
+                if (prevExisting?.createdAt) pItem.createdAt = prevExisting.createdAt;
+                if (prevExisting?.isAdminFreeUpgrade || knownAdminFreeNodeKeys.has(`${rankNum}:${pItem.id}`)) {
+                  pItem.isAdminFreeUpgrade = true;
+                }
                 mergedMap.set(pItem.id, pItem);
               }
             }
           }
         }
-        for (const loc of localUpgradedNodes) {
-          const alreadyOnChain = Array.from(mergedMap.values()).some(
-            (n) => !n.isLocalUpgrade && !n.isClone && !n.isExtraId && !loc.isClone && n.originMainId === loc.originMainId
-          );
-          if (!alreadyOnChain && !mergedMap.has(loc.id)) {
-            mergedMap.set(loc.id, { ...loc });
-          }
-        }
+        reattachLocalUpgradesIntoMergedMap(mergedMap, localUpgradedNodes);
         const fetchedNodes = reconcileRankTreeLinks(Array.from(mergedMap.values()));
         if (rankNum > 1) {
           const r1Nodes = matrixDB.nodesByRank[1] || [];
@@ -3356,12 +4626,227 @@ async function startApp() {
     rankSyncInFlight.set(cacheKey, syncPromise);
     return syncPromise;
   }
+  let lastChainTxSyncAt = 0;
+  let chainTxSyncInFlight = null;
+  async function syncRecentOnChainTxHashes(targetContract = CONTRACT_ADDRESS, lookbackBlocks = 35e3) {
+    if (chainTxSyncInFlight) return chainTxSyncInFlight;
+    chainTxSyncInFlight = (async () => {
+      let addedCount = 0;
+      try {
+        const provider = getProvider();
+        const latestBlock = await provider.getBlockNumber().catch(() => 0);
+        if (!latestBlock || latestBlock <= 0) return 0;
+        const eventAbi = [
+          "event UserRegistered(address indexed user, address indexed sponsor, uint256 indexed sponsorNodeId, uint256 mainNodeId)",
+          "event BatchRegistered(address indexed user, uint256 count, uint256 totalCost)",
+          "event NodeCreated(uint8 indexed rank, uint256 indexed nodeId, address indexed owner, address directSponsor, uint256 parentId, bool isLeft, bool isClone, bool isExtraId)",
+          "event RankUpgraded(address indexed user, uint8 fromRank, uint8 toRank, uint256 newNodeId, bool isAutoUpgrade)",
+          "event AutoNewMainIdCreated(address indexed user, uint256 count, uint256 vaultDiff)",
+          "event AutoExtraIdCreated(address indexed user, uint8 indexed rank, uint256 nodeId)"
+        ];
+        const contract = new ethers.Contract(targetContract, eventAbi, provider);
+        const startBlock = Math.max(0, latestBlock - lookbackBlocks);
+        const chunkSize = 4800;
+        const blockTimeCache = /* @__PURE__ */ new Map();
+        const resolveBlockIso = async (bn) => {
+          if (blockTimeCache.has(bn)) return blockTimeCache.get(bn);
+          try {
+            const blk = await provider.getBlock(bn);
+            const iso = blk?.timestamp ? new Date(Number(blk.timestamp) * 1e3).toISOString() : (/* @__PURE__ */ new Date()).toISOString();
+            blockTimeCache.set(bn, iso);
+            return iso;
+          } catch {
+            return (/* @__PURE__ */ new Date()).toISOString();
+          }
+        };
+        const beforeLen = (matrixDB.transactionLogs || []).length;
+        let newlyTaggedAdminNodes = false;
+        for (let toBlk = latestBlock; toBlk >= startBlock; toBlk -= chunkSize) {
+          const fromBlk = Math.max(startBlock, toBlk - chunkSize + 1);
+          try {
+            const [regLogs, batchLogs, nodeLogs, upgLogs, autoLogs, extraLogs] = await Promise.all([
+              contract.queryFilter(contract.filters.UserRegistered(), fromBlk, toBlk).catch(() => []),
+              contract.queryFilter(contract.filters.BatchRegistered(), fromBlk, toBlk).catch(() => []),
+              contract.queryFilter(contract.filters.NodeCreated(), fromBlk, toBlk).catch(() => []),
+              contract.queryFilter(contract.filters.RankUpgraded(), fromBlk, toBlk).catch(() => []),
+              contract.queryFilter(contract.filters.AutoNewMainIdCreated(), fromBlk, toBlk).catch(() => []),
+              contract.queryFilter(contract.filters.AutoExtraIdCreated(), fromBlk, toBlk).catch(() => [])
+            ]);
+            const rank2PlusHashes = Array.from(
+              new Set(
+                [
+                  ...upgLogs.map((l) => l?.transactionHash),
+                  ...nodeLogs.filter((l) => Number(l?.args?.rank || 0) >= 2).map((l) => l?.transactionHash)
+                ].filter((h) => isRealTxHash(h))
+              )
+            );
+            if (rank2PlusHashes.length > 0) {
+              const inspectResults = await Promise.all(
+                rank2PlusHashes.map(
+                  (h) => inspectAndTagAdminUpgradeTx(h, provider).catch(() => ({
+                    isAdminTx: false,
+                    taggedNodes: [],
+                    newlyTagged: false
+                  }))
+                )
+              );
+              if (inspectResults.some((res) => res.newlyTagged)) {
+                newlyTaggedAdminNodes = true;
+              }
+            }
+            const allLogs = [
+              ...regLogs.map((l) => ({ kind: "UserRegistered", log: l })),
+              ...batchLogs.map((l) => ({ kind: "BatchRegistered", log: l })),
+              ...nodeLogs.map((l) => ({ kind: "NodeCreated", log: l })),
+              ...upgLogs.map((l) => ({ kind: "RankUpgraded", log: l })),
+              ...autoLogs.map((l) => ({ kind: "AutoNewMainIdCreated", log: l })),
+              ...extraLogs.map((l) => ({ kind: "AutoExtraIdCreated", log: l }))
+            ];
+            if (allLogs.length > 0) {
+              const uniqueBlocks = Array.from(new Set(allLogs.map((x) => Number(x.log.blockNumber || 0)).filter(Boolean)));
+              await Promise.all(uniqueBlocks.slice(0, 25).map((bn) => resolveBlockIso(bn)));
+              for (const item of allLogs) {
+                const ev = item.log;
+                const args = ev?.args;
+                const txHash = ev?.transactionHash;
+                const bn = Number(ev?.blockNumber || 0) || void 0;
+                const ts = bn ? blockTimeCache.get(bn) : void 0;
+                if (!txHash || !args) continue;
+                const isAdminTx = inspectedAdminTxCache.get(String(txHash).toLowerCase()) === true;
+                if (item.kind === "UserRegistered") {
+                  const mainId = Number(args.mainNodeId || 0);
+                  recordRealTransactionLog({
+                    txHash,
+                    actionType: "REGISTER",
+                    title: `\u0E2A\u0E21\u0E31\u0E04\u0E23\u0E2A\u0E21\u0E32\u0E0A\u0E34\u0E01 Main ID #${mainId}`,
+                    userAddress: String(args.user || ""),
+                    mainNodeId: mainId,
+                    nodeId: mainId,
+                    rank: 1,
+                    amountUsdt: RANK_PRICES_USDT[0] || 5,
+                    blockNumber: bn,
+                    source: "ONCHAIN_EVENT",
+                    details: `Sponsor #${Number(args.sponsorNodeId || 1)}`,
+                    timestamp: ts
+                  });
+                } else if (item.kind === "BatchRegistered") {
+                  const cnt = Number(args.count || 1);
+                  const costNum = Number(ethers.formatUnits(args.totalCost || 0n, activeUsdtDecimals || 18));
+                  recordRealTransactionLog({
+                    txHash,
+                    actionType: "BATCH_REGISTER",
+                    title: `\u0E2A\u0E21\u0E31\u0E04\u0E23\u0E41\u0E1A\u0E1A\u0E01\u0E25\u0E38\u0E48\u0E21 (Batch ${cnt} \u0E42\u0E2B\u0E19\u0E14)`,
+                    userAddress: String(args.user || ""),
+                    rank: 1,
+                    amountUsdt: Number.isFinite(costNum) && costNum > 0 ? costNum : cnt * 5,
+                    blockNumber: bn,
+                    source: "ONCHAIN_EVENT",
+                    timestamp: ts
+                  });
+                } else if (item.kind === "NodeCreated") {
+                  const rNum = Number(args.rank || 1);
+                  const nId = Number(args.nodeId || 0);
+                  const isClone = Boolean(args.isClone);
+                  const isExtra = Boolean(args.isExtraId);
+                  if (isAdminTx && rNum >= 2) {
+                    if (markNodeAsAdminFreeUpgrade(rNum, nId)) newlyTaggedAdminNodes = true;
+                  }
+                  recordRealTransactionLog({
+                    txHash,
+                    actionType: isAdminTx && rNum >= 2 ? "ADMIN_UPGRADE" : isExtra ? "EXTRA_ID" : isClone ? "CLONE_BOT" : rNum === 1 ? "REGISTER" : "UPGRADE",
+                    title: isAdminTx && rNum >= 2 ? isClone ? `Admin \u0E2D\u0E31\u0E1E\u0E1F\u0E23\u0E35 (\u0E42\u0E04\u0E25\u0E19\u0E19\u0E34\u0E48\u0E07 R${rNum}-#${nId})` : `Admin \u0E2D\u0E31\u0E1E\u0E1F\u0E23\u0E35 R${rNum}-#${nId}` : isExtra ? `\u0E2A\u0E23\u0E49\u0E32\u0E07 Extra ID R${rNum}-#${nId}` : isClone ? `\u0E2A\u0E23\u0E49\u0E32\u0E07\u0E42\u0E04\u0E25\u0E19\u0E19\u0E34\u0E48\u0E07 R${rNum}-#${nId}` : rNum === 1 ? `\u0E2A\u0E23\u0E49\u0E32\u0E07\u0E42\u0E2B\u0E19\u0E14 R1-#${nId}` : `\u0E2A\u0E23\u0E49\u0E32\u0E07\u0E42\u0E2B\u0E19\u0E14 R${rNum}-#${nId}`,
+                    userAddress: String(args.owner || ""),
+                    nodeId: nId,
+                    rank: rNum,
+                    amountUsdt: isAdminTx && rNum >= 2 ? 0 : RANK_PRICES_USDT[rNum - 1] || 0,
+                    blockNumber: bn,
+                    source: "ONCHAIN_EVENT",
+                    details: isAdminTx && rNum >= 2 ? `Parent #${Number(args.parentId || 0)} [${args.isLeft ? "LEFT" : "RIGHT"}] \u2022 Admin Free (0 \u0E04\u0E48\u0E32\u0E04\u0E2D\u0E21)` : `Parent #${Number(args.parentId || 0)} [${args.isLeft ? "LEFT" : "RIGHT"}]`,
+                    timestamp: ts
+                  });
+                } else if (item.kind === "RankUpgraded") {
+                  const toR = Number(args.toRank || 2);
+                  const nId = Number(args.newNodeId || 0);
+                  if (isAdminTx && toR >= 2) {
+                    if (markNodeAsAdminFreeUpgrade(toR, nId)) newlyTaggedAdminNodes = true;
+                  }
+                  recordRealTransactionLog({
+                    txHash,
+                    actionType: isAdminTx ? "ADMIN_UPGRADE" : "UPGRADE",
+                    title: isAdminTx ? `Admin \u0E2D\u0E31\u0E1B\u0E40\u0E01\u0E23\u0E14\u0E1F\u0E23\u0E35 R${Number(args.fromRank || 1)} \u2192 R${toR} (Node #${nId})` : `\u0E2D\u0E31\u0E1B\u0E40\u0E01\u0E23\u0E14\u0E41\u0E23\u0E07\u0E04\u0E4C R${Number(args.fromRank || 1)} \u2192 R${toR} (Node #${nId})`,
+                    userAddress: String(args.user || ""),
+                    nodeId: nId,
+                    rank: toR,
+                    amountUsdt: isAdminTx ? 0 : RANK_PRICES_USDT[toR - 1] || 0,
+                    blockNumber: bn,
+                    source: "ONCHAIN_EVENT",
+                    details: isAdminTx ? "Admin Free Upgrade (0 \u0E04\u0E48\u0E32\u0E04\u0E2D\u0E21)" : args.isAutoUpgrade ? "Auto-Vault Upgrade" : "Wallet Upgrade",
+                    timestamp: ts
+                  });
+                } else if (item.kind === "AutoNewMainIdCreated") {
+                  const cnt = Number(args.count || 1);
+                  recordRealTransactionLog({
+                    txHash,
+                    actionType: "AUTO_ID",
+                    title: `\u0E41\u0E15\u0E01 Auto New Main ID (+${cnt} \u0E23\u0E2B\u0E31\u0E2A)`,
+                    userAddress: String(args.user || ""),
+                    rank: 1,
+                    amountUsdt: cnt * (RANK_PRICES_USDT[0] || 5),
+                    blockNumber: bn,
+                    source: "ONCHAIN_EVENT",
+                    timestamp: ts
+                  });
+                } else if (item.kind === "AutoExtraIdCreated") {
+                  const rNum = Number(args.rank || 2);
+                  const nId = Number(args.nodeId || 0);
+                  recordRealTransactionLog({
+                    txHash,
+                    actionType: "EXTRA_ID",
+                    title: `\u0E41\u0E15\u0E01 Extra ID R${rNum}-#${nId}`,
+                    userAddress: String(args.user || ""),
+                    nodeId: nId,
+                    rank: rNum,
+                    amountUsdt: RANK_PRICES_USDT[rNum - 1] || 10,
+                    blockNumber: bn,
+                    source: "ONCHAIN_EVENT",
+                    timestamp: ts
+                  });
+                }
+              }
+            }
+          } catch {
+          }
+          if (fromBlk <= 0) break;
+        }
+        if (newlyTaggedAdminNodes) {
+          reconcileAutoExtraIdsAcrossRanks();
+          rebuildDatabaseRewardLogsFromNodes();
+          rebuildDatabaseUpgradeLogsFromNodes();
+        }
+        addedCount = Math.max(0, (matrixDB.transactionLogs || []).length - beforeLen);
+        lastChainTxSyncAt = Date.now();
+        saveMatrixDBToDisk();
+      } catch (err) {
+        console.warn("[MatrixDB TxHash Sync] Notice:", err);
+      } finally {
+        chainTxSyncInFlight = null;
+      }
+      return addedCount;
+    })();
+    return chainTxSyncInFlight;
+  }
+  triggerMatrixDatabaseSync = syncAllMatrixDatabase;
   async function syncAllMatrixDatabase(targetContract = CONTRACT_ADDRESS, force = false) {
     if (fullSyncInFlight && !force) return fullSyncInFlight;
     fullSyncInFlight = (async () => {
       try {
         const provider = getProvider();
         const contract = new ethers.Contract(targetContract, MATRIX_READ_ABI, provider);
+        if (targetContract.toLowerCase() !== (matrixDB.contractAddress || "").toLowerCase()) {
+          console.log(`[MatrixDB] Contract address changed from ${matrixDB.contractAddress} to ${targetContract}. Re-initializing database.`);
+          Object.assign(matrixDB, createEmptyMatrixDB(targetContract, USDT_ADDRESS));
+          rankSyncTimestamps.clear();
+        }
         const [blockNum, allSellAddr, botAddr, familyAddr] = await Promise.all([
           provider.getBlockNumber().catch(() => matrixDB.lastSyncedBlock),
           contract.allSellWallet().catch(() => matrixDB.systemWallets.allSellWallet),
@@ -3370,31 +4855,67 @@ async function startApp() {
         ]);
         if (blockNum > 0) matrixDB.lastSyncedBlock = blockNum;
         if (allSellAddr && ethers.isAddress(allSellAddr)) matrixDB.systemWallets.allSellWallet = allSellAddr;
-        if (botAddr && ethers.isAddress(botAddr)) matrixDB.systemWallets.botWallet = botAddr;
+        if (botAddr && ethers.isAddress(botAddr)) {
+          const preferredCustom = matrixDB.systemWallets.customBotWallet;
+          if (preferredCustom && ethers.isAddress(preferredCustom) && botAddr.toLowerCase() === LEGACY_BOT_WALLET.toLowerCase()) {
+            matrixDB.systemWallets.botWallet = preferredCustom;
+          } else {
+            matrixDB.systemWallets.botWallet = botAddr;
+            if (botAddr.toLowerCase() !== LEGACY_BOT_WALLET.toLowerCase()) {
+              matrixDB.systemWallets.customBotWallet = botAddr;
+            }
+          }
+        }
         if (familyAddr && ethers.isAddress(familyAddr)) matrixDB.systemWallets.familyPool = familyAddr;
         const countsResults = await Promise.all(
           Array.from(
-            { length: 27 },
+            { length: 18 },
             (_, i) => contract.totalNodesInRank(i + 1).then((v) => Number(v)).catch(() => matrixDB.rankCounts[i + 1] || 1)
           )
         );
-        const ranksToSync = /* @__PURE__ */ new Set([1, 2, 3, 4, 5]);
+        const ranksToSync = /* @__PURE__ */ new Set([1, 2, 3, 4, 5, 6]);
         countsResults.forEach((c, idx) => {
           const r = idx + 1;
-          const prevCount = matrixDB.rankCounts[r] || 1;
-          matrixDB.rankCounts[r] = c;
-          const hasStoredVault = (matrixDB.nodesByRank[r] || []).some((n) => Number(n.nodeVault || 0) > 0);
-          if (c > 1 || hasStoredVault || c !== prevCount || !matrixDB.nodesByRank[r] || matrixDB.nodesByRank[r].length < c) {
-            if (r <= 5 || c > 1 || hasStoredVault) {
-              ranksToSync.add(r);
+          const currentNodes = matrixDB.nodesByRank[r] || [];
+          const hasLocalOrAdminNodes = currentNodes.some(
+            (n) => n.isLocalUpgrade || n.isAdminFreeUpgrade
+          );
+          if (c <= 1) {
+            if (currentNodes.length > 1 && !hasLocalOrAdminNodes) {
+              const rootNode = currentNodes.find((n) => n.id === 1) || {
+                id: 1,
+                rank: r,
+                owner: matrixDB.systemWallets.rootOwner,
+                directSponsor: ethers.ZeroAddress,
+                parentId: 0,
+                leftChild: 0,
+                rightChild: 0,
+                isClone: false,
+                isExtraId: false,
+                originMainId: 1,
+                cloneRound: 0,
+                directSponsorNodeId: 0,
+                nodeVault: 0,
+                rawNodeVault: 0,
+                reconciledBaseVault: 0
+              };
+              rootNode.leftChild = 0;
+              rootNode.rightChild = 0;
+              matrixDB.nodesByRank[r] = [rootNode];
+              matrixDB.rankCounts[r] = 1;
+            } else {
+              matrixDB.rankCounts[r] = Math.max(c, currentNodes.length || 1);
             }
+          } else {
+            matrixDB.rankCounts[r] = Math.max(c, hasLocalOrAdminNodes ? currentNodes.length : c);
+            ranksToSync.add(r);
           }
         });
         for (const r of Array.from(ranksToSync)) {
           await syncRankIntoDatabase(r, targetContract, force);
         }
         const rootOwner = matrixDB.nodesByRank[1]?.[0]?.owner || matrixDB.systemWallets.rootOwner;
-        for (let r = 1; r <= 27; r++) {
+        for (let r = 1; r <= 18; r++) {
           if (!matrixDB.nodesByRank[r] || matrixDB.nodesByRank[r].length === 0) {
             matrixDB.nodesByRank[r] = [
               {
@@ -3422,6 +4943,10 @@ async function startApp() {
         rebuildDatabaseUpgradeLogsFromNodes();
         matrixDB.lastSyncedAt = (/* @__PURE__ */ new Date()).toISOString();
         saveMatrixDBToDisk();
+        if (force || Date.now() - lastChainTxSyncAt > 45e3 || (matrixDB.transactionLogs || []).length === 0) {
+          syncRecentOnChainTxHashes(targetContract, 35e3).catch(() => {
+          });
+        }
         syncAllMatrixDBToPostgres().catch(() => {
         });
       } catch (err) {
@@ -3432,19 +4957,25 @@ async function startApp() {
     })();
     return fullSyncInFlight;
   }
-  reconcileAutoExtraIdsAcrossRanks();
-  rebuildDatabaseRewardLogsFromNodes();
-  rebuildDatabaseUpgradeLogsFromNodes();
-  saveMatrixDBToDisk(true);
+  const runInitialReconciliation = () => {
+    try {
+      reconcileAutoExtraIdsAcrossRanks();
+      rebuildDatabaseRewardLogsFromNodes();
+      rebuildDatabaseUpgradeLogsFromNodes();
+      saveMatrixDBToDisk(true);
+    } catch (err) {
+      console.warn("[MatrixDB] Initial reconciliation notice:", err);
+    }
+  };
   function computeMainIdDatabaseStats(mainIdNum) {
     const r1Nodes = matrixDB.nodesByRank[1] || [];
     const targetNode = r1Nodes.find((n) => n.id === mainIdNum);
     const ownerAddr = (targetNode?.owner || matrixDB.systemWallets.rootOwner || "").toLowerCase();
     const r1OwnerMains = r1Nodes.filter((n) => n.owner.toLowerCase() === ownerAddr && !n.isClone && !n.isExtraId).map((n) => n.id);
     const mainIdxInOwner = Math.max(0, r1OwnerMains.indexOf(mainIdNum));
-    let currentRank = mainIdNum === 1 ? 27 : 1;
+    let currentRank = mainIdNum === 1 ? 18 : 1;
     const vaultsByRank = {};
-    for (let r = 1; r <= 27; r++) {
+    for (let r = 1; r <= 18; r++) {
       const rNodes = matrixDB.nodesByRank[r] || [];
       if (r === 1) {
         vaultsByRank[1] = Number(targetNode?.nodeVault || 0);
@@ -3460,24 +4991,24 @@ async function startApp() {
         }
       }
     }
-    if (mainIdNum === 1) currentRank = 27;
+    if (mainIdNum === 1) currentRank = 18;
     const window5Start = Math.max(1, currentRank - 4);
     const window5End = currentRank;
     let upgradeRankPool = 0;
     let newAutoIdPool = 0;
     let r4To27OutsideWindow = 0;
     let grossR4To27OutsideWindow = 0;
-    for (let r = 1; r <= 27; r++) {
+    for (let r = 1; r <= 18; r++) {
       const v = vaultsByRank[r] || 0;
       const inWindow5 = r >= window5Start && r <= window5End;
-      if (inWindow5 && currentRank < 27) {
+      if (inWindow5 && currentRank < 18) {
         upgradeRankPool += v;
       }
       if (r >= 1 && r <= 3 && !inWindow5) {
         newAutoIdPool += v;
       }
       if (r >= 4 && r <= 27) {
-        if (currentRank === 27 || !inWindow5) {
+        if (currentRank === 18 || !inWindow5) {
           r4To27OutsideWindow += v;
           const rNodes = matrixDB.nodesByRank[r] || [];
           const correspNode = r === 1 ? targetNode : rNodes.find((n) => !n.isClone && !n.isExtraId && n.originMainId === mainIdNum);
@@ -3487,7 +5018,10 @@ async function startApp() {
             for (const rn of rNodes) {
               const isSameMain = rn.id === correspNode.id || rn.isClone && (rn.originMainId === correspNode.id || rn.originMainId === mainIdNum);
               if (isSameMain && rn.leftChild > 0) {
-                leftCountInR++;
+                const lcNode = rNodes.find((x) => x.id === rn.leftChild);
+                if (!lcNode?.isAdminFreeUpgrade) {
+                  leftCountInR++;
+                }
               }
             }
             grossR4To27OutsideWindow = Number(
@@ -3516,7 +5050,7 @@ async function startApp() {
     let totalExtraIdCount = 0;
     let extraIdDeductedTotalUsdt = 0;
     let extraLeftVaultBonusGross = 0;
-    for (let r = 1; r <= 27; r++) {
+    for (let r = 1; r <= 18; r++) {
       const rNodes = matrixDB.nodesByRank[r] || [];
       const correspondingNode = r === 1 ? targetNode : rNodes.find((n) => !n.isClone && !n.isExtraId && n.originMainId === mainIdNum);
       const correspIdInR = correspondingNode?.id || 0;
@@ -3533,9 +5067,12 @@ async function startApp() {
           ) || n;
           const isExtraLineage = !n.isClone ? Boolean(n.isExtraId) : Boolean(n.isExtraId || nOrig.isExtraId);
           if (isExtraLineage && n.leftChild > 0) {
-            const spawnerMainId = resolveExtraSpawnerMainId(nOrig);
-            if (spawnerMainId === mainIdNum) {
-              extraLeftVaultBonusGross = Number((extraLeftVaultBonusGross + rUnitVault).toFixed(4));
+            const lcNode = rNodes.find((x) => x.id === n.leftChild);
+            if (!lcNode?.isAdminFreeUpgrade) {
+              const spawnerMainId = resolveExtraSpawnerMainId(nOrig);
+              if (spawnerMainId === mainIdNum) {
+                extraLeftVaultBonusGross = Number((extraLeftVaultBonusGross + rUnitVault).toFixed(4));
+              }
             }
           }
         }
@@ -3611,7 +5148,7 @@ async function startApp() {
       source: "DATABASE",
       postgres: {
         connected: pgConnected,
-        database: "Aunza",
+        database: PG_ENDPOINT_INFO.database,
         tableCounts: pgTablesCount
       },
       contractAddress: matrixDB.contractAddress,
@@ -3626,8 +5163,39 @@ async function startApp() {
       upgradeLogs: matrixDB.upgradeLogs || []
     });
   });
-  app.post("/api/db/sync", async (_req, res) => {
+  app.post("/api/db/sync", async (req, res) => {
     try {
+      const fastMode = req.query.fast === "1" || req.body?.fast === true;
+      const rankParam = Number(req.query.rank || req.body?.rank || 0);
+      if (fastMode || rankParam >= 1) {
+        const targetRank = rankParam >= 1 && rankParam <= 18 ? rankParam : 1;
+        await syncRankIntoDatabase(targetRank, CONTRACT_ADDRESS, false, true);
+        if (targetRank >= 2) {
+          const winStart = Math.max(1, targetRank - 5);
+          const vaultRanks = [];
+          for (let wr = winStart; wr < targetRank; wr++) {
+            vaultRanks.push(wr);
+          }
+          await Promise.all(
+            vaultRanks.map((wr) => syncRankIntoDatabase(wr, CONTRACT_ADDRESS, false, true).catch(() => []))
+          );
+          reconcileAutoExtraIdsAcrossRanks();
+          rebuildDatabaseRewardLogsFromNodes();
+          rebuildDatabaseUpgradeLogsFromNodes();
+          saveMatrixDBToDisk(true);
+        }
+        return res.json({
+          success: true,
+          source: "DATABASE_FAST_DELTA_SYNCED",
+          rank: targetRank,
+          lastSyncedBlock: matrixDB.lastSyncedBlock,
+          lastSyncedAt: matrixDB.lastSyncedAt,
+          rankCounts: matrixDB.rankCounts,
+          totalNodesRank1: matrixDB.rankCounts[1] || 1,
+          totalRewards: matrixDB.rewardLogs.length,
+          totalUpgrades: (matrixDB.upgradeLogs || []).length
+        });
+      }
       await syncAllMatrixDatabase(CONTRACT_ADDRESS, true);
       res.json({
         success: true,
@@ -3643,21 +5211,62 @@ async function startApp() {
       res.status(500).json({ success: false, error: err.message });
     }
   });
+  triggerComputeMainIdStats = computeMainIdDatabaseStats;
   app.post("/api/matrix/auto-extra-id", async (req, res) => {
     try {
       const mainIdNum = Math.max(1, Number(req.body?.mainId) || 1);
       await syncAllMatrixDatabase(CONTRACT_ADDRESS, false);
+      const statsBefore = computeMainIdDatabaseStats(mainIdNum);
+      let txHash = null;
+      const minExtraPrice = RANK_PRICES_USDT[1] || 10;
+      if (BOT_PRIVATE_KEY && BOT_PRIVATE_KEY.length >= 64 && statsBefore.currentRank >= 2 && statsBefore.newExtraIdPool + 1e-6 >= minExtraPrice) {
+        try {
+          const httpProvider = getBotHttpProvider();
+          const pkHex = BOT_PRIVATE_KEY.startsWith("0x") ? BOT_PRIVATE_KEY : `0x${BOT_PRIVATE_KEY}`;
+          const botSigner = new ethers.Wallet(pkHex, httpProvider);
+          const writeContract = new ethers.Contract(CONTRACT_ADDRESS, WS_BOT_ABI, botSigner);
+          const tx = await writeContract.processPendingExtraIdQueue(mainIdNum, 2);
+          const receipt = await tx.wait(1);
+          txHash = receipt?.hash || tx.hash;
+          recordRealTransactionLog({
+            txHash,
+            actionType: "EXTRA_ID",
+            title: `\u0E2A\u0E31\u0E48\u0E07\u0E41\u0E15\u0E01 Extra ID \u0E08\u0E32\u0E01 Main #${mainIdNum}`,
+            userAddress: botSigner.address,
+            mainNodeId: mainIdNum,
+            rank: 2,
+            blockNumber: receipt?.blockNumber,
+            source: "WS_BOT"
+          });
+          recordWsBotEvent(
+            "AutoExtraIdQueue",
+            `API Trigger Main #${mainIdNum} -> TX: ${String(txHash).slice(0, 10)}...`
+          );
+          await syncAllMatrixDatabase(CONTRACT_ADDRESS, true);
+        } catch (botErr) {
+          console.warn("[API /api/matrix/auto-extra-id Bot TX notice]:", botErr?.shortMessage || botErr?.message);
+        }
+      }
       const created = reconcileAutoExtraIdsAcrossRanks().filter((c) => c.mainId === mainIdNum);
       rebuildDatabaseRewardLogsFromNodes();
       rebuildDatabaseUpgradeLogsFromNodes();
       saveMatrixDBToDisk(true);
       const stats = computeMainIdDatabaseStats(mainIdNum);
+      const onChainCreatedDiff = Math.max(
+        0,
+        (stats.totalExtraIdCount || 0) - (statsBefore.totalExtraIdCount || 0)
+      );
+      const totalCreatedCount = Math.max(created.length, onChainCreatedDiff);
       res.json({
         success: true,
         mainId: mainIdNum,
-        createdCount: created.length,
+        txHash,
+        createdCount: totalCreatedCount,
         createdNodes: created,
-        stats
+        stats,
+        message: totalCreatedCount > 0 ? `\u2728 \u0E1A\u0E2D\u0E17\u0E1B\u0E25\u0E14\u0E25\u0E47\u0E2D\u0E01\u0E41\u0E25\u0E30\u0E2A\u0E23\u0E49\u0E32\u0E07 Extra ID \u0E02\u0E2D\u0E07\u0E23\u0E2B\u0E31\u0E2A\u0E2B\u0E25\u0E31\u0E01 #${mainIdNum} \u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08 (+${totalCreatedCount} \u0E23\u0E2B\u0E31\u0E2A)!` : `\u0E15\u0E23\u0E27\u0E08\u0E2A\u0E2D\u0E1A\u0E23\u0E2B\u0E31\u0E2A\u0E2B\u0E25\u0E31\u0E01 #${mainIdNum} \u0E41\u0E25\u0E49\u0E27: \u0E22\u0E2D\u0E14\u0E2A\u0E30\u0E2A\u0E21 New Extra ID Pool \u0E1B\u0E31\u0E08\u0E08\u0E38\u0E1A\u0E31\u0E19\u0E04\u0E37\u0E2D ${stats.newExtraIdPool.toFixed(
+          2
+        )} USDT (\u0E02\u0E31\u0E49\u0E19\u0E15\u0E48\u0E33 Rank 2 = ${minExtraPrice.toFixed(2)} USDT)`
       });
     } catch (err) {
       res.status(500).json({ success: false, error: err.message });
@@ -3723,7 +5332,7 @@ async function startApp() {
         const totalInRank = Math.max(rList.length, nodeId, 1);
         const stepsBack = Math.max(0, totalInRank - nodeId);
         return new Date(
-          17938536e5 - stepsBack * 45e3 - Math.max(0, 27 - rankNum) * 19e3
+          Date.now() - stepsBack * 2e3 - Math.max(0, 18 - rankNum) * 1e3
         ).toISOString();
       };
       const reportsMap = /* @__PURE__ */ new Map();
@@ -3751,7 +5360,7 @@ async function startApp() {
         };
         const rankNodesList = [];
         if (!r1Node.isClone && !r1Node.isExtraId) {
-          for (let r = 1; r <= 27; r++) {
+          for (let r = 1; r <= 18; r++) {
             const rList = matrixDB.nodesByRank[r] || [];
             const mInR = r === 1 ? r1Node : rList.find((x) => !x.isClone && !x.isExtraId && x.originMainId === r1Node.id);
             if (mInR) {
@@ -3796,7 +5405,10 @@ async function startApp() {
             if (pObj.leftChild > 0 && r1NodesMap.has(pObj.leftChild) && !visitedSubtree.has(pObj.leftChild)) {
               visitedSubtree.add(pObj.leftChild);
               nextFrontier.push(pObj.leftChild);
-              leftNodeIds.push(pObj.leftChild);
+              const lcObj = r1NodesMap.get(pObj.leftChild);
+              if (!lcObj?.isAdminFreeUpgrade) {
+                leftNodeIds.push(pObj.leftChild);
+              }
             }
             if (pObj.rightChild > 0 && r1NodesMap.has(pObj.rightChild) && !visitedSubtree.has(pObj.rightChild)) {
               visitedSubtree.add(pObj.rightChild);
@@ -3821,9 +5433,9 @@ async function startApp() {
           });
           currentFrontier = nextFrontier;
         }
-        const receivedLevelsCount = tiersBreakdown.filter((t) => t.leftPayingNodesCount > 0 || t.totalNodesInTier > 0).length;
+        const receivedLevelsCount = tiersBreakdown.filter((t) => t.leftPayingNodesCount > 0).length;
         const remainingLevelsCount = Math.max(0, 15 - receivedLevelsCount);
-        const perTierStr = tiersBreakdown.map((t) => `\u0E0A\u0E31\u0E49\u0E19 ${t.tier}: ${t.amountUsdt.toFixed(2)} USDT (${t.leftPayingNodesCount} \u0E40\u0E21\u0E47\u0E14\u0E0B\u0E49\u0E32\u0E22)`).join(", ");
+        const perTierStr = tiersBreakdown.filter((t) => t.leftPayingNodesCount > 0).map((t) => `\u0E0A\u0E31\u0E49\u0E19 ${t.tier}: ${t.amountUsdt.toFixed(2)} USDT (${t.leftPayingNodesCount} \u0E40\u0E21\u0E47\u0E14\u0E0B\u0E49\u0E32\u0E22)`).join(", ");
         reportsMap.set(r1Node.id, {
           id: r1Node.id,
           label: r1Node.isClone ? `Main #${origMainId} (\u0E42\u0E04\u0E25\u0E19 R1-#${r1Node.id})` : isAutoMain ? `Auto ID #${r1Node.id}` : `Main ID #${r1Node.id}`,
@@ -3916,7 +5528,7 @@ async function startApp() {
           }
         }
       }
-      for (let rankNum = 1; rankNum <= 27; rankNum++) {
+      for (let rankNum = 1; rankNum <= 18; rankNum++) {
         const rNodes = matrixDB.nodesByRank[rankNum] || [];
         if (rNodes.length <= 1) continue;
         const nodesMap = /* @__PURE__ */ new Map();
@@ -3986,7 +5598,7 @@ async function startApp() {
       }
       const allSellWalletAddr = matrixDB.systemWallets?.allSellWallet || "0xBeFEB9871a20656aeF7E8d218f751e9C23FAF710";
       const familyPoolWalletAddr = matrixDB.systemWallets?.familyPool || "0x225DF4b5961f757f54728138F289Eaf49D4F275A";
-      const botWalletAddr = matrixDB.systemWallets?.botWallet || "0xbFD03d4D69221085a63Dd372A5d59f952C084a56";
+      const botWalletAddr = matrixDB.systemWallets?.customBotWallet || matrixDB.systemWallets?.botWallet || DEFAULT_BOT_WALLET;
       let allSellTotalUsdt = 0;
       let familyPoolTotalUsdt = 0;
       let familyPoolUnpaidLevelUsdt = 0;
@@ -3994,9 +5606,11 @@ async function startApp() {
       let botTotalUsdt = 0;
       const allSellByRank = {};
       const familyPoolByRank = {};
+      const botByRank = {};
       const allSellHistory = [];
+      const botHistory = [];
       const familyPoolHistory = [];
-      for (let rankNum = 1; rankNum <= 27; rankNum++) {
+      for (let rankNum = 1; rankNum <= 18; rankNum++) {
         const rNodes = matrixDB.nodesByRank[rankNum] || [];
         if (rNodes.length <= 1) continue;
         const unitPrice = RANK_PRICES_USDT[rankNum - 1] || 5;
@@ -4012,6 +5626,7 @@ async function startApp() {
         for (const id of sortedIds) {
           if (id <= 1) continue;
           const child = nodesMap.get(id);
+          if (child.isAdminFreeUpgrade) continue;
           const parent = nodesMap.get(child.parentId);
           if (!parent || parent.leftChild !== id) continue;
           const childCanonMainId = resolveCanonicalMainId(rankNum, child);
@@ -4020,6 +5635,26 @@ async function startApp() {
           allSellTotalUsdt = Number((allSellTotalUsdt + allSellAmt).toFixed(4));
           allSellByRank[rankNum] = Number(((allSellByRank[rankNum] || 0) + allSellAmt).toFixed(4));
           botTotalUsdt = Number((botTotalUsdt + botAmt).toFixed(4));
+          botByRank[rankNum] = Number(((botByRank[rankNum] || 0) + botAmt).toFixed(4));
+          const matchingBotRew = (matrixDB.rewardLogs || []).find(
+            (rw) => String(rw.rewardType || "").toUpperCase() === "BOT" && Number(rw.rank || 1) === rankNum && Number(rw.fromNodeId || 0) === id
+          );
+          const matchingNodeTx = !isRealTxHash(matchingBotRew?.txHash) ? (matrixDB.transactionLogs || []).find(
+            (t) => Number(t.rank || 1) === rankNum && (Number(t.nodeId || 0) === id || Number(t.mainNodeId || 0) === childCanonMainId) && isRealTxHash(t.txHash)
+          ) : void 0;
+          botHistory.push({
+            rank: rankNum,
+            fromNodeId: id,
+            fromMainId: childCanonMainId,
+            fromNodeType: childTypeLabel,
+            parentId: parent.id,
+            amountUsdt: botAmt,
+            recipient: botWalletAddr,
+            note: `1% Bot \u0E08\u0E32\u0E01 ${childTypeLabel} (\u0E27\u0E32\u0E07\u0E40\u0E21\u0E47\u0E14\u0E0B\u0E49\u0E32\u0E22\u0E43\u0E15\u0E49 R${rankNum}-#${parent.id})`,
+            timestamp: matchingBotRew?.createdAt || matchingNodeTx?.timestamp || rowEventTime,
+            txHash: isRealTxHash(matchingBotRew?.txHash) ? matchingBotRew?.txHash : matchingNodeTx?.txHash,
+            blockNumber: matchingBotRew?.blockNumber || matchingNodeTx?.blockNumber
+          });
           allSellHistory.push({
             rank: rankNum,
             fromNodeId: id,
@@ -4035,6 +5670,18 @@ async function startApp() {
             (x) => !x.isClone && (x.owner || "").toLowerCase() === (parent.owner || "").toLowerCase() && (x.originMainId === parent.originMainId || x.id === parent.originMainId)
           ) || parent;
           const isParentExtraLineage = !parent.isClone ? Boolean(parent.isExtraId) : Boolean(parent.isExtraId || parentOrigin.isExtraId);
+          const isId1CloneChild = child.isClone && (childCanonMainId === 1 || parent.id === 1);
+          let spMainId = child.directSponsorNodeId || 1;
+          if (!child.isExtraId && childCanonMainId > 1) {
+            const origR1 = r1Nodes.find((x) => x.id === childCanonMainId && !x.isClone && !x.isExtraId);
+            if (origR1 && origR1.directSponsorNodeId > 0) {
+              spMainId = origR1.directSponsorNodeId;
+            }
+          }
+          const spR1Node = r1Nodes.find((x) => x.id === spMainId);
+          if (spR1Node && spR1Node.isClone && spR1Node.originMainId > 0) {
+            spMainId = spR1Node.originMainId;
+          }
           if (isParentExtraLineage) {
             const extraOwner = (parentOrigin.owner || parent.owner || "").toLowerCase();
             const ownerMains = r1Nodes.filter(
@@ -4061,20 +5708,50 @@ async function startApp() {
               (x) => !x.isClone && !x.isExtraId && (rankNum === 1 ? x.id === targetMainId : x.originMainId === targetMainId)
             );
             const extraSpLocalId = extraSpLocalNode ? extraSpLocalNode.id : targetMainId;
-            const rep = reportsMap.get(targetMainId);
-            if (rep) {
-              rep.direct30TotalUsdt = Number((rep.direct30TotalUsdt + directAmt).toFixed(2));
-              rep.direct30History.push({
+            if (isId1CloneChild) {
+              familyPoolRootCloneDirectUsdt = Number(
+                (familyPoolRootCloneDirectUsdt + directAmt).toFixed(4)
+              );
+              familyPoolTotalUsdt = Number((familyPoolTotalUsdt + directAmt).toFixed(4));
+              familyPoolByRank[rankNum] = Number(
+                ((familyPoolByRank[rankNum] || 0) + directAmt).toFixed(4)
+              );
+              familyPoolHistory.push({
                 rank: rankNum,
                 fromNodeId: id,
                 fromMainId: childCanonMainId,
                 fromNodeType: childTypeLabel,
-                toNodeId: extraSpLocalId,
-                toMainId: targetMainId,
+                parentId: parent.id,
+                subType: "ROOT_CLONE_DIRECT",
                 amountUsdt: directAmt,
-                note: `30% \u0E04\u0E48\u0E32\u0E41\u0E19\u0E30\u0E19\u0E33\u0E08\u0E32\u0E01\u0E40\u0E21\u0E47\u0E14\u0E0B\u0E49\u0E32\u0E22\u0E02\u0E2D\u0E07 Extra R${rankNum}-#${parent.id} \u0E2A\u0E48\u0E07\u0E01\u0E25\u0E31\u0E1A\u0E1C\u0E39\u0E49\u0E41\u0E19\u0E30\u0E19\u0E33 Main #${targetMainId}`,
+                recipient: familyPoolWalletAddr,
+                note: `30% \u0E04\u0E48\u0E32\u0E41\u0E19\u0E30\u0E19\u0E33\u0E08\u0E32\u0E01\u0E42\u0E04\u0E25\u0E19\u0E23\u0E2B\u0E31\u0E2A #1 (${childTypeLabel} \u0E27\u0E32\u0E07\u0E0B\u0E49\u0E32\u0E22\u0E43\u0E15\u0E49 Extra R${rankNum}-#${parent.id}) \u0E40\u0E02\u0E49\u0E32 Family Pool`,
                 timestamp: rowEventTime
               });
+            } else {
+              const spRepForExtraChild = reportsMap.get(spMainId);
+              if (spRepForExtraChild) {
+                const spLocalInR = rNodes.find(
+                  (x) => !x.isClone && !x.isExtraId && (rankNum === 1 ? x.id === spMainId : x.originMainId === spMainId)
+                );
+                spRepForExtraChild.direct30TotalUsdt = Number(
+                  (spRepForExtraChild.direct30TotalUsdt + directAmt).toFixed(2)
+                );
+                spRepForExtraChild.direct30History.push({
+                  rank: rankNum,
+                  fromNodeId: id,
+                  fromMainId: childCanonMainId,
+                  fromNodeType: childTypeLabel,
+                  toNodeId: spLocalInR ? spLocalInR.id : spMainId,
+                  toMainId: spMainId,
+                  amountUsdt: directAmt,
+                  note: `30% \u0E04\u0E48\u0E32\u0E41\u0E19\u0E30\u0E19\u0E33\u0E15\u0E23\u0E07\u0E08\u0E32\u0E01 ${childTypeLabel} (\u0E27\u0E32\u0E07\u0E0B\u0E49\u0E32\u0E22\u0E43\u0E15\u0E49 Extra R${rankNum}-#${parent.id} \u2022 \u0E2D\u0E49\u0E32\u0E07\u0E2D\u0E34\u0E07\u0E1C\u0E39\u0E49\u0E41\u0E19\u0E30\u0E19\u0E33\u0E15\u0E23\u0E07 R1 Main #${spMainId})`,
+                  timestamp: rowEventTime
+                });
+              }
+            }
+            const rep = reportsMap.get(targetMainId);
+            if (rep) {
               rep.level30TotalUsdt = Number((rep.level30TotalUsdt + fullLevelExtraAmt).toFixed(2));
               rep.level30History.push({
                 rank: rankNum,
@@ -4103,7 +5780,6 @@ async function startApp() {
             }
             continue;
           }
-          const isId1CloneChild = child.isClone && (childCanonMainId === 1 || parent.id === 1);
           if (isId1CloneChild) {
             familyPoolRootCloneDirectUsdt = Number(
               (familyPoolRootCloneDirectUsdt + directAmt).toFixed(4)
@@ -4125,25 +5801,21 @@ async function startApp() {
               timestamp: rowEventTime
             });
           } else {
-            let spMainId = child.directSponsorNodeId || 1;
-            if (rankNum > 1 && childCanonMainId > 1) {
-              const origR1 = r1Nodes.find((x) => x.id === childCanonMainId);
-              if (origR1 && origR1.directSponsorNodeId > 0) {
-                spMainId = origR1.directSponsorNodeId;
-              }
-            }
             const spRep = reportsMap.get(spMainId);
             if (spRep) {
+              const spLocalInR = rNodes.find(
+                (x) => !x.isClone && !x.isExtraId && (rankNum === 1 ? x.id === spMainId : x.originMainId === spMainId)
+              );
               spRep.direct30TotalUsdt = Number((spRep.direct30TotalUsdt + directAmt).toFixed(2));
               spRep.direct30History.push({
                 rank: rankNum,
                 fromNodeId: id,
                 fromMainId: childCanonMainId,
                 fromNodeType: childTypeLabel,
-                toNodeId: spMainId,
+                toNodeId: spLocalInR ? spLocalInR.id : spMainId,
                 toMainId: spMainId,
                 amountUsdt: directAmt,
-                note: `30% \u0E04\u0E48\u0E32\u0E41\u0E19\u0E30\u0E19\u0E33\u0E15\u0E23\u0E07\u0E08\u0E32\u0E01 ${childTypeLabel} (\u0E27\u0E32\u0E07\u0E0B\u0E49\u0E32\u0E22\u0E43\u0E15\u0E49 R${rankNum}-#${parent.id})`,
+                note: `30% \u0E04\u0E48\u0E32\u0E41\u0E19\u0E30\u0E19\u0E33\u0E15\u0E23\u0E07\u0E08\u0E32\u0E01 ${childTypeLabel} (\u0E27\u0E32\u0E07\u0E0B\u0E49\u0E32\u0E22\u0E43\u0E15\u0E49 R${rankNum}-#${parent.id} \u2022 \u0E2D\u0E49\u0E32\u0E07\u0E2D\u0E34\u0E07\u0E1C\u0E39\u0E49\u0E41\u0E19\u0E30\u0E19\u0E33\u0E15\u0E23\u0E07 R1 Main #${spMainId})`,
                 timestamp: rowEventTime
               });
             }
@@ -4264,6 +5936,7 @@ async function startApp() {
       });
       sortByLatestTimeDesc(allSellHistory);
       sortByLatestTimeDesc(familyPoolHistory);
+      sortByLatestTimeDesc(botHistory);
       for (const rep of reportsMap.values()) {
         sortByLatestTimeDesc(rep.direct30History);
         sortByLatestTimeDesc(rep.level30History);
@@ -4272,58 +5945,89 @@ async function startApp() {
         sortByLatestTimeDesc(rep.autoExtraIdsSpawned);
         sortByLatestTimeDesc(rep.clonesSpawned);
       }
-      let onChainAllSellBal = 0;
-      let onChainFamilyBal = 0;
-      let onChainBotBal = 0;
-      try {
-        const provider = getProvider();
-        const usdtContract = new ethers.Contract(USDT_ADDRESS, USDT_READ_ABI, provider);
-        const dec = activeUsdtDecimals || 18;
-        const [aBn, fBn, bBn] = await Promise.all([
-          usdtContract.balanceOf(allSellWalletAddr).catch(() => 0n),
-          usdtContract.balanceOf(familyPoolWalletAddr).catch(() => 0n),
-          usdtContract.balanceOf(botWalletAddr).catch(() => 0n)
-        ]);
-        onChainAllSellBal = Number(Number(ethers.formatUnits(aBn, dec)).toFixed(2));
-        onChainFamilyBal = Number(Number(ethers.formatUnits(fBn, dec)).toFixed(2));
-        onChainBotBal = Number(Number(ethers.formatUnits(bBn, dec)).toFixed(2));
-      } catch {
-      }
+      const onChainAllSellBal = Number(allSellTotalUsdt.toFixed(2));
+      const onChainFamilyBal = Number(familyPoolTotalUsdt.toFixed(2));
+      const onChainBotBal = Number(botTotalUsdt.toFixed(2));
       for (const rep of reportsMap.values()) {
-        const rem = rep.rankNodesList.reduce((acc, rItem) => acc + Number(rItem.nodeVault || 0), 0);
+        const stats = computeMainIdDatabaseStats(rep.id);
+        const rem = rep.isClone ? rep.rankNodesList.reduce((acc, rItem) => acc + Number(rItem.nodeVault || 0), 0) : Number(
+          ((stats.upgradeRankPool || 0) + (stats.newAutoIdPool || 0) + (stats.newExtraIdPool || 0)).toFixed(2)
+        );
         rep.vault35RemainingTotalUsdt = Number(rem.toFixed(2));
+        rep.vault35GrossTotalUsdt = Number(
+          rep.vault35History.reduce((s, h) => s + (Number(h.amountUsdt) || 0), 0).toFixed(2)
+        );
         rep.vault35DeductedTotalUsdt = Number(
           Math.max(0, rep.vault35GrossTotalUsdt - rep.vault35RemainingTotalUsdt).toFixed(2)
         );
         if (!rep.isClone) {
           const cloneLvlSum = Number(
-            Math.max(0, rep.level30TotalUsdt - rep.levelSummary.thisNodeLevelTotalUsdt).toFixed(2)
+            rep.level30History.filter((h) => (h.note || "").includes("\u0E1C\u0E48\u0E32\u0E19\u0E42\u0E04\u0E25\u0E19")).reduce((s, h) => s + (Number(h.amountUsdt) || 0), 0).toFixed(2)
           );
           rep.levelSummary.clonesLevelTotalUsdt = cloneLvlSum;
+          rep.levelSummary.thisNodeLevelTotalUsdt = Number(
+            Math.max(0, rep.level30TotalUsdt - cloneLvlSum).toFixed(2)
+          );
           rep.levelSummary.combinedLevelTotalUsdt = Number(rep.level30TotalUsdt.toFixed(2));
         } else {
           rep.levelSummary.clonesLevelTotalUsdt = 0;
           rep.levelSummary.combinedLevelTotalUsdt = Number(rep.levelSummary.thisNodeLevelTotalUsdt.toFixed(2));
         }
+        const extraDeduct = Number(
+          rep.autoExtraIdsSpawned.reduce(
+            (s, x) => s + (RANK_PRICES_USDT[x.rank - 1] || 10),
+            0
+          ).toFixed(2)
+        );
+        const autoDeduct = Number(
+          (rep.autoIdsSpawned.length * (RANK_PRICES_USDT[0] || 5)).toFixed(2)
+        );
+        const upDeduct = Number(
+          Math.max(0, rep.vault35DeductedTotalUsdt - extraDeduct - autoDeduct).toFixed(2)
+        );
+        rep.vaultDeductedBreakdown = {
+          extraIdsTotalUsdt: extraDeduct,
+          autoIdsTotalUsdt: autoDeduct,
+          upgradesTotalUsdt: upDeduct
+        };
+        rep.upgradeRankPool = stats.upgradeRankPool;
+        rep.newAutoIdPool = stats.newAutoIdPool;
+        rep.newExtraIdPool = stats.newExtraIdPool;
+        if (rep.pools) {
+          rep.pools.upgradeRankPool = stats.upgradeRankPool;
+          rep.pools.newAutoIdPool = stats.newAutoIdPool;
+          rep.pools.newExtraIdPool = stats.newExtraIdPool;
+        }
         const ledgerEvents = [];
         const sortedInflows = rep.vault35History.slice().reverse();
         const sortedAutoSpawned = rep.autoIdsSpawned.slice().reverse();
         const sortedExtraSpawned = rep.autoExtraIdsSpawned.slice().reverse();
-        const idUpgrades = (matrixDB.upgradeLogs || []).filter(
-          (u) => Number(u.mainNodeId) === rep.id && Number(u.vaultDeductedUsdt) > 0
-        );
-        let autoPoolBal = 0;
-        let extraPoolBal = 0;
-        let autoIdx = 0;
-        let extraIdx = 0;
         for (const inf of sortedInflows) {
-          const tMs = new Date(inf.timestamp).getTime() || Date.now();
-          const pType = inf.rank <= 3 ? "AUTO_ID_POOL" : "EXTRA_ID_POOL";
-          const pLabel = pType === "AUTO_ID_POOL" ? "Auto ID Pool" : "Extra ID Pool";
-          if (pType === "AUTO_ID_POOL") {
-            autoPoolBal = Number((autoPoolBal + inf.amountUsdt).toFixed(2));
+          const isExtraLeftBonus = (inf.note || "").includes("Extra R") || (inf.note || "").includes("Extra Left Bonus") || (inf.note || "").includes("\u0E2A\u0E48\u0E07\u0E40\u0E02\u0E49\u0E32 New Extra ID Pool");
+          let pType;
+          let pLabel;
+          if (isExtraLeftBonus) {
+            pType = "EXTRA_ID_POOL";
+            pLabel = "Extra ID Pool";
+          } else if ((rep.currentMaxRank || 1) >= 18) {
+            if (inf.rank <= 3 && inf.rank < stats.window5Start) {
+              pType = "AUTO_ID_POOL";
+              pLabel = "Auto ID Pool";
+            } else {
+              pType = "EXTRA_ID_POOL";
+              pLabel = "Extra ID Pool";
+            }
           } else {
-            extraPoolBal = Number((extraPoolBal + inf.amountUsdt).toFixed(2));
+            if (inf.rank >= stats.window5Start && inf.rank <= stats.window5End) {
+              pType = "UPGRADE_POOL";
+              pLabel = "Upgrade Pool";
+            } else if (inf.rank <= 3 && inf.rank < stats.window5Start) {
+              pType = "AUTO_ID_POOL";
+              pLabel = "Auto ID Pool";
+            } else {
+              pType = "EXTRA_ID_POOL";
+              pLabel = "Extra ID Pool";
+            }
           }
           ledgerEvents.push({
             id: `v-in-${rep.id}-${ledgerEvents.length + 1}`,
@@ -4337,84 +6041,35 @@ async function startApp() {
             poolLabelTh: pLabel,
             descriptionTh: `\u0E23\u0E31\u0E1A 35% Vault (+${inf.amountUsdt.toFixed(2)} USDT) \u0E08\u0E32\u0E01\u0E40\u0E21\u0E47\u0E14\u0E0B\u0E49\u0E32\u0E22\u0E43\u0E19 Rank ${inf.rank} \u0E2A\u0E30\u0E2A\u0E21\u0E40\u0E02\u0E49\u0E32 ${pLabel}`,
             note: inf.note,
-            poolBalanceAfterUsdt: pType === "AUTO_ID_POOL" ? autoPoolBal : extraPoolBal,
+            poolBalanceAfterUsdt: 0,
             balanceAfterUsdt: 0
           });
-          while (autoIdx < sortedAutoSpawned.length && autoPoolBal >= 5) {
-            const sp = sortedAutoSpawned[autoIdx];
-            autoPoolBal = Number((autoPoolBal - 5).toFixed(2));
-            autoIdx++;
-            const spTime = new Date(tMs + autoIdx * 1e3).toISOString();
-            ledgerEvents.push({
-              id: `v-out-auto-${rep.id}-${sp.id}`,
-              timestamp: spTime,
-              direction: "OUT",
-              actionType: "SPAWN_AUTO_ID",
-              actionLabelTh: "\u0E2B\u0E31\u0E01\u0E2A\u0E23\u0E49\u0E32\u0E07 Auto ID",
-              rank: 1,
-              amountUsdt: 5,
-              poolType: "AUTO_ID_POOL",
-              poolLabelTh: "Auto ID Pool",
-              descriptionTh: `\u0E2B\u0E31\u0E01 5.00 USDT \u0E08\u0E32\u0E01 Auto ID Pool \u0E2A\u0E23\u0E49\u0E32\u0E07 ${sp.label} \u0E27\u0E32\u0E07\u0E1C\u0E31\u0E07 Rank 1 \u0E43\u0E15\u0E49 R1-#${sp.parentId} (${sp.side})`,
-              note: `\u0E2A\u0E23\u0E49\u0E32\u0E07 Auto ID \u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08 (ID #${sp.id})`,
-              poolBalanceAfterUsdt: autoPoolBal,
-              balanceAfterUsdt: 0
-            });
-          }
-          while (extraIdx < sortedExtraSpawned.length) {
-            const sp = sortedExtraSpawned[extraIdx];
-            const cost = RANK_PRICES_USDT[sp.rank - 1] || 10;
-            if (extraPoolBal < cost) break;
-            extraPoolBal = Number((extraPoolBal - cost).toFixed(2));
-            extraIdx++;
-            const spTime = new Date(tMs + extraIdx * 1e3).toISOString();
-            ledgerEvents.push({
-              id: `v-out-extra-${rep.id}-${sp.rank}-${sp.id}`,
-              timestamp: spTime,
-              direction: "OUT",
-              actionType: "SPAWN_EXTRA_ID",
-              actionLabelTh: `\u0E2B\u0E31\u0E01\u0E2A\u0E23\u0E49\u0E32\u0E07 Extra ID (${sp.label})`,
-              rank: sp.rank,
-              amountUsdt: cost,
-              poolType: "EXTRA_ID_POOL",
-              poolLabelTh: "Extra ID Pool",
-              descriptionTh: `\u0E2B\u0E31\u0E01 ${cost.toFixed(2)} USDT \u0E08\u0E32\u0E01 Extra ID Pool \u0E2A\u0E23\u0E49\u0E32\u0E07 ${sp.label} \u0E43\u0E19\u0E1C\u0E31\u0E07 Rank ${sp.rank} \u0E43\u0E15\u0E49 R${sp.rank}-#${sp.parentId} (${sp.side})`,
-              note: `\u0E2A\u0E23\u0E49\u0E32\u0E07 Extra ID \u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08 (ID #${sp.id})`,
-              poolBalanceAfterUsdt: extraPoolBal,
-              balanceAfterUsdt: 0
-            });
-          }
         }
-        while (autoIdx < sortedAutoSpawned.length) {
-          const sp = sortedAutoSpawned[autoIdx];
-          autoIdx++;
-          const lastTime = ledgerEvents.length > 0 ? new Date(ledgerEvents[ledgerEvents.length - 1].timestamp).getTime() + 1e3 : Date.now();
-          autoPoolBal = Number(Math.max(0, autoPoolBal - 5).toFixed(2));
+        sortedAutoSpawned.forEach((sp, idx) => {
+          const spTime = sp.timestamp || new Date(Date.now() - (idx + 1) * 6e4).toISOString();
+          const autoIdCost = RANK_PRICES_USDT[0] || 5;
           ledgerEvents.push({
             id: `v-out-auto-${rep.id}-${sp.id}`,
-            timestamp: new Date(lastTime).toISOString(),
+            timestamp: spTime,
             direction: "OUT",
             actionType: "SPAWN_AUTO_ID",
             actionLabelTh: "\u0E2B\u0E31\u0E01\u0E2A\u0E23\u0E49\u0E32\u0E07 Auto ID",
             rank: 1,
-            amountUsdt: 5,
+            amountUsdt: autoIdCost,
             poolType: "AUTO_ID_POOL",
             poolLabelTh: "Auto ID Pool",
-            descriptionTh: `\u0E2B\u0E31\u0E01 5.00 USDT \u0E08\u0E32\u0E01 Auto ID Pool \u0E2A\u0E23\u0E49\u0E32\u0E07 ${sp.label} \u0E27\u0E32\u0E07\u0E1C\u0E31\u0E07 Rank 1`,
+            descriptionTh: `\u0E2B\u0E31\u0E01 ${autoIdCost.toFixed(2)} USDT \u0E08\u0E32\u0E01 Auto ID Pool \u0E2A\u0E23\u0E49\u0E32\u0E07 ${sp.label} \u0E27\u0E32\u0E07\u0E1C\u0E31\u0E07 Rank 1`,
             note: `\u0E2A\u0E23\u0E49\u0E32\u0E07 Auto ID \u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08 (ID #${sp.id})`,
-            poolBalanceAfterUsdt: autoPoolBal,
+            poolBalanceAfterUsdt: 0,
             balanceAfterUsdt: 0
           });
-        }
-        while (extraIdx < sortedExtraSpawned.length) {
-          const sp = sortedExtraSpawned[extraIdx];
+        });
+        sortedExtraSpawned.forEach((sp, idx) => {
           const cost = RANK_PRICES_USDT[sp.rank - 1] || 10;
-          extraIdx++;
-          const lastTime = ledgerEvents.length > 0 ? new Date(ledgerEvents[ledgerEvents.length - 1].timestamp).getTime() + 1e3 : Date.now();
-          extraPoolBal = Number(Math.max(0, extraPoolBal - cost).toFixed(2));
+          const spTime = sp.timestamp || new Date(Date.now() - (idx + 1) * 5e4).toISOString();
           ledgerEvents.push({
             id: `v-out-extra-${rep.id}-${sp.rank}-${sp.id}`,
-            timestamp: new Date(lastTime).toISOString(),
+            timestamp: spTime,
             direction: "OUT",
             actionType: "SPAWN_EXTRA_ID",
             actionLabelTh: `\u0E2B\u0E31\u0E01\u0E2A\u0E23\u0E49\u0E32\u0E07 Extra ID (${sp.label})`,
@@ -4424,28 +6079,55 @@ async function startApp() {
             poolLabelTh: "Extra ID Pool",
             descriptionTh: `\u0E2B\u0E31\u0E01 ${cost.toFixed(2)} USDT \u0E08\u0E32\u0E01 Extra ID Pool \u0E2A\u0E23\u0E49\u0E32\u0E07 ${sp.label} \u0E43\u0E19\u0E1C\u0E31\u0E07 Rank ${sp.rank}`,
             note: `\u0E2A\u0E23\u0E49\u0E32\u0E07 Extra ID \u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08 (ID #${sp.id})`,
-            poolBalanceAfterUsdt: extraPoolBal,
-            balanceAfterUsdt: 0
-          });
-        }
-        for (const u of idUpgrades) {
-          const uCost = Number(u.vaultDeductedUsdt) || 0;
-          if (uCost <= 0) continue;
-          ledgerEvents.push({
-            id: `v-out-up-${rep.id}-${u.toRank}`,
-            timestamp: u.createdAt || (/* @__PURE__ */ new Date()).toISOString(),
-            direction: "OUT",
-            actionType: "AUTO_UPGRADE",
-            actionLabelTh: `\u0E2B\u0E31\u0E01\u0E2D\u0E2D\u0E42\u0E15\u0E49\u0E2D\u0E31\u0E1B\u0E40\u0E01\u0E23\u0E14 (\u0E2A\u0E39\u0E48 Rank ${u.toRank})`,
-            rank: u.toRank,
-            amountUsdt: uCost,
-            poolType: "UPGRADE_POOL",
-            poolLabelTh: "Upgrade Pool",
-            descriptionTh: `\u0E2B\u0E31\u0E01 ${uCost.toFixed(2)} USDT \u0E08\u0E32\u0E01 Upgrade Pool \u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E2D\u0E31\u0E1B\u0E40\u0E01\u0E23\u0E14 Main #${rep.id} \u0E08\u0E32\u0E01 Rank ${u.fromRank} \u0E2A\u0E39\u0E48 Rank ${u.toRank}`,
-            note: `\u0E2D\u0E31\u0E1B\u0E40\u0E01\u0E23\u0E14\u0E2A\u0E39\u0E48 Rank ${u.toRank} \u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08`,
             poolBalanceAfterUsdt: 0,
             balanceAfterUsdt: 0
           });
+        });
+        if (upDeduct > 0) {
+          const userRankNodes = (rep.rankNodesList || []).filter((rn) => !rn.isClone && !rn.isExtraId && rn.rank >= 2).sort((a, b) => a.rank - b.rank);
+          let remUpToAllocate = upDeduct;
+          for (let i = 0; i < userRankNodes.length && remUpToAllocate > 0; i++) {
+            const rn = userRankNodes[i];
+            const prevR = rn.rank - 1;
+            const rPrice = RANK_PRICES_USDT[rn.rank - 1] || 10;
+            const maxForThis = Math.min(rPrice, remUpToAllocate);
+            const amtToDeduct = Number(maxForThis.toFixed(2));
+            remUpToAllocate = Number((remUpToAllocate - amtToDeduct).toFixed(2));
+            const origNode = (matrixDB.nodesByRank[rn.rank] || []).find((n) => n.id === rn.nodeId);
+            const uTime = origNode?.createdAt || (sortedInflows[0]?.timestamp ? new Date(new Date(sortedInflows[0].timestamp).getTime() + (i + 1) * 1e3).toISOString() : (/* @__PURE__ */ new Date()).toISOString());
+            ledgerEvents.push({
+              id: `v-out-up-${rep.id}-${rn.rank}`,
+              timestamp: uTime,
+              direction: "OUT",
+              actionType: "AUTO_UPGRADE",
+              actionLabelTh: `\u0E2B\u0E31\u0E01\u0E2D\u0E31\u0E1B\u0E40\u0E01\u0E23\u0E14 (\u0E2A\u0E39\u0E48 Rank ${rn.rank})`,
+              rank: rn.rank,
+              amountUsdt: amtToDeduct,
+              poolType: "UPGRADE_POOL",
+              poolLabelTh: "Upgrade Pool",
+              descriptionTh: `\u0E2B\u0E31\u0E01 ${amtToDeduct.toFixed(2)} USDT \u0E08\u0E32\u0E01 Upgrade Pool \u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E2D\u0E31\u0E1B\u0E40\u0E01\u0E23\u0E14 Main #${rep.id} \u0E08\u0E32\u0E01 Rank ${prevR} \u0E2A\u0E39\u0E48 Rank ${rn.rank}`,
+              note: `\u0E2D\u0E31\u0E1B\u0E40\u0E01\u0E23\u0E14\u0E2A\u0E39\u0E48 Rank ${rn.rank} \u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08`,
+              poolBalanceAfterUsdt: 0,
+              balanceAfterUsdt: 0
+            });
+          }
+          if (remUpToAllocate > 0) {
+            ledgerEvents.push({
+              id: `v-out-up-${rep.id}-rem`,
+              timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+              direction: "OUT",
+              actionType: "AUTO_UPGRADE",
+              actionLabelTh: "\u0E2B\u0E31\u0E01\u0E2D\u0E31\u0E1B\u0E40\u0E01\u0E23\u0E14\u0E2A\u0E30\u0E2A\u0E21",
+              rank: rep.currentMaxRank || 2,
+              amountUsdt: remUpToAllocate,
+              poolType: "UPGRADE_POOL",
+              poolLabelTh: "Upgrade Pool",
+              descriptionTh: `\u0E2B\u0E31\u0E01 ${remUpToAllocate.toFixed(2)} USDT \u0E08\u0E32\u0E01 Upgrade Pool \u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E2A\u0E30\u0E2A\u0E21\u0E2D\u0E31\u0E1B\u0E40\u0E01\u0E23\u0E14\u0E41\u0E23\u0E07\u0E04\u0E4C`,
+              note: "\u0E2D\u0E31\u0E1B\u0E40\u0E01\u0E23\u0E14\u0E41\u0E23\u0E07\u0E04\u0E4C\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08",
+              poolBalanceAfterUsdt: 0,
+              balanceAfterUsdt: 0
+            });
+          }
         }
         ledgerEvents.sort(
           (a, b) => (new Date(a.timestamp).getTime() || 0) - (new Date(b.timestamp).getTime() || 0)
@@ -4459,17 +6141,6 @@ async function startApp() {
           }
           ev.balanceAfterUsdt = netRunningTotal;
         }
-        const extraDeduct = rep.autoExtraIdsSpawned.reduce(
-          (s, x) => s + (RANK_PRICES_USDT[x.rank - 1] || 10),
-          0
-        );
-        const autoDeduct = rep.autoIdsSpawned.length * 5;
-        const upDeduct = idUpgrades.reduce((s, u) => s + (Number(u.vaultDeductedUsdt) || 0), 0);
-        rep.vaultDeductedBreakdown = {
-          extraIdsTotalUsdt: Number(extraDeduct.toFixed(2)),
-          autoIdsTotalUsdt: Number(autoDeduct.toFixed(2)),
-          upgradesTotalUsdt: Number(upDeduct.toFixed(2))
-        };
         ledgerEvents.sort(
           (a, b) => (new Date(b.timestamp).getTime() || 0) - (new Date(a.timestamp).getTime() || 0)
         );
@@ -4481,47 +6152,47 @@ async function startApp() {
       const ALLSELL_FOUR_POOL_DEFS = [
         {
           poolNumber: 1,
-          key: "pool1_r13",
-          titleTh: "\u0E01\u0E2D\u0E07\u0E17\u0E35\u0E48 1 : r-13 (300 USDT)",
-          targetRank: 13,
-          targetRankPriceUsdt: 300,
-          requiredSelfRank: 13,
+          key: "pool1_r11",
+          titleTh: `\u0E01\u0E2D\u0E07\u0E17\u0E35\u0E48 1 : r-11 (${(RANK_PRICES_USDT[10] || 300).toLocaleString()} USDT)`,
+          targetRank: 11,
+          targetRankPriceUsdt: RANK_PRICES_USDT[10] || 300,
+          requiredSelfRank: 11,
           requiredDirectCount: 5,
-          allowedDirectRanks: [10, 11, 12, 13],
-          allowedDirectRanksLabel: "r-10 \u0E2B\u0E23\u0E37\u0E2D r-11 \u0E2B\u0E23\u0E37\u0E2D r-12 \u0E2B\u0E23\u0E37\u0E2D r-13"
+          allowedDirectRanks: [8, 9, 10, 11],
+          allowedDirectRanksLabel: "r-8 \u0E2B\u0E23\u0E37\u0E2D r-9 \u0E2B\u0E23\u0E37\u0E2D r-10 \u0E2B\u0E23\u0E37\u0E2D r-11"
         },
         {
           poolNumber: 2,
-          key: "pool2_r20",
-          titleTh: "\u0E01\u0E2D\u0E07\u0E17\u0E35\u0E48 2 : r-20 (1,000 USDT)",
-          targetRank: 20,
-          targetRankPriceUsdt: 1e3,
-          requiredSelfRank: 20,
+          key: "pool2_r14",
+          titleTh: `\u0E01\u0E2D\u0E07\u0E17\u0E35\u0E48 2 : r-14 (${(RANK_PRICES_USDT[13] || 800).toLocaleString()} USDT)`,
+          targetRank: 14,
+          targetRankPriceUsdt: RANK_PRICES_USDT[13] || 800,
+          requiredSelfRank: 14,
           requiredDirectCount: 2,
-          allowedDirectRanks: [17, 18, 19, 20],
-          allowedDirectRanksLabel: "r-17 \u0E2B\u0E23\u0E37\u0E2D r-18 \u0E2B\u0E23\u0E37\u0E2D r-19 \u0E2B\u0E23\u0E37\u0E2D r-20"
+          allowedDirectRanks: [12, 13, 14],
+          allowedDirectRanksLabel: "r-12 \u0E2B\u0E23\u0E37\u0E2D r-13 \u0E2B\u0E23\u0E37\u0E2D r-14"
         },
         {
           poolNumber: 3,
-          key: "pool3_r24",
-          titleTh: "\u0E01\u0E2D\u0E07\u0E17\u0E35\u0E48 3 : r-24 (5,000 USDT)",
-          targetRank: 24,
-          targetRankPriceUsdt: 5e3,
-          requiredSelfRank: 24,
+          key: "pool3_r16",
+          titleTh: `\u0E01\u0E2D\u0E07\u0E17\u0E35\u0E48 3 : r-16 (${(RANK_PRICES_USDT[15] || 2e3).toLocaleString()} USDT)`,
+          targetRank: 16,
+          targetRankPriceUsdt: RANK_PRICES_USDT[15] || 2e3,
+          requiredSelfRank: 16,
           requiredDirectCount: 2,
-          allowedDirectRanks: [22, 23, 24],
-          allowedDirectRanksLabel: "r-22 \u0E2B\u0E23\u0E37\u0E2D r-23 \u0E2B\u0E23\u0E37\u0E2D r-24"
+          allowedDirectRanks: [14, 15, 16],
+          allowedDirectRanksLabel: "r-14 \u0E2B\u0E23\u0E37\u0E2D r-15 \u0E2B\u0E23\u0E37\u0E2D r-16"
         },
         {
           poolNumber: 4,
-          key: "pool4_r27",
-          titleTh: "\u0E01\u0E2D\u0E07\u0E17\u0E35\u0E48 4 : r-27 (10,000 USDT)",
-          targetRank: 27,
-          targetRankPriceUsdt: 1e4,
-          requiredSelfRank: 27,
+          key: "pool4_r18",
+          titleTh: `\u0E01\u0E2D\u0E07\u0E17\u0E35\u0E48 4 : r-18 (${(RANK_PRICES_USDT[17] || 5e3).toLocaleString()} USDT)`,
+          targetRank: 18,
+          targetRankPriceUsdt: RANK_PRICES_USDT[17] || 5e3,
+          requiredSelfRank: 18,
           requiredDirectCount: 5,
-          allowedDirectRanks: [25, 26, 27],
-          allowedDirectRanksLabel: "r-25 \u0E2B\u0E23\u0E37\u0E2D r-26 \u0E2B\u0E23\u0E37\u0E2D r-27"
+          allowedDirectRanks: [16, 17, 18],
+          allowedDirectRanksLabel: "r-16 \u0E2B\u0E23\u0E37\u0E2D r-17 \u0E2B\u0E23\u0E37\u0E2D r-18"
         }
       ];
       const poolQualifiedIdsMap = /* @__PURE__ */ new Map();
@@ -4648,6 +6319,11 @@ async function startApp() {
           familyPoolByRank,
           familyPoolHistory,
           botTotalUsdt: Number(botTotalUsdt.toFixed(2)),
+          botByRank,
+          botHistory,
+          botActionLogs: (matrixDB.transactionLogs || []).filter(
+            (t) => t.source === "WS_BOT" || t.actionType === "CLONE_BOT" || t.userAddress && t.userAddress.toLowerCase() === botWalletAddr.toLowerCase()
+          ).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).slice(0, 100),
           onChainBalances: {
             allSellWalletUsdt: onChainAllSellBal,
             familyPoolWalletUsdt: onChainFamilyBal,
@@ -4658,6 +6334,205 @@ async function startApp() {
       });
     } catch (err) {
       res.status(500).json({ success: false, error: err.message });
+    }
+  });
+  app.post("/api/matrix/bot-wallet", (req, res) => {
+    try {
+      const nextWallet = String(req.body?.botWallet || "").trim();
+      if (!ethers.isAddress(nextWallet)) {
+        return res.status(400).json({ success: false, error: "Invalid wallet address format" });
+      }
+      const checksummed = ethers.getAddress(nextWallet);
+      matrixDB.systemWallets.botWallet = checksummed;
+      matrixDB.systemWallets.customBotWallet = checksummed;
+      for (const rl of matrixDB.rewardLogs || []) {
+        if (String(rl.rewardType || "").toUpperCase() === "BOT") {
+          rl.recipient = checksummed;
+        }
+      }
+      saveMatrixDBToDisk();
+      return res.json({
+        success: true,
+        botWallet: checksummed,
+        systemWallets: matrixDB.systemWallets
+      });
+    } catch (err) {
+      return res.status(500).json({ success: false, error: err?.message || "Failed to update bot wallet" });
+    }
+  });
+  app.get("/api/matrix/bot-wallet-history", async (req, res) => {
+    try {
+      res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      const forceSync = req.query.forceSync === "1";
+      if (forceSync || !matrixDB.nodesByRank[1] || matrixDB.nodesByRank[1].length <= 1) {
+        await syncAllMatrixDatabase(CONTRACT_ADDRESS, forceSync);
+      }
+      const provider = getProvider();
+      const contract = new ethers.Contract(
+        CONTRACT_ADDRESS,
+        ["function botWallet() view returns (address)"],
+        provider
+      );
+      const usdtContract = new ethers.Contract(
+        USDT_ADDRESS,
+        [
+          "function balanceOf(address) view returns (uint256)",
+          "event Transfer(address indexed from, address indexed to, uint256 value)"
+        ],
+        provider
+      );
+      let onChainContractBotWallet = matrixDB.systemWallets?.botWallet || DEFAULT_BOT_WALLET;
+      let botWalletAddr = matrixDB.systemWallets?.customBotWallet || matrixDB.systemWallets?.botWallet || DEFAULT_BOT_WALLET;
+      const queryWallet = String(req.query.wallet || "").trim();
+      if (queryWallet && ethers.isAddress(queryWallet)) {
+        botWalletAddr = ethers.getAddress(queryWallet);
+      }
+      try {
+        const onChainBotAddr = await contract.botWallet();
+        if (onChainBotAddr && ethers.isAddress(onChainBotAddr) && onChainBotAddr !== ethers.ZeroAddress) {
+          onChainContractBotWallet = ethers.getAddress(String(onChainBotAddr));
+          if (!queryWallet) {
+            const preferredCustom = matrixDB.systemWallets?.customBotWallet;
+            if (preferredCustom && ethers.isAddress(preferredCustom) && onChainContractBotWallet.toLowerCase() === LEGACY_BOT_WALLET.toLowerCase()) {
+              botWalletAddr = ethers.getAddress(preferredCustom);
+              matrixDB.systemWallets.botWallet = botWalletAddr;
+            } else {
+              botWalletAddr = onChainContractBotWallet;
+              matrixDB.systemWallets.botWallet = botWalletAddr;
+            }
+          }
+        }
+      } catch {
+      }
+      let liveUsdtBalance = "0.00";
+      let liveBnbBalance = "0.0000";
+      const onChainUsdtTransfers = [];
+      try {
+        const [uBn, bBn, latestBlk] = await Promise.all([
+          usdtContract.balanceOf(botWalletAddr).catch(() => 0n),
+          provider.getBalance(botWalletAddr).catch(() => 0n),
+          provider.getBlockNumber().catch(() => 0)
+        ]);
+        const dec = activeUsdtDecimals || 18;
+        liveUsdtBalance = Number(ethers.formatUnits(uBn, dec)).toFixed(2);
+        liveBnbBalance = Number(ethers.formatEther(bBn)).toFixed(4);
+        if (latestBlk > 0) {
+          const fromBlk = Math.max(0, latestBlk - 2e4);
+          const filterIn = usdtContract.filters.Transfer(null, botWalletAddr);
+          const filterOut = usdtContract.filters.Transfer(botWalletAddr, null);
+          const [logsIn, logsOut] = await Promise.all([
+            usdtContract.queryFilter(filterIn, fromBlk, latestBlk).catch(() => []),
+            usdtContract.queryFilter(filterOut, fromBlk, latestBlk).catch(() => [])
+          ]);
+          const seenLogs = /* @__PURE__ */ new Set();
+          const allTransferLogs = [...logsIn, ...logsOut];
+          const uniqueBlocks = Array.from(new Set(allTransferLogs.map((l) => Number(l.blockNumber || 0)).filter(Boolean))).slice(0, 20);
+          const blockTimes = /* @__PURE__ */ new Map();
+          await Promise.all(
+            uniqueBlocks.map(async (bNum) => {
+              try {
+                const blk = await provider.getBlock(bNum);
+                if (blk?.timestamp) {
+                  blockTimes.set(bNum, new Date(Number(blk.timestamp) * 1e3).toISOString());
+                }
+              } catch {
+              }
+            })
+          );
+          for (const ev of allTransferLogs) {
+            const txHash = String(ev.transactionHash || "");
+            const logIdx = Number(ev.index ?? ev.logIndex ?? 0);
+            const dedupKey = `${txHash}:${logIdx}`;
+            if (!txHash || seenLogs.has(dedupKey)) continue;
+            seenLogs.add(dedupKey);
+            const fromAddr = String(ev.args?.[0] || "");
+            const toAddr = String(ev.args?.[1] || "");
+            const rawVal = ev.args?.[2] ?? 0n;
+            const amt = Number(ethers.formatUnits(rawVal, dec));
+            const bNum = Number(ev.blockNumber || 0);
+            onChainUsdtTransfers.push({
+              txHash,
+              blockNumber: bNum,
+              from: fromAddr,
+              to: toAddr,
+              amountUsdt: Number(amt.toFixed(4)),
+              direction: toAddr.toLowerCase() === botWalletAddr.toLowerCase() ? "IN" : "OUT",
+              timestamp: blockTimes.get(bNum) || matrixDB.lastSyncedAt || (/* @__PURE__ */ new Date()).toISOString()
+            });
+          }
+          onChainUsdtTransfers.sort((a, b) => b.blockNumber - a.blockNumber);
+        }
+      } catch {
+      }
+      const autoMainSourceMap = reconcileRank1AutoMainIds();
+      ensurePersistentNodeTimestamps();
+      let botTotalUsdt = 0;
+      const botByRank = {};
+      const botHistory = [];
+      for (let rankNum = 1; rankNum <= 18; rankNum++) {
+        const rNodes = matrixDB.nodesByRank[rankNum] || [];
+        if (rNodes.length <= 1) continue;
+        const unitPrice = RANK_PRICES_USDT[rankNum - 1] || 5;
+        const botAmt = Number((unitPrice * 0.01).toFixed(2));
+        const nodesMap = /* @__PURE__ */ new Map();
+        for (const n of rNodes) nodesMap.set(n.id, n);
+        for (const child of rNodes) {
+          if (child.id <= 1 || child.isAdminFreeUpgrade) continue;
+          const parent = nodesMap.get(child.parentId);
+          if (!parent || parent.leftChild !== child.id) continue;
+          const childCanonMainId = child.originMainId && child.originMainId > 0 ? child.originMainId : child.id;
+          const childTypeLabel = child.isExtraId ? `Extra R${rankNum}-#${child.id}` : child.isClone ? `\u0E42\u0E04\u0E25\u0E19 R${rankNum}-#${child.id} (\u0E02\u0E2D\u0E07 Main #${childCanonMainId})` : autoMainSourceMap.has(childCanonMainId) ? `Auto ID #${childCanonMainId} (R${rankNum}-#${child.id})` : `Main #${childCanonMainId} (R${rankNum}-#${child.id})`;
+          botTotalUsdt = Number((botTotalUsdt + botAmt).toFixed(4));
+          botByRank[rankNum] = Number(((botByRank[rankNum] || 0) + botAmt).toFixed(4));
+          const matchingBotRew = (matrixDB.rewardLogs || []).find(
+            (rw) => String(rw.rewardType || "").toUpperCase() === "BOT" && Number(rw.rank || 1) === rankNum && Number(rw.fromNodeId || 0) === child.id
+          );
+          const matchingNodeTx = !isRealTxHash(matchingBotRew?.txHash) ? (matrixDB.transactionLogs || []).find(
+            (t) => Number(t.rank || 1) === rankNum && (Number(t.nodeId || 0) === child.id || Number(t.mainNodeId || 0) === childCanonMainId) && isRealTxHash(t.txHash)
+          ) : void 0;
+          botHistory.push({
+            rank: rankNum,
+            fromNodeId: child.id,
+            fromMainId: childCanonMainId,
+            fromNodeType: childTypeLabel,
+            parentId: parent.id,
+            amountUsdt: botAmt,
+            recipient: botWalletAddr,
+            note: `1% Bot \u0E08\u0E32\u0E01 ${childTypeLabel} (\u0E27\u0E32\u0E07\u0E40\u0E21\u0E47\u0E14\u0E0B\u0E49\u0E32\u0E22\u0E43\u0E15\u0E49 R${rankNum}-#${parent.id})`,
+            timestamp: matchingBotRew?.createdAt || matchingNodeTx?.timestamp || child.createdAt || matrixDB.lastSyncedAt || (/* @__PURE__ */ new Date()).toISOString(),
+            txHash: isRealTxHash(matchingBotRew?.txHash) ? matchingBotRew?.txHash : matchingNodeTx?.txHash,
+            blockNumber: matchingBotRew?.blockNumber || matchingNodeTx?.blockNumber
+          });
+        }
+      }
+      botHistory.sort((a, b) => {
+        const tA = new Date(a.timestamp).getTime() || 0;
+        const tB = new Date(b.timestamp).getTime() || 0;
+        if (tB !== tA) return tB - tA;
+        return b.rank - a.rank || b.fromNodeId - a.fromNodeId;
+      });
+      const botActionLogs = (matrixDB.transactionLogs || []).filter(
+        (t) => t.source === "WS_BOT" || t.actionType === "CLONE_BOT" || t.userAddress && t.userAddress.toLowerCase() === botWalletAddr.toLowerCase()
+      ).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).slice(0, 100);
+      res.json({
+        success: true,
+        contractAddress: matrixDB.contractAddress,
+        botWallet: botWalletAddr,
+        onChainContractBotWallet,
+        isContractSynced: botWalletAddr.toLowerCase() === onChainContractBotWallet.toLowerCase(),
+        botTotalUsdt: Number(botTotalUsdt.toFixed(2)),
+        onChainUsdtBalance: Number(liveUsdtBalance),
+        onChainBnbBalance: Number(liveBnbBalance),
+        botByRank,
+        count: botHistory.length,
+        botHistory,
+        onChainUsdtTransfers,
+        botActionLogs,
+        lastSyncedAt: matrixDB.lastSyncedAt
+      });
+    } catch (err) {
+      console.error("[API /api/matrix/bot-wallet-history error]", err);
+      res.status(500).json({ success: false, error: err?.message || "Database error" });
     }
   });
   const ALLSELL_PAYOUT_FILE_PATH = path.resolve(__dirname, "prisma/allsell-payouts.json");
@@ -4786,7 +6661,7 @@ async function startApp() {
     const r1Nodes = matrixDB.nodesByRank[1] || [];
     const eligibleMains = r1Nodes.filter((n) => !n.isClone && !n.isExtraId);
     let allSellTotalUsdt = 0;
-    for (let rankNum = 1; rankNum <= 27; rankNum++) {
+    for (let rankNum = 1; rankNum <= 18; rankNum++) {
       const rNodes = matrixDB.nodesByRank[rankNum] || [];
       if (rNodes.length <= 1) continue;
       const unitPrice = RANK_PRICES_USDT[rankNum - 1] || 5;
@@ -4794,7 +6669,7 @@ async function startApp() {
       const nodesMap = /* @__PURE__ */ new Map();
       for (const n of rNodes) nodesMap.set(n.id, n);
       for (const n of rNodes) {
-        if (n.id <= 1) continue;
+        if (n.id <= 1 || n.isAdminFreeUpgrade) continue;
         const p = nodesMap.get(n.parentId);
         if (p && p.leftChild === n.id) {
           allSellTotalUsdt = Number((allSellTotalUsdt + allSellAmt).toFixed(4));
@@ -4813,31 +6688,31 @@ async function startApp() {
     const poolDefs = [
       {
         poolNumber: 1,
-        titleTh: "\u0E01\u0E2D\u0E07\u0E17\u0E35\u0E48 1 : r-13 (300 USDT)",
-        requiredSelfRank: 13,
+        titleTh: `\u0E01\u0E2D\u0E07\u0E17\u0E35\u0E48 1 : r-11 (${(RANK_PRICES_USDT[10] || 300).toLocaleString()} USDT)`,
+        requiredSelfRank: 11,
         requiredDirectCount: 5,
-        allowedDirectRanks: [10, 11, 12, 13]
+        allowedDirectRanks: [8, 9, 10, 11]
       },
       {
         poolNumber: 2,
-        titleTh: "\u0E01\u0E2D\u0E07\u0E17\u0E35\u0E48 2 : r-20 (1,000 USDT)",
-        requiredSelfRank: 20,
+        titleTh: `\u0E01\u0E2D\u0E07\u0E17\u0E35\u0E48 2 : r-14 (${(RANK_PRICES_USDT[13] || 800).toLocaleString()} USDT)`,
+        requiredSelfRank: 14,
         requiredDirectCount: 2,
-        allowedDirectRanks: [17, 18, 19, 20]
+        allowedDirectRanks: [12, 13, 14]
       },
       {
         poolNumber: 3,
-        titleTh: "\u0E01\u0E2D\u0E07\u0E17\u0E35\u0E48 3 : r-24 (5,000 USDT)",
-        requiredSelfRank: 24,
+        titleTh: `\u0E01\u0E2D\u0E07\u0E17\u0E35\u0E48 3 : r-16 (${(RANK_PRICES_USDT[15] || 2e3).toLocaleString()} USDT)`,
+        requiredSelfRank: 16,
         requiredDirectCount: 2,
-        allowedDirectRanks: [22, 23, 24]
+        allowedDirectRanks: [14, 15, 16]
       },
       {
         poolNumber: 4,
-        titleTh: "\u0E01\u0E2D\u0E07\u0E17\u0E35\u0E48 4 : r-27 (10,000 USDT)",
-        requiredSelfRank: 27,
+        titleTh: `\u0E01\u0E2D\u0E07\u0E17\u0E35\u0E48 4 : r-18 (${(RANK_PRICES_USDT[17] || 5e3).toLocaleString()} USDT)`,
+        requiredSelfRank: 18,
         requiredDirectCount: 5,
-        allowedDirectRanks: [25, 26, 27]
+        allowedDirectRanks: [16, 17, 18]
       }
     ];
     const mainMaxRankMap = /* @__PURE__ */ new Map();
@@ -4846,7 +6721,7 @@ async function startApp() {
       const stats = computeMainIdDatabaseStats(m.id);
       mainMaxRankMap.set(m.id, stats.currentRank);
       const rSet = /* @__PURE__ */ new Set([1]);
-      for (let r = 2; r <= 27; r++) {
+      for (let r = 2; r <= 18; r++) {
         const rList = matrixDB.nodesByRank[r] || [];
         if (rList.some((x) => !x.isClone && !x.isExtraId && x.originMainId === m.id)) {
           rSet.add(r);
@@ -4857,7 +6732,7 @@ async function startApp() {
     const transfers = [];
     let totalDistributedUsdt = 0;
     let carriedOverUsdt = 0;
-    const rawPk = (customPrivateKey || process.env.ALLSELL_WALLET_PRIVATE_KEY || process.env.ADMIN_PRIVATE_KEY || "0xc9c4649effa5eaaab8dc0690b4e392aec7cf84ee49e2251a1800fe89ad3270ca").trim();
+    const rawPk = (customPrivateKey || process.env.ALLSELL_WALLET_PRIVATE_KEY || process.env.ADMIN_PRIVATE_KEY || "").trim();
     let signerWallet = null;
     let usdtWriteContract = null;
     let signerUsdtBal = 0;
@@ -4914,6 +6789,17 @@ async function startApp() {
             txHash = receipt?.hash || tx.hash;
             mode = "ONCHAIN_TRANSFER";
             signerUsdtBal = Math.max(0, signerUsdtBal - sharePerId);
+            recordRealTransactionLog({
+              txHash,
+              actionType: "ALLSELL_PAYOUT",
+              title: `\u0E42\u0E2D\u0E19\u0E08\u0E48\u0E32\u0E22 AllSell ${pDef.titleTh} -> Main #${qMain.id}`,
+              userAddress: qMain.owner,
+              mainNodeId: qMain.id,
+              amountUsdt: sharePerId,
+              blockNumber: receipt?.blockNumber,
+              source: "ALLSELL_PAYOUT",
+              details: `Cycle: ${cycleLabelTh}`
+            });
           } catch {
           }
         }
@@ -5015,10 +6901,167 @@ async function startApp() {
       res.status(500).json({ success: false, error: err.message });
     }
   });
+  app.post("/api/matrix/register", async (req, res) => {
+    try {
+      const { owner, sponsorNodeId, targetParentId, isLeft, count } = req.body;
+      const rawOwner = String(owner || "").trim();
+      const checksumOwner = rawOwner && ethers.isAddress(rawOwner) ? ethers.getAddress(rawOwner) : matrixDB.systemWallets.rootOwner;
+      const sponsorIdNum = Math.max(1, Number(sponsorNodeId) || 1);
+      const countNum = Math.min(Math.max(1, Number(count) || 1), 20);
+      if (!matrixDB.nodesByRank[1]) {
+        matrixDB.nodesByRank[1] = [];
+      }
+      const r1List = matrixDB.nodesByRank[1].filter((n) => !n.isSyntheticExtra);
+      matrixDB.nodesByRank[1] = r1List;
+      const sponsorNode = r1List.find((n) => n.id === sponsorIdNum) || r1List[0];
+      const sponsorAddr = sponsorNode?.owner || matrixDB.systemWallets.rootOwner;
+      const sponsorMainId = sponsorNode && !sponsorNode.isClone && !sponsorNode.isExtraId ? sponsorNode.id : sponsorNode?.originMainId && sponsorNode.originMainId > 0 ? sponsorNode.originMainId : 1;
+      const rankPrice = RANK_PRICES_USDT[0] || 5;
+      const assignedNodeIds = [];
+      const placements = [];
+      for (let i = 0; i < countNum; i++) {
+        let parentIdNum = 0;
+        let placeLeft = true;
+        if (i === 0 && targetParentId && Number(targetParentId) > 0) {
+          const requestedParent = r1List.find((n) => n.id === Number(targetParentId));
+          if (requestedParent) {
+            const wantLeft = isLeft !== void 0 ? Boolean(isLeft) : true;
+            if (wantLeft && requestedParent.leftChild === 0) {
+              parentIdNum = requestedParent.id;
+              placeLeft = true;
+            } else if (!wantLeft && requestedParent.rightChild === 0) {
+              parentIdNum = requestedParent.id;
+              placeLeft = false;
+            } else if (requestedParent.leftChild === 0) {
+              parentIdNum = requestedParent.id;
+              placeLeft = true;
+            } else if (requestedParent.rightChild === 0) {
+              parentIdNum = requestedParent.id;
+              placeLeft = false;
+            }
+          }
+        }
+        if (parentIdNum <= 0) {
+          const autoPlacement = findExtraIdPlacementInRankNodes(r1List, sponsorNode ? sponsorNode.id : 1);
+          parentIdNum = Number(autoPlacement.parentId) || 1;
+          placeLeft = Boolean(autoPlacement.isLeft);
+        }
+        const nextIdInRank = r1List.reduce((m, n) => Math.max(m, n.id), 0) + 1;
+        const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+        const newNode = {
+          id: nextIdInRank,
+          rank: 1,
+          owner: checksumOwner,
+          directSponsor: sponsorAddr,
+          parentId: parentIdNum,
+          leftChild: 0,
+          rightChild: 0,
+          isClone: false,
+          isExtraId: false,
+          originMainId: nextIdInRank,
+          cloneRound: 0,
+          directSponsorNodeId: sponsorMainId,
+          nodeVault: 0,
+          rawNodeVault: 0,
+          reconciledBaseVault: 0,
+          isLocalUpgrade: true,
+          createdAt: nowIso
+        };
+        r1List.push(newNode);
+        assignedNodeIds.push(nextIdInRank);
+        placements.push({
+          nodeId: nextIdInRank,
+          parentId: parentIdNum,
+          isLeft: placeLeft,
+          side: placeLeft ? "LEFT" : "RIGHT",
+          owner: checksumOwner
+        });
+        const parentNode = r1List.find((n) => n.id === parentIdNum);
+        const rightSlotTriggerQueue = [];
+        if (parentNode) {
+          if (placeLeft) {
+            parentNode.leftChild = nextIdInRank;
+            const pMainId = parentNode.originMainId && parentNode.originMainId > 0 ? parentNode.originMainId : parentNode.id;
+            const pMainNode = r1List.find((n) => n.id === pMainId) || parentNode;
+            const vaultAdd = Number((rankPrice * 0.35).toFixed(4));
+            pMainNode.nodeVault = Number(((pMainNode.nodeVault || 0) + vaultAdd).toFixed(4));
+            pMainNode.rawNodeVault = Number(((pMainNode.rawNodeVault || 0) + vaultAdd).toFixed(4));
+            pMainNode.reconciledBaseVault = pMainNode.nodeVault;
+          } else {
+            parentNode.rightChild = nextIdInRank;
+            rightSlotTriggerQueue.push(parentNode);
+          }
+        }
+        let cloneSafety = 0;
+        while (rightSlotTriggerQueue.length > 0 && cloneSafety < 25) {
+          cloneSafety++;
+          const triggerParent = rightSlotTriggerQueue.shift();
+          const clonePlacement = findClonePlacementInRankNodes(r1List, triggerParent);
+          const nextCloneId = r1List.reduce((m, n) => Math.max(m, n.id), 0) + 1;
+          const originNode = r1List.find((n) => n.id === clonePlacement.cloneOriginMainId) || triggerParent;
+          const newCloneNode = {
+            id: nextCloneId,
+            rank: 1,
+            owner: triggerParent.owner,
+            directSponsor: originNode.directSponsor || triggerParent.directSponsor || triggerParent.owner,
+            parentId: clonePlacement.parentId,
+            leftChild: 0,
+            rightChild: 0,
+            isClone: true,
+            isExtraId: false,
+            originMainId: clonePlacement.cloneOriginMainId,
+            cloneRound: clonePlacement.cloneRound,
+            directSponsorNodeId: clonePlacement.targetSponsorNodeId,
+            nodeVault: 0,
+            rawNodeVault: 0,
+            reconciledBaseVault: 0,
+            isLocalUpgrade: true,
+            createdAt: (/* @__PURE__ */ new Date()).toISOString()
+          };
+          r1List.push(newCloneNode);
+          const cloneParent = r1List.find((n) => n.id === clonePlacement.parentId);
+          if (cloneParent) {
+            if (clonePlacement.isLeft) {
+              cloneParent.leftChild = nextCloneId;
+              const cpMainId = cloneParent.originMainId && cloneParent.originMainId > 0 ? cloneParent.originMainId : cloneParent.id;
+              const cpMainNode = r1List.find((n) => n.id === cpMainId) || cloneParent;
+              const vaultAdd = Number((rankPrice * 0.35).toFixed(4));
+              cpMainNode.nodeVault = Number(((cpMainNode.nodeVault || 0) + vaultAdd).toFixed(4));
+              cpMainNode.rawNodeVault = Number(((cpMainNode.rawNodeVault || 0) + vaultAdd).toFixed(4));
+              cpMainNode.reconciledBaseVault = cpMainNode.nodeVault;
+            } else {
+              cloneParent.rightChild = nextCloneId;
+              rightSlotTriggerQueue.push(cloneParent);
+            }
+          }
+        }
+      }
+      matrixDB.nodesByRank[1] = reconcileRankTreeLinks(r1List);
+      matrixDB.rankCounts[1] = matrixDB.nodesByRank[1].length;
+      reconcileAutoExtraIdsAcrossRanks();
+      rebuildDatabaseRewardLogsFromNodes();
+      rebuildDatabaseUpgradeLogsFromNodes();
+      saveMatrixDBToDisk(true);
+      const txHash = `0xreg${Date.now().toString(16)}`;
+      res.json({
+        success: true,
+        source: "DATABASE_SIMULATION",
+        owner: checksumOwner,
+        sponsorNodeId: sponsorIdNum,
+        count: countNum,
+        assignedNodeIds,
+        placements,
+        txHash,
+        message: `\u{1F389} \u0E2A\u0E21\u0E31\u0E04\u0E23\u0E2A\u0E21\u0E32\u0E0A\u0E34\u0E01\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08! \u0E2A\u0E23\u0E49\u0E32\u0E07\u0E23\u0E2B\u0E31\u0E2A\u0E2A\u0E21\u0E32\u0E0A\u0E34\u0E01 ${assignedNodeIds.map((id) => `#${id}`).join(", ")} \u0E43\u0E2B\u0E49\u0E01\u0E23\u0E30\u0E40\u0E1B\u0E4B\u0E32 ${checksumOwner.slice(0, 6)}...${checksumOwner.slice(-4)} \u0E40\u0E23\u0E35\u0E22\u0E1A\u0E23\u0E49\u0E2D\u0E22\u0E41\u0E25\u0E49\u0E27`
+      });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err?.message || "\u0E01\u0E32\u0E23\u0E2A\u0E21\u0E31\u0E04\u0E23\u0E2A\u0E21\u0E32\u0E0A\u0E34\u0E01\u0E25\u0E49\u0E21\u0E40\u0E2B\u0E25\u0E27" });
+    }
+  });
   app.post("/api/matrix/upgrade", async (req, res) => {
     try {
       const { targetRank, mainId, owner } = req.body;
-      const rankNum = Math.min(Math.max(Number(targetRank) || 2, 2), 27);
+      const rankNum = Math.min(Math.max(Number(targetRank) || 2, 2), 18);
       const mainIdNum = Math.max(1, Number(mainId) || 1);
       const r1Nodes = matrixDB.nodesByRank[1] || [];
       const mainNodeR1 = r1Nodes.find((n) => n.id === mainIdNum && !n.isClone && !n.isExtraId);
@@ -5031,9 +7074,9 @@ async function startApp() {
       const ownerAddr = (mainNodeR1.owner || owner || matrixDB.systemWallets.rootOwner).toLowerCase();
       const sponsorAddr = mainNodeR1.directSponsor || matrixDB.systemWallets.rootOwner;
       const r1SponsorMainId = mainNodeR1.directSponsorNodeId > 0 ? mainNodeR1.directSponsorNodeId : 1;
-      let currentRank = mainIdNum === 1 ? 27 : 1;
+      let currentRank = mainIdNum === 1 ? 18 : 1;
       if (mainIdNum !== 1) {
-        for (let r = 27; r >= 2; r--) {
+        for (let r = 18; r >= 2; r--) {
           const list = (matrixDB.nodesByRank[r] || []).filter((n) => !n.isSyntheticExtra);
           if (list.some((n) => !n.isClone && !n.isExtraId && n.originMainId === mainIdNum)) {
             currentRank = r;
@@ -5073,7 +7116,7 @@ async function startApp() {
             windowVaultAvail = Number((windowVaultAvail + Number(wrNode.nodeVault || 0)).toFixed(4));
           }
         }
-        let remDeduct = windowVaultAvail + 1e-6 >= rankPrice ? rankPrice : 0;
+        let remDeduct = Math.min(windowVaultAvail, rankPrice);
         let totalVaultDeducted = 0;
         for (let wr = winStart; wr <= prevRank; wr++) {
           if (remDeduct <= 1e-6) break;
@@ -5207,9 +7250,9 @@ async function startApp() {
     if (!node) {
       return res.json({ success: true, found: false });
     }
-    let currentRank = node.id === 1 ? 27 : 1;
+    let currentRank = node.id === 1 ? 18 : 1;
     if (node.id !== 1) {
-      for (let r = 27; r >= 2; r--) {
+      for (let r = 18; r >= 2; r--) {
         const list = matrixDB.nodesByRank[r] || [];
         if (list.some((n) => !n.isClone && !n.isExtraId && n.originMainId === node.id)) {
           currentRank = r;
@@ -5230,11 +7273,24 @@ async function startApp() {
   app.post("/api/admin/upgrade-rank", async (req, res) => {
     try {
       const { targetUser, targetRank, targetMainId, mainId } = req.body;
-      const rawInput = String(targetMainId || mainId || targetUser || "").trim().replace(/^#/, "");
+      const rawInput = String(targetMainId || mainId || targetUser || "").trim().replace(/^(id\s*|#)+/i, "").trim();
       if (!rawInput) {
-        return res.status(400).json({ success: false, error: "\u0E01\u0E23\u0E38\u0E13\u0E32\u0E01\u0E23\u0E2D\u0E01\u0E40\u0E25\u0E02 ID \u0E2B\u0E25\u0E31\u0E01 (\u0E40\u0E0A\u0E48\u0E19 5 \u0E2B\u0E23\u0E37\u0E2D #5) \u0E2B\u0E23\u0E37\u0E2D Wallet Address" });
+        return res.status(400).json({
+          success: false,
+          error: "\u0E01\u0E23\u0E38\u0E13\u0E32\u0E01\u0E23\u0E2D\u0E01\u0E40\u0E25\u0E02 ID \u0E2B\u0E25\u0E31\u0E01 (\u0E40\u0E0A\u0E48\u0E19 5 \u0E2B\u0E23\u0E37\u0E2D #5) \u0E2B\u0E23\u0E37\u0E2D Wallet Address"
+        });
       }
-      const parsedRank = Math.min(27, Math.max(2, Number(targetRank) || 2));
+      const parsedRank = Math.min(18, Math.max(2, Number(targetRank) || 2));
+      const onChainConfirmed = Boolean(req.body?.onChainConfirmed);
+      const clientTxHash = String(req.body?.txHash || "").trim();
+      if (!matrixDB.nodesByRank[1] || matrixDB.nodesByRank[1].length <= 1 || onChainConfirmed) {
+        await syncRankIntoDatabase(1, CONTRACT_ADDRESS, onChainConfirmed).catch(() => {
+        });
+      }
+      for (let r = 2; r <= parsedRank; r++) {
+        await syncRankIntoDatabase(r, CONTRACT_ADDRESS, true).catch(() => {
+        });
+      }
       const r1Nodes = matrixDB.nodesByRank[1] || [];
       let userR1Node;
       let normalizedUser = "";
@@ -5242,21 +7298,221 @@ async function startApp() {
         const idNum = parseInt(rawInput, 10);
         userR1Node = r1Nodes.find((n) => n.id === idNum && !n.isClone && !n.isExtraId);
         if (!userR1Node) {
-          return res.status(404).json({ success: false, error: `\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E23\u0E2B\u0E31\u0E2A\u0E2B\u0E25\u0E31\u0E01 ID #${idNum} \u0E43\u0E19\u0E23\u0E30\u0E1A\u0E1A Rank 1` });
+          userR1Node = r1Nodes.find((n) => n.id === idNum);
+        }
+        if (!userR1Node) {
+          return res.status(404).json({
+            success: false,
+            error: `\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E23\u0E2B\u0E31\u0E2A\u0E2A\u0E21\u0E32\u0E0A\u0E34\u0E01 ID #${idNum} \u0E43\u0E19\u0E23\u0E30\u0E1A\u0E1A Rank 1`
+          });
+        }
+        if (userR1Node.isClone && userR1Node.originMainId > 0) {
+          const origMain = r1Nodes.find((n) => n.id === userR1Node.originMainId && !n.isClone);
+          if (origMain) userR1Node = origMain;
         }
         normalizedUser = userR1Node.owner.toLowerCase();
       } else if (ethers.isAddress(rawInput)) {
         normalizedUser = rawInput.toLowerCase();
-        userR1Node = r1Nodes.find((n) => n.owner.toLowerCase() === normalizedUser && !n.isClone && !n.isExtraId);
+        const ownedMains = r1Nodes.filter(
+          (n) => n.owner.toLowerCase() === normalizedUser && !n.isClone && !n.isExtraId
+        );
+        userR1Node = ownedMains[0] || r1Nodes.find((n) => n.owner.toLowerCase() === normalizedUser);
+        if (!userR1Node) {
+          return res.status(404).json({
+            success: false,
+            error: `\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E23\u0E2B\u0E31\u0E2A\u0E2A\u0E21\u0E32\u0E0A\u0E34\u0E01\u0E02\u0E2D\u0E07\u0E01\u0E23\u0E30\u0E40\u0E1B\u0E4B\u0E32 ${rawInput} \u0E43\u0E19\u0E23\u0E30\u0E1A\u0E1A Rank 1 (\u0E01\u0E23\u0E38\u0E13\u0E32\u0E2A\u0E21\u0E31\u0E04\u0E23 Rank 1 \u0E01\u0E48\u0E2D\u0E19\u0E2D\u0E31\u0E1E Rank)`
+          });
+        }
       } else {
-        return res.status(400).json({ success: false, error: "\u0E01\u0E23\u0E38\u0E13\u0E32\u0E23\u0E30\u0E1A\u0E38\u0E40\u0E25\u0E02 ID \u0E2B\u0E25\u0E31\u0E01 (\u0E40\u0E0A\u0E48\u0E19 5 \u0E2B\u0E23\u0E37\u0E2D #5) \u0E2B\u0E23\u0E37\u0E2D Wallet Address \u0E17\u0E35\u0E48\u0E16\u0E39\u0E01\u0E15\u0E49\u0E2D\u0E07" });
+        return res.status(400).json({
+          success: false,
+          error: "\u0E01\u0E23\u0E38\u0E13\u0E32\u0E23\u0E30\u0E1A\u0E38\u0E40\u0E25\u0E02 ID \u0E2B\u0E25\u0E31\u0E01 (\u0E40\u0E0A\u0E48\u0E19 5 \u0E2B\u0E23\u0E37\u0E2D #5) \u0E2B\u0E23\u0E37\u0E2D Wallet Address \u0E17\u0E35\u0E48\u0E16\u0E39\u0E01\u0E15\u0E49\u0E2D\u0E07"
+        });
       }
-      const mainIdNum = userR1Node ? userR1Node.id : 1;
-      const sponsorAddr = userR1Node?.directSponsor || matrixDB.systemWallets.rootOwner;
-      const r1SponsorMainId = userR1Node?.directSponsorNodeId || 1;
-      let currentRank = mainIdNum === 1 ? 27 : 1;
+      const mainIdNum = userR1Node.id;
+      let rawR1SponsorId = userR1Node.directSponsorNodeId > 0 ? userR1Node.directSponsorNodeId : 0;
+      if (rawR1SponsorId <= 0 && userR1Node.directSponsor) {
+        const spKey = userR1Node.directSponsor.toLowerCase();
+        const spByAddr = r1Nodes.find(
+          (n) => !n.isClone && !n.isExtraId && (n.owner || "").toLowerCase() === spKey
+        );
+        rawR1SponsorId = spByAddr ? spByAddr.id : 1;
+      }
+      if (rawR1SponsorId <= 0) rawR1SponsorId = 1;
+      const rawSpR1Node = r1Nodes.find((n) => n.id === rawR1SponsorId);
+      const r1SponsorMainId = rawSpR1Node && rawSpR1Node.isClone && rawSpR1Node.originMainId > 0 ? rawSpR1Node.originMainId : rawR1SponsorId;
+      const canonSpR1Node = r1Nodes.find((n) => n.id === r1SponsorMainId && !n.isClone) || rawSpR1Node;
+      const sponsorAddr = canonSpR1Node?.owner || userR1Node.directSponsor || matrixDB.systemWallets.rootOwner;
+      if (onChainConfirmed) {
+        let previousMaxRank = mainIdNum === 1 ? 18 : 1;
+        if (mainIdNum !== 1) {
+          for (let r = 18; r >= 2; r--) {
+            const list = (matrixDB.nodesByRank[r] || []).filter(
+              (n) => !n.isSyntheticExtra && !n.isLocalUpgrade
+            );
+            if (list.some((n) => !n.isClone && !n.isExtraId && n.originMainId === mainIdNum)) {
+              previousMaxRank = r;
+              break;
+            }
+          }
+        }
+        if (!isRealTxHash(clientTxHash)) {
+          return res.status(400).json({
+            success: false,
+            error: "\u0E15\u0E49\u0E2D\u0E07\u0E23\u0E30\u0E1A\u0E38 Transaction Hash \u0E08\u0E23\u0E34\u0E07\u0E1A\u0E19\u0E1A\u0E25\u0E47\u0E2D\u0E01\u0E40\u0E0A\u0E19\u0E40\u0E21\u0E37\u0E48\u0E2D\u0E22\u0E37\u0E19\u0E22\u0E31\u0E19 onChainConfirmed"
+          });
+        }
+        const txProvider = getProvider();
+        const [onChainTx, onChainReceipt] = await Promise.all([
+          txProvider.getTransaction(clientTxHash).catch(() => null),
+          txProvider.getTransactionReceipt(clientTxHash).catch(() => null)
+        ]);
+        if (onChainTx && onChainTx.to && onChainTx.to.toLowerCase() !== CONTRACT_ADDRESS.toLowerCase()) {
+          return res.status(403).json({
+            success: false,
+            error: "Transaction Hash \u0E19\u0E35\u0E49\u0E44\u0E21\u0E48\u0E44\u0E14\u0E49\u0E2A\u0E48\u0E07\u0E44\u0E1B\u0E22\u0E31\u0E07 Smart Contract \u0E1B\u0E31\u0E08\u0E08\u0E38\u0E1A\u0E31\u0E19"
+          });
+        }
+        if (onChainReceipt && onChainReceipt.status === 0) {
+          return res.status(400).json({
+            success: false,
+            error: "\u0E18\u0E38\u0E23\u0E01\u0E23\u0E23\u0E21\u0E1A\u0E19\u0E1A\u0E25\u0E47\u0E2D\u0E01\u0E40\u0E0A\u0E19\u0E25\u0E49\u0E21\u0E40\u0E2B\u0E25\u0E27 (Reverted)"
+          });
+        }
+        const receiptNodesByRank = /* @__PURE__ */ new Map();
+        const inspected = await inspectAndTagAdminUpgradeTx(
+          clientTxHash,
+          txProvider,
+          onChainReceipt || void 0
+        ).catch(() => ({
+          isAdminTx: false,
+          taggedNodes: [],
+          newlyTagged: false
+        }));
+        if (onChainTx && !inspected.isAdminTx) {
+          return res.status(403).json({
+            success: false,
+            error: "Transaction Hash \u0E19\u0E35\u0E49\u0E44\u0E21\u0E48\u0E43\u0E0A\u0E48\u0E04\u0E33\u0E2A\u0E31\u0E48\u0E07 Admin Upgrade \u0E02\u0E2D\u0E07 Smart Contract"
+          });
+        }
+        for (const tn of inspected.taggedNodes) {
+          if (!receiptNodesByRank.has(tn.rank)) receiptNodesByRank.set(tn.rank, /* @__PURE__ */ new Set());
+          receiptNodesByRank.get(tn.rank).add(tn.nodeId);
+          knownAdminFreeNodeKeys.add(`${tn.rank}:${tn.nodeId}`);
+        }
+        const onChainUpgradedRanks = [];
+        const onChainCreatedNodes = [];
+        let onChainClonesCount = 0;
+        const ranksToProcess = receiptNodesByRank.size > 0 ? Array.from(receiptNodesByRank.keys()).sort((a, b) => a - b) : Array.from(
+          { length: Math.max(0, parsedRank - Math.max(1, previousMaxRank)) },
+          (_, idx) => Math.max(2, previousMaxRank + 1) + idx
+        );
+        for (const r of ranksToProcess) {
+          if (r < 2 || r > 18) continue;
+          const exactReceiptIds = receiptNodesByRank.get(r);
+          await syncRankIntoDatabase(r, CONTRACT_ADDRESS, true, true).catch(() => {
+          });
+          let rList = (matrixDB.nodesByRank[r] || []).filter(
+            (n) => !n.isSyntheticExtra && !n.isLocalUpgrade
+          );
+          if (exactReceiptIds && exactReceiptIds.size > 0) {
+            for (const targetNid of exactReceiptIds) {
+              let nodeInList = rList.find((n) => n.id === targetNid);
+              for (let retry = 0; retry < 2 && !nodeInList; retry++) {
+                await new Promise((resolve) => setTimeout(resolve, 1e3));
+                await syncRankIntoDatabase(r, CONTRACT_ADDRESS, true, true).catch(() => {
+                });
+                rList = (matrixDB.nodesByRank[r] || []).filter(
+                  (n) => !n.isSyntheticExtra && !n.isLocalUpgrade
+                );
+                nodeInList = rList.find((n) => n.id === targetNid);
+              }
+              if (nodeInList) {
+                nodeInList.isAdminFreeUpgrade = true;
+                knownAdminFreeNodeKeys.add(`${r}:${nodeInList.id}`);
+                if (nodeInList.isClone) {
+                  onChainClonesCount++;
+                } else {
+                  const pNode = rList.find((n) => n.id === nodeInList.parentId);
+                  const isLeft = pNode ? pNode.leftChild === nodeInList.id : true;
+                  onChainUpgradedRanks.push(r);
+                  onChainCreatedNodes.push({
+                    rank: r,
+                    nodeId: nodeInList.id,
+                    parentId: nodeInList.parentId,
+                    side: isLeft ? "LEFT" : "RIGHT"
+                  });
+                }
+              }
+            }
+          } else {
+            let chainNode = rList.find(
+              (n) => !n.isClone && !n.isExtraId && n.originMainId === mainIdNum
+            );
+            for (let retry = 0; retry < 2 && !chainNode; retry++) {
+              await new Promise((resolve) => setTimeout(resolve, 1200));
+              await syncRankIntoDatabase(r, CONTRACT_ADDRESS, true, true).catch(() => {
+              });
+              rList = (matrixDB.nodesByRank[r] || []).filter(
+                (n) => !n.isSyntheticExtra && !n.isLocalUpgrade
+              );
+              chainNode = rList.find(
+                (n) => !n.isClone && !n.isExtraId && n.originMainId === mainIdNum
+              );
+            }
+            if (chainNode) {
+              chainNode.isAdminFreeUpgrade = true;
+              knownAdminFreeNodeKeys.add(`${r}:${chainNode.id}`);
+              const pNode = rList.find((n) => n.id === chainNode.parentId);
+              const isLeft = pNode ? pNode.leftChild === chainNode.id : true;
+              onChainUpgradedRanks.push(r);
+              onChainCreatedNodes.push({
+                rank: r,
+                nodeId: chainNode.id,
+                parentId: chainNode.parentId,
+                side: isLeft ? "LEFT" : "RIGHT"
+              });
+            }
+          }
+          matrixDB.nodesByRank[r] = reconcileRankTreeLinks(rList);
+          matrixDB.rankCounts[r] = matrixDB.nodesByRank[r].length;
+        }
+        if (isRealTxHash(clientTxHash)) {
+          recordRealTransactionLog({
+            txHash: clientTxHash,
+            actionType: "ADMIN_UPGRADE",
+            title: `Admin \u0E2D\u0E31\u0E1B\u0E40\u0E01\u0E23\u0E14\u0E1F\u0E23\u0E35 Main #${mainIdNum} \u2192 Rank ${parsedRank}`,
+            userAddress: normalizedUser,
+            mainNodeId: mainIdNum,
+            rank: parsedRank,
+            amountUsdt: 0,
+            source: "WEB3_CLIENT",
+            details: `Ranks: ${onChainUpgradedRanks.map((r) => `R${r}`).join(", ") || `R${parsedRank}`}`
+          });
+        }
+        reconcileAutoExtraIdsAcrossRanks();
+        rebuildDatabaseRewardLogsFromNodes();
+        rebuildDatabaseUpgradeLogsFromNodes();
+        matrixDB.lastSyncedAt = (/* @__PURE__ */ new Date()).toISOString();
+        saveMatrixDBToDisk(true);
+        broadcastAllMatrixUpdates();
+        return res.json({
+          success: true,
+          source: "ONCHAIN_ADMIN_UPGRADE",
+          txHash: clientTxHash || void 0,
+          mainId: mainIdNum,
+          targetUser: normalizedUser,
+          fromRank: previousMaxRank,
+          targetRank: parsedRank,
+          upgradedRanks: onChainUpgradedRanks,
+          createdNodes: onChainCreatedNodes,
+          clonesCreated: onChainClonesCount,
+          message: `\u2705 Admin Upgrade \u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08! \u0E2D\u0E31\u0E1E Rank \u0E23\u0E2B\u0E31\u0E2A #${mainIdNum} \u0E43\u0E2B\u0E49\u0E1F\u0E23\u0E35\u0E2A\u0E39\u0E48 Rank ${parsedRank} \u0E1A\u0E19\u0E1A\u0E25\u0E47\u0E2D\u0E01\u0E40\u0E0A\u0E19\u0E40\u0E23\u0E35\u0E22\u0E1A\u0E23\u0E49\u0E2D\u0E22\u0E41\u0E25\u0E49\u0E27 (\u0E44\u0E21\u0E48\u0E08\u0E48\u0E32\u0E22\u0E04\u0E48\u0E32\u0E04\u0E2D\u0E21/\u0E04\u0E48\u0E32\u0E0A\u0E31\u0E49\u0E19 \u0E41\u0E25\u0E30\u0E23\u0E30\u0E1A\u0E1A\u0E42\u0E04\u0E25\u0E19\u0E19\u0E34\u0E48\u0E07\u0E17\u0E33\u0E07\u0E32\u0E19\u0E1B\u0E01\u0E15\u0E34\u0E40\u0E21\u0E37\u0E48\u0E2D\u0E27\u0E32\u0E07\u0E02\u0E27\u0E32)`
+        });
+      }
+      let currentRank = mainIdNum === 1 ? 18 : 1;
       if (mainIdNum !== 1) {
-        for (let r = 27; r >= 2; r--) {
+        for (let r = 18; r >= 2; r--) {
           const list = (matrixDB.nodesByRank[r] || []).filter((n) => !n.isSyntheticExtra);
           if (list.some((n) => !n.isClone && !n.isExtraId && n.originMainId === mainIdNum)) {
             currentRank = r;
@@ -5267,38 +7523,73 @@ async function startApp() {
       if (parsedRank <= currentRank) {
         return res.json({
           success: true,
-          message: `\u0E23\u0E2B\u0E31\u0E2A\u0E2B\u0E25\u0E31\u0E01 #${mainIdNum} \u0E2D\u0E22\u0E39\u0E48\u0E43\u0E19 Rank ${currentRank} \u0E2D\u0E22\u0E39\u0E48\u0E41\u0E25\u0E49\u0E27 (\u0E40\u0E1B\u0E49\u0E32\u0E2B\u0E21\u0E32\u0E22\u0E04\u0E37\u0E2D Rank ${parsedRank})`,
+          source: "DATABASE_ADMIN_UPGRADE",
+          targetUser: normalizedUser,
+          mainId: mainIdNum,
+          fromRank: currentRank,
           currentRank,
           targetRank: parsedRank,
-          mainId: mainIdNum
+          upgradedRanks: [],
+          createdNodes: [],
+          clonesCreated: 0,
+          message: `\u0E23\u0E2B\u0E31\u0E2A\u0E2B\u0E25\u0E31\u0E01 #${mainIdNum} \u0E2D\u0E22\u0E39\u0E48\u0E43\u0E19 Rank ${currentRank} \u0E2D\u0E22\u0E39\u0E48\u0E41\u0E25\u0E49\u0E27 (\u0E40\u0E1B\u0E49\u0E32\u0E2B\u0E21\u0E32\u0E22\u0E04\u0E37\u0E2D Rank ${parsedRank})`
         });
       }
       const upgradedRanks = [];
       const createdNodes = [];
       let clonesCreated = 0;
+      const rootOwner = matrixDB.nodesByRank[1]?.[0]?.owner || matrixDB.systemWallets.rootOwner;
       for (let r = currentRank + 1; r <= parsedRank; r++) {
-        if (!matrixDB.nodesByRank[r]) matrixDB.nodesByRank[r] = [];
+        if (!matrixDB.nodesByRank[r] || matrixDB.nodesByRank[r].length === 0) {
+          matrixDB.nodesByRank[r] = [
+            {
+              id: 1,
+              rank: r,
+              owner: rootOwner,
+              directSponsor: ethers.ZeroAddress,
+              parentId: 0,
+              leftChild: 0,
+              rightChild: 0,
+              isClone: false,
+              isExtraId: false,
+              originMainId: 1,
+              cloneRound: 0,
+              directSponsorNodeId: 0,
+              nodeVault: 0,
+              rawNodeVault: 0,
+              reconciledBaseVault: 0
+            }
+          ];
+        }
         const rList = matrixDB.nodesByRank[r].filter((n) => !n.isSyntheticExtra);
         matrixDB.nodesByRank[r] = rList;
         const existingNode = rList.find(
           (n) => !n.isClone && !n.isExtraId && n.originMainId === mainIdNum
         );
         if (!existingNode) {
+          const existingAdminUpgradesCount = rList.filter(
+            (n) => !n.isClone && !n.isExtraId && n.isAdminFreeUpgrade
+          ).length;
+          const adminRoundIndex = existingAdminUpgradesCount % 2;
           const spNodeInR = rList.find(
             (n) => !n.isClone && !n.isExtraId && (r1SponsorMainId === 1 ? n.id === 1 : n.originMainId === r1SponsorMainId)
           );
-          const placement = spNodeInR ? findExtraIdPlacementInRankNodes(rList, spNodeInR.id) : findShallowestLeftToRightSlotInRankNodes(rList, 1);
+          const placement = adminRoundIndex === 0 && spNodeInR ? findExtraIdPlacementInRankNodes(rList, spNodeInR.id) : findShallowestLeftToRightSlotInRankNodes(rList, 1);
           const parentIdNum = Number(placement.parentId) || 1;
           const maxId = rList.reduce((m, n) => Math.max(m, n.id), 0);
           const nextIdInRank = maxId + 1;
+          const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+          const parentNode = rList.find((n) => n.id === parentIdNum);
+          const placeLeft = parentNode ? !parentNode.leftChild || parentNode.leftChild <= 0 || placement.isLeft : Boolean(placement.isLeft);
           const newNode = {
             id: nextIdInRank,
             rank: r,
-            owner: userR1Node?.owner || normalizedUser,
+            owner: userR1Node.owner || normalizedUser,
             directSponsor: sponsorAddr,
             parentId: parentIdNum,
             leftChild: 0,
             rightChild: 0,
+            isLeft: placeLeft,
             isClone: false,
             isExtraId: false,
             originMainId: mainIdNum,
@@ -5307,13 +7598,14 @@ async function startApp() {
             nodeVault: 0,
             rawNodeVault: 0,
             reconciledBaseVault: 0,
-            isLocalUpgrade: true
+            isLocalUpgrade: true,
+            isAdminFreeUpgrade: true,
+            createdAt: nowIso
           };
           rList.push(newNode);
-          const parentNode = rList.find((n) => n.id === parentIdNum);
           const rightSlotTriggerQueue = [];
           if (parentNode) {
-            if (placement.isLeft) {
+            if (placeLeft) {
               parentNode.leftChild = nextIdInRank;
             } else {
               parentNode.rightChild = nextIdInRank;
@@ -5321,12 +7613,21 @@ async function startApp() {
             }
           }
           let cloneSafety = 0;
-          while (rightSlotTriggerQueue.length > 0 && cloneSafety < 25) {
+          while (rightSlotTriggerQueue.length > 0 && cloneSafety < 50) {
             cloneSafety++;
             const triggerParent = rightSlotTriggerQueue.shift();
             const clonePlacement = findClonePlacementInRankNodes(rList, triggerParent);
             const cloneIdInRank = rList.reduce((m, n) => Math.max(m, n.id), 0) + 1;
-            const originNode = rList.find((n) => n.id === clonePlacement.cloneOriginMainId) || triggerParent;
+            const originNode = rList.find(
+              (n) => !n.isClone && !n.isExtraId && (n.originMainId === clonePlacement.cloneOriginMainId || n.id === clonePlacement.cloneOriginMainId)
+            ) || rList.find(
+              (n) => !n.isClone && (n.originMainId === clonePlacement.cloneOriginMainId || n.id === clonePlacement.cloneOriginMainId)
+            ) || r1Nodes.find((n) => !n.isClone && n.id === clonePlacement.cloneOriginMainId) || triggerParent;
+            const cloneParent = rList.find((n) => n.id === clonePlacement.parentId);
+            const clonePlaceLeft = cloneParent ? !cloneParent.leftChild || cloneParent.leftChild <= 0 || clonePlacement.isLeft : Boolean(clonePlacement.isLeft);
+            const existingCloneCountForOrig = rList.filter(
+              (n) => n.isClone && (n.originMainId || n.id) === clonePlacement.cloneOriginMainId
+            ).length;
             const cloneNode = {
               id: cloneIdInRank,
               rank: r,
@@ -5335,21 +7636,25 @@ async function startApp() {
               parentId: clonePlacement.parentId,
               leftChild: 0,
               rightChild: 0,
+              isLeft: clonePlaceLeft,
               isClone: true,
               isExtraId: false,
               originMainId: clonePlacement.cloneOriginMainId,
+              cloneSequence: existingCloneCountForOrig + 1,
               cloneRound: clonePlacement.cloneRound,
               directSponsorNodeId: clonePlacement.targetSponsorNodeId,
               nodeVault: 0,
               rawNodeVault: 0,
               reconciledBaseVault: 0,
-              isLocalUpgrade: true
+              isLocalUpgrade: true,
+              isAdminFreeUpgrade: true,
+              originType: "CLONE",
+              createdAt: (/* @__PURE__ */ new Date()).toISOString()
             };
             rList.push(cloneNode);
             clonesCreated++;
-            const cloneParent = rList.find((n) => n.id === clonePlacement.parentId);
             if (cloneParent) {
-              if (clonePlacement.isLeft) {
+              if (clonePlaceLeft) {
                 cloneParent.leftChild = cloneIdInRank;
               } else {
                 cloneParent.rightChild = cloneIdInRank;
@@ -5360,23 +7665,31 @@ async function startApp() {
           matrixDB.nodesByRank[r] = reconcileRankTreeLinks(rList);
           matrixDB.rankCounts[r] = matrixDB.nodesByRank[r].length;
           upgradedRanks.push(r);
-          createdNodes.push({ rank: r, nodeId: nextIdInRank, side: placement.isLeft ? "LEFT" : "RIGHT" });
+          createdNodes.push({
+            rank: r,
+            nodeId: nextIdInRank,
+            parentId: parentIdNum,
+            side: placeLeft ? "LEFT" : "RIGHT"
+          });
         }
       }
       reconcileAutoExtraIdsAcrossRanks();
       rebuildDatabaseRewardLogsFromNodes();
       rebuildDatabaseUpgradeLogsFromNodes();
+      matrixDB.lastSyncedAt = (/* @__PURE__ */ new Date()).toISOString();
       saveMatrixDBToDisk(true);
+      broadcastAllMatrixUpdates();
       res.json({
         success: true,
         source: "DATABASE_ADMIN_UPGRADE",
+        mainId: mainIdNum,
         targetUser: normalizedUser,
         fromRank: currentRank,
         targetRank: parsedRank,
         upgradedRanks,
         createdNodes,
         clonesCreated,
-        message: `\u2705 Admin Upgrade \u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08! \u0E2D\u0E31\u0E1E Rank \u0E43\u0E2B\u0E49\u0E1F\u0E23\u0E35\u0E08\u0E32\u0E01 Rank ${currentRank} \u0E2A\u0E39\u0E48 Rank ${parsedRank} \u0E40\u0E23\u0E35\u0E22\u0E1A\u0E23\u0E49\u0E2D\u0E22\u0E41\u0E25\u0E49\u0E27 (\u0E44\u0E21\u0E48\u0E08\u0E48\u0E32\u0E22\u0E04\u0E48\u0E32\u0E04\u0E2D\u0E21 \u0E41\u0E25\u0E30\u0E23\u0E30\u0E1A\u0E1A\u0E42\u0E04\u0E25\u0E19\u0E19\u0E34\u0E48\u0E07\u0E17\u0E33\u0E07\u0E32\u0E19\u0E1B\u0E01\u0E15\u0E34)`
+        message: `\u2705 Admin Upgrade \u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08! \u0E2D\u0E31\u0E1E Rank \u0E23\u0E2B\u0E31\u0E2A #${mainIdNum} \u0E43\u0E2B\u0E49\u0E1F\u0E23\u0E35\u0E08\u0E32\u0E01 Rank ${currentRank} \u0E2A\u0E39\u0E48 Rank ${parsedRank} \u0E40\u0E23\u0E35\u0E22\u0E1A\u0E23\u0E49\u0E2D\u0E22\u0E41\u0E25\u0E49\u0E27 (\u0E44\u0E21\u0E48\u0E08\u0E48\u0E32\u0E22\u0E04\u0E48\u0E32\u0E04\u0E2D\u0E21\u0E40\u0E21\u0E37\u0E48\u0E2D\u0E27\u0E32\u0E07\u0E0B\u0E49\u0E32\u0E22 \u0E41\u0E25\u0E30\u0E23\u0E30\u0E1A\u0E1A\u0E42\u0E04\u0E25\u0E19\u0E19\u0E34\u0E48\u0E07\u0E17\u0E33\u0E07\u0E32\u0E19\u0E1B\u0E01\u0E15\u0E34\u0E40\u0E21\u0E37\u0E48\u0E2D\u0E27\u0E32\u0E07\u0E02\u0E27\u0E32)`
       });
     } catch (err) {
       console.error("Error in /api/admin/upgrade-rank:", err);
@@ -5448,17 +7761,22 @@ async function startApp() {
         fetchWalletBalances(botAddr),
         fetchWalletBalances(familyAddr)
       ]);
+      const autoMainSourceMap = reconcileRank1AutoMainIds();
       const r1Nodes = matrixDB.nodesByRank[1] || [];
-      const mainNodesR1 = r1Nodes.filter((n) => !n.isClone && !n.isExtraId).sort((a, b) => a.id - b.id);
+      const mainNodesR1 = r1Nodes.filter((n) => !n.isClone && !n.isExtraId && !n.isSyntheticExtra).sort((a, b) => a.id - b.id);
       const mainIdList = mainNodesR1.map((m) => {
         const stats = computeMainIdDatabaseStats(m.id);
+        const isAutoId = autoMainSourceMap.has(m.id) || m.originType === "AUTO_NEW_MAIN" || m.originType === "AUTO_MAIN";
         return {
           mainId: m.id,
+          isAutoId,
+          spawnedByMainId: isAutoId ? autoMainSourceMap.get(m.id) || m.directSponsorNodeId || 1 : 0,
           owner: m.owner,
           directSponsorNodeId: m.directSponsorNodeId || 1,
           directSponsor: m.directSponsor,
           parentId: m.parentId,
-          originType: m.originType || "MANUAL_REGISTER",
+          isLeft: Boolean(m.isLeft),
+          originType: isAutoId ? "AUTO_NEW_MAIN" : m.originType || "MANUAL_REGISTER",
           currentRank: stats.currentRank,
           window5Start: stats.window5Start,
           window5End: stats.window5End,
@@ -5467,15 +7785,55 @@ async function startApp() {
           newExtraIdPool: stats.newExtraIdPool
         };
       });
+      const extraIdsList = [];
+      const cloneIdsList = [];
       const rankCountsMap = {};
       let totalNodesAllRanks = 0;
-      for (let r = 1; r <= 27; r++) {
-        const cnt = (matrixDB.nodesByRank[r] || []).filter((n) => !n.isSyntheticExtra).length;
-        rankCountsMap[r] = cnt;
-        totalNodesAllRanks += cnt;
+      for (let r = 1; r <= 18; r++) {
+        const rList = (matrixDB.nodesByRank[r] || []).filter((n) => !n.isSyntheticExtra);
+        rankCountsMap[r] = rList.length;
+        totalNodesAllRanks += rList.length;
+        for (const n of rList) {
+          if (n.isClone) {
+            cloneIdsList.push({
+              nodeId: n.id,
+              rank: r,
+              owner: n.owner,
+              parentId: n.parentId,
+              isLeft: Boolean(n.isLeft),
+              directSponsorNodeId: n.directSponsorNodeId || 1,
+              originMainId: n.originMainId || n.id,
+              cloneRound: n.cloneRound || 1,
+              cloneSequence: n.cloneSequence || 1,
+              label: `Main #${n.originMainId || n.id} (\u0E42\u0E04\u0E25\u0E19 R${r}-#${n.id})`,
+              nodeVault: Number(n.nodeVault || 0)
+            });
+          } else if (n.isExtraId) {
+            extraIdsList.push({
+              nodeId: n.id,
+              rank: r,
+              owner: n.owner,
+              parentId: n.parentId,
+              isLeft: Boolean(n.isLeft),
+              directSponsorNodeId: n.directSponsorNodeId || 1,
+              originMainId: n.originMainId || n.id,
+              label: `Extra R${r}-#${n.id}`,
+              nodeVault: Number(n.nodeVault || 0)
+            });
+          }
+        }
       }
+      const mainOnlyCount = mainIdList.filter((x) => !x.isAutoId).length;
+      const autoOnlyCount = mainIdList.filter((x) => x.isAutoId).length;
+      const idStatusCounts = {
+        main: mainOnlyCount,
+        auto: autoOnlyCount,
+        extra: extraIdsList.length,
+        clone: cloneIdsList.length,
+        total: mainIdList.length + extraIdsList.length + cloneIdsList.length
+      };
       const cycleInfo = computeNextAllSellCycleInfo();
-      const rawPk = (process.env.ALLSELL_WALLET_PRIVATE_KEY || process.env.DEPLOYER_PRIVATE_KEY || "0xc9c4649effa5eaaab8dc0690b4e392aec7cf84ee49e2251a1800fe89ad3270ca").trim();
+      const rawPk = (process.env.ALLSELL_WALLET_PRIVATE_KEY || process.env.DEPLOYER_PRIVATE_KEY || "").trim();
       let serverSignerAddress = "";
       if (rawPk && (rawPk.length === 64 || rawPk.length === 66)) {
         try {
@@ -5501,25 +7859,30 @@ async function startApp() {
         stats: {
           totalMainIdsRank1: mainIdList.length,
           totalNodesAllRanks,
-          rankCounts: rankCountsMap
+          rankCounts: rankCountsMap,
+          idStatusCounts
         },
         mainIds: mainIdList,
+        extraIds: extraIdsList,
+        cloneIds: cloneIdsList,
         allSell: {
           autoEnabled: allSellAutoStore.autoEnabled,
           lastExecutedCycleKey: allSellAutoStore.lastExecutedCycleKey,
           lastExecutedAt: allSellAutoStore.lastExecutedAt,
           nextCycleInfo: cycleInfo,
           history: allSellAutoStore.history.slice(0, 20)
-        }
+        },
+        transactionLogs: (matrixDB.transactionLogs || []).slice(0, 200),
+        totalTransactionLogs: (matrixDB.transactionLogs || []).length
       });
     } catch (err) {
       res.status(500).json({ success: false, error: err.message });
     }
   });
-  app.post("/api/admin/clear-cache", async (_req, res) => {
+  const handleClearCacheRequest = async (_req, res) => {
     try {
       rankSyncTimestamps.clear();
-      for (let r = 1; r <= 27; r++) {
+      for (let r = 1; r <= 18; r++) {
         matrixDB.nodesByRank[r] = [];
         matrixDB.rankCounts[r] = 0;
       }
@@ -5532,17 +7895,20 @@ async function startApp() {
         success: true,
         contractAddress: CONTRACT_ADDRESS,
         lastSyncedAt: matrixDB.lastSyncedAt,
-        message: "\u{1F9F9} \u0E25\u0E49\u0E32\u0E07\u0E41\u0E04\u0E0A\u0E10\u0E32\u0E19\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E40\u0E01\u0E48\u0E32\u0E41\u0E25\u0E30\u0E14\u0E36\u0E07\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E2A\u0E14\u0E08\u0E32\u0E01 Smart Contract \u0E43\u0E2B\u0E21\u0E48\u0E04\u0E23\u0E1A 27 \u0E41\u0E23\u0E07\u0E04\u0E4C\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08!"
+        message: "\u{1F9F9} \u0E25\u0E49\u0E32\u0E07\u0E41\u0E04\u0E0A\u0E10\u0E32\u0E19\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E40\u0E01\u0E48\u0E32\u0E41\u0E25\u0E30\u0E14\u0E36\u0E07\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E2A\u0E14\u0E08\u0E32\u0E01 Smart Contract \u0E43\u0E2B\u0E21\u0E48\u0E04\u0E23\u0E1A 18 \u0E41\u0E23\u0E07\u0E04\u0E4C\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08!"
       });
     } catch (err) {
       res.status(500).json({ success: false, error: err.message });
     }
-  });
+  };
+  app.post("/api/admin/clear-cache", handleClearCacheRequest);
+  app.post("/api/matrix/clear-cache", handleClearCacheRequest);
+  app.post("/api/clear-cache", handleClearCacheRequest);
   app.post("/api/admin/contract-action", async (req, res) => {
     try {
       const { action, params, privateKey } = req.body || {};
       const rawPk = String(
-        privateKey || process.env.DEPLOYER_PRIVATE_KEY || process.env.ALLSELL_WALLET_PRIVATE_KEY || "0xc9c4649effa5eaaab8dc0690b4e392aec7cf84ee49e2251a1800fe89ad3270ca"
+        privateKey || process.env.DEPLOYER_PRIVATE_KEY || process.env.ALLSELL_WALLET_PRIVATE_KEY || ""
       ).trim();
       if (!rawPk || rawPk.length !== 64 && rawPk.length !== 66) {
         return res.status(400).json({
@@ -5557,6 +7923,7 @@ async function startApp() {
         CONTRACT_ADDRESS,
         [
           ...MATRIX_READ_ABI,
+          "function owner() view returns (address)",
           "function adminUpgradeRank(address _user, uint8 _targetRank) external",
           "function adminUpgradeRankForMainId(uint256 _r1MainId, uint8 _targetRank) external",
           "function setSystemWallets(address _allSell, address _bot, address _familyPool) external",
@@ -5567,17 +7934,38 @@ async function startApp() {
           "function checkAndProcessAutoNewMainId(address _user) external",
           "function checkAndProcessAutoNewMainIdForNode(uint256 _mainNodeId) external",
           "function checkAndProcessAutoExtraId(address _user, uint8 _currentRank) external",
-          "function checkAndProcessAutoExtraIdForNode(address _user, uint8 _currentRank, uint256 _sponsorNodeId) external"
+          "function checkAndProcessAutoExtraIdForNode(address _user, uint8 _currentRank, uint256 _sponsorNodeId) external",
+          "function processPendingExtraIdQueue(uint256 _r1MainId, uint8 _maxBatch) external returns (uint8 processed)"
         ],
         wallet
       );
+      const isOnlyOwnerAction = [
+        "adminUpgradeRankForMainId",
+        "adminUpgradeRank",
+        "setSystemWallets",
+        "emergencyWithdrawToken",
+        "emergencyWithdrawNative",
+        "transferOwnership",
+        "renounceOwnership"
+      ].includes(String(action || ""));
+      let onChainOwner = "";
+      if (isOnlyOwnerAction) {
+        onChainOwner = await contract.owner().catch(() => "");
+        if (onChainOwner && onChainOwner.toLowerCase() !== wallet.address.toLowerCase()) {
+          return res.status(403).json({
+            success: false,
+            error: `Private Key \u0E02\u0E2D\u0E07 Server (${wallet.address}) \u0E44\u0E21\u0E48\u0E43\u0E0A\u0E48 Contract Owner (${onChainOwner}) \u0E01\u0E23\u0E38\u0E13\u0E32\u0E01\u0E23\u0E2D\u0E01 Private Key \u0E02\u0E2D\u0E07 Owner \u0E2B\u0E23\u0E37\u0E2D\u0E2A\u0E25\u0E31\u0E1A\u0E44\u0E1B\u0E43\u0E0A\u0E49\u0E42\u0E2B\u0E21\u0E14 "\u0E01\u0E23\u0E30\u0E40\u0E1B\u0E4B\u0E32 Web3 \u0E17\u0E35\u0E48\u0E40\u0E0A\u0E37\u0E48\u0E2D\u0E21\u0E15\u0E48\u0E2D"`
+          });
+        }
+      }
       let tx;
       let actionDesc = String(action || "");
+      let transferredNewOwner = "";
       switch (action) {
         case "adminUpgradeRankForMainId": {
           const mainId = Number(params?.mainId || 0);
           const targetRank = Number(params?.targetRank || 2);
-          if (!mainId || targetRank < 2 || targetRank > 27) {
+          if (!mainId || targetRank < 2 || targetRank > 18) {
             return res.status(400).json({ success: false, error: "\u0E1E\u0E32\u0E23\u0E32\u0E21\u0E34\u0E40\u0E15\u0E2D\u0E23\u0E4C mainId \u0E2B\u0E23\u0E37\u0E2D targetRank \u0E44\u0E21\u0E48\u0E16\u0E39\u0E01\u0E15\u0E49\u0E2D\u0E07" });
           }
           tx = await contract.adminUpgradeRankForMainId(mainId, targetRank);
@@ -5587,7 +7975,7 @@ async function startApp() {
         case "adminUpgradeRank": {
           const targetUser = String(params?.targetUser || "").trim();
           const targetRank = Number(params?.targetRank || 2);
-          if (!ethers.isAddress(targetUser) || targetRank < 2 || targetRank > 27) {
+          if (!ethers.isAddress(targetUser) || targetRank < 2 || targetRank > 18) {
             return res.status(400).json({ success: false, error: "Wallet Address \u0E2B\u0E23\u0E37\u0E2D targetRank \u0E44\u0E21\u0E48\u0E16\u0E39\u0E01\u0E15\u0E49\u0E2D\u0E07" });
           }
           tx = await contract.adminUpgradeRank(targetUser, targetRank);
@@ -5611,7 +7999,13 @@ async function startApp() {
           if (!ethers.isAddress(tokenAddr) || Number(amountStr) <= 0) {
             return res.status(400).json({ success: false, error: "\u0E01\u0E23\u0E38\u0E13\u0E32\u0E23\u0E30\u0E1A\u0E38 Token Address \u0E41\u0E25\u0E30\u0E08\u0E33\u0E19\u0E27\u0E19\u0E17\u0E35\u0E48\u0E15\u0E49\u0E2D\u0E07\u0E01\u0E32\u0E23\u0E16\u0E2D\u0E19\u0E43\u0E2B\u0E49\u0E16\u0E39\u0E01\u0E15\u0E49\u0E2D\u0E07" });
           }
-          const amountWei = ethers.parseUnits(amountStr, activeUsdtDecimals || 18);
+          const tokenContract = new ethers.Contract(
+            tokenAddr,
+            ["function decimals() view returns (uint8)"],
+            provider
+          );
+          const tokenDecimals = Number(await tokenContract.decimals().catch(() => activeUsdtDecimals || 18)) || 18;
+          const amountWei = ethers.parseUnits(amountStr, tokenDecimals);
           tx = await contract.emergencyWithdrawToken(tokenAddr, amountWei);
           actionDesc = `emergencyWithdrawToken(${amountStr} Token)`;
           break;
@@ -5626,11 +8020,18 @@ async function startApp() {
           if (!ethers.isAddress(newOwner) || newOwner === ethers.ZeroAddress) {
             return res.status(400).json({ success: false, error: "\u0E01\u0E23\u0E38\u0E13\u0E32\u0E23\u0E30\u0E1A\u0E38 Wallet Address \u0E02\u0E2D\u0E07 Owner \u0E43\u0E2B\u0E21\u0E48\u0E43\u0E2B\u0E49\u0E16\u0E39\u0E01\u0E15\u0E49\u0E2D\u0E07" });
           }
-          tx = await contract.transferOwnership(newOwner);
-          actionDesc = `transferOwnership(${newOwner})`;
+          const checksumNewOwner = ethers.getAddress(newOwner);
+          if (onChainOwner && checksumNewOwner.toLowerCase() === onChainOwner.toLowerCase()) {
+            return res.status(400).json({ success: false, error: `\u0E01\u0E23\u0E30\u0E40\u0E1B\u0E4B\u0E32 ${checksumNewOwner} \u0E40\u0E1B\u0E47\u0E19 Contract Owner \u0E1B\u0E31\u0E08\u0E08\u0E38\u0E1A\u0E31\u0E19\u0E2D\u0E22\u0E39\u0E48\u0E41\u0E25\u0E49\u0E27` });
+          }
+          await contract.transferOwnership.staticCall(checksumNewOwner);
+          tx = await contract.transferOwnership(checksumNewOwner);
+          transferredNewOwner = checksumNewOwner;
+          actionDesc = `transferOwnership(${checksumNewOwner})`;
           break;
         }
         case "renounceOwnership": {
+          await contract.renounceOwnership.staticCall();
           tx = await contract.renounceOwnership();
           actionDesc = "renounceOwnership()";
           break;
@@ -5662,6 +8063,13 @@ async function startApp() {
           actionDesc = `checkAndProcessAutoExtraId(${userAddr.substring(0, 8)}..., Rank ${currentRank})`;
           break;
         }
+        case "processPendingExtraIdQueue": {
+          const r1MainId = Number(params?.r1MainId || params?.mainId || 1);
+          const maxBatch = Number(params?.maxBatch || 2);
+          tx = await contract.processPendingExtraIdQueue(r1MainId, maxBatch);
+          actionDesc = `processPendingExtraIdQueue(Main #${r1MainId}, Batch ${maxBatch})`;
+          break;
+        }
         default:
           return res.status(400).json({ success: false, error: `\u0E44\u0E21\u0E48\u0E23\u0E2D\u0E07\u0E23\u0E31\u0E1A\u0E04\u0E33\u0E2A\u0E31\u0E48\u0E07: ${action}` });
       }
@@ -5675,13 +8083,41 @@ async function startApp() {
         )
       ]);
       const txHash = receipt?.hash || tx.hash;
+      const inferredType = action.includes("Upgrade") ? "ADMIN_UPGRADE" : action.includes("AutoNewMainId") ? "AUTO_ID" : action.includes("ExtraId") ? "EXTRA_ID" : "ADMIN_ACTION";
+      recordRealTransactionLog({
+        txHash,
+        actionType: inferredType,
+        title: `Admin: ${actionDesc}`,
+        userAddress: String(params?.targetUser || params?.user || params?.newOwner || wallet.address),
+        mainNodeId: Number(params?.mainId || params?.mainNodeId || params?.r1MainId || 0) || void 0,
+        rank: Number(params?.targetRank || params?.currentRank || 0) || void 0,
+        amountUsdt: inferredType === "ADMIN_UPGRADE" ? 0 : void 0,
+        blockNumber: receipt?.blockNumber,
+        source: "ADMIN_SERVER",
+        details: `Executed by ${wallet.address}`,
+        immediateSave: true
+      });
+      if (action === "adminUpgradeRankForMainId" || action === "adminUpgradeRank") {
+        await inspectAndTagAdminUpgradeTx(txHash, provider, receipt).catch(() => {
+        });
+      }
       await syncAllMatrixDatabase(CONTRACT_ADDRESS, true).catch(() => {
       });
+      if (action === "adminUpgradeRankForMainId" || action === "adminUpgradeRank") {
+        await inspectAndTagAdminUpgradeTx(txHash, provider, receipt).catch(() => {
+        });
+        reconcileAutoExtraIdsAcrossRanks();
+        rebuildDatabaseRewardLogsFromNodes();
+        rebuildDatabaseUpgradeLogsFromNodes();
+        saveMatrixDBToDisk(true);
+        broadcastAllMatrixUpdates();
+      }
       res.json({
         success: true,
         action,
         txHash,
         signer: wallet.address,
+        newOwner: transferredNewOwner || void 0,
         message: `\u2705 \u0E23\u0E31\u0E19\u0E04\u0E33\u0E2A\u0E31\u0E48\u0E07 ${actionDesc} \u0E1A\u0E19\u0E1A\u0E25\u0E47\u0E2D\u0E01\u0E40\u0E0A\u0E19\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08! (Tx: ${txHash.substring(0, 10)}...)`
       });
     } catch (err) {
@@ -5692,10 +8128,85 @@ async function startApp() {
       });
     }
   });
+  app.post("/api/transactions/record", (req, res) => {
+    try {
+      const {
+        txHash,
+        actionType = "ADMIN_ACTION",
+        title,
+        userAddress,
+        mainNodeId,
+        nodeId,
+        rank,
+        amountUsdt,
+        blockNumber,
+        source = "WEB3_CLIENT",
+        details
+      } = req.body || {};
+      if (!isRealTxHash(txHash)) {
+        return res.status(400).json({ success: false, error: "Invalid transaction hash" });
+      }
+      const record = recordRealTransactionLog({
+        txHash,
+        actionType,
+        title: String(title || actionType),
+        userAddress: String(userAddress || ""),
+        mainNodeId: mainNodeId ? Number(mainNodeId) : void 0,
+        nodeId: nodeId ? Number(nodeId) : void 0,
+        rank: rank ? Number(rank) : void 0,
+        amountUsdt: amountUsdt !== void 0 ? Number(amountUsdt) : void 0,
+        blockNumber: blockNumber ? Number(blockNumber) : void 0,
+        source,
+        details: details ? String(details) : void 0,
+        immediateSave: true
+      });
+      res.json({ success: true, record, total: (matrixDB.transactionLogs || []).length });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err?.message || "Failed to record txHash" });
+    }
+  });
+  app.get("/api/admin/transactions", async (req, res) => {
+    try {
+      const shouldSync = req.query.sync === "1" || req.query.forceSync === "1";
+      const lookback = Math.min(1e5, Math.max(5e3, Number(req.query.lookback || 45e3)));
+      let newlyAdded = 0;
+      if (shouldSync) {
+        newlyAdded = await syncRecentOnChainTxHashes(CONTRACT_ADDRESS, lookback);
+      }
+      const logs = Array.isArray(matrixDB.transactionLogs) ? matrixDB.transactionLogs : [];
+      const countsByType = {
+        REGISTER: 0,
+        BATCH_REGISTER: 0,
+        UPGRADE: 0,
+        ADMIN_UPGRADE: 0,
+        AUTO_ID: 0,
+        EXTRA_ID: 0,
+        CLONE_BOT: 0,
+        ALLSELL_PAYOUT: 0,
+        ADMIN_ACTION: 0,
+        REWARD: 0
+      };
+      for (const item of logs) {
+        countsByType[item.actionType] = (countsByType[item.actionType] || 0) + 1;
+      }
+      res.json({
+        success: true,
+        contractAddress: CONTRACT_ADDRESS,
+        newlyAdded,
+        total: logs.length,
+        countsByType,
+        data: logs
+      });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err?.message || "Failed to load admin transactions" });
+    }
+  });
   app.get("/api/matrix/inspect-rank", async (req, res) => {
-    const rankNum = Math.min(Math.max(Number(req.query.rank) || 1, 1), 27);
+    const rankNum = Math.min(Math.max(Number(req.query.rank) || 1, 1), 18);
     const addrParam = String(req.query.address || "").toLowerCase();
-    const nextPriceNum = rankNum < 27 ? RANK_PRICES_USDT[rankNum] : 0;
+    const currentPriceNum = RANK_PRICES_USDT[rankNum - 1] ?? 5;
+    const nextPriceNum = rankNum < 18 ? RANK_PRICES_USDT[rankNum] ?? 0 : 0;
+    const formatUsdtPrice = (val) => `${val.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDT`;
     if (!matrixDB.nodesByRank[rankNum] || matrixDB.nodesByRank[rankNum].length === 0) {
       await syncRankIntoDatabase(rankNum, CONTRACT_ADDRESS, false);
     }
@@ -5714,7 +8225,8 @@ async function startApp() {
       firstNodeId: String(firstNodeId),
       latestNodeId: String(latestNodeId),
       upgradeVaultBalance: vaultBal.toFixed(2),
-      nextRankPrice: nextPriceNum > 0 ? `${nextPriceNum.toFixed(2)} USDT` : "Max Rank"
+      rankPrice: formatUsdtPrice(currentPriceNum),
+      nextRankPrice: nextPriceNum > 0 ? formatUsdtPrice(nextPriceNum) : "Max Rank"
     });
   });
   app.get("/api/matrix/sponsor-check", async (req, res) => {
@@ -5751,7 +8263,7 @@ async function startApp() {
     });
   });
   app.get("/api/matrix/tree-nodes", async (req, res) => {
-    const rank = Math.min(Math.max(Number(req.query.rank) || 1, 1), 27);
+    const rank = Math.min(Math.max(Number(req.query.rank) || 1, 1), 18);
     const targetContract = req.query.contract || CONTRACT_ADDRESS;
     const forceSync = req.query.forceSync === "1";
     const cacheKey = `${targetContract.toLowerCase()}:${rank}`;
@@ -5808,7 +8320,7 @@ async function startApp() {
     });
   });
   app.get("/api/matrix/nodes", async (req, res) => {
-    const rank = Math.min(Math.max(Number(req.query.rank) || 1, 1), 27);
+    const rank = Math.min(Math.max(Number(req.query.rank) || 1, 1), 18);
     if (!matrixDB.nodesByRank[rank] || matrixDB.nodesByRank[rank].length === 0) {
       await syncRankIntoDatabase(rank, CONTRACT_ADDRESS, false);
     }
@@ -5922,6 +8434,118 @@ async function startApp() {
           cloneTrigger: `\u2728 Auto-Clone #${cloneNodeId} spawned for Parent #${placement.parentId} (at Parent #${clonePlacement.parentId} ${clonePlacement.isLeft ? "LEFT" : "RIGHT"})`
         });
       }
+    }
+    if (rankNum === 1 && applicantList.length > 0) {
+      if (!matrixDB.nodesByRank[1]) {
+        matrixDB.nodesByRank[1] = [];
+      }
+      const r1List = matrixDB.nodesByRank[1].filter((n) => !n.isSyntheticExtra);
+      matrixDB.nodesByRank[1] = r1List;
+      const spIdNum = Math.max(1, Number(sponsorNodeId) || 1);
+      const spNode = r1List.find((n) => n.id === spIdNum) || r1List[0];
+      const spAddr = spNode?.owner || sponsorAddress || matrixDB.systemWallets.rootOwner;
+      const spMainId = spNode && !spNode.isClone && !spNode.isExtraId ? spNode.id : spNode?.originMainId && spNode.originMainId > 0 ? spNode.originMainId : 1;
+      for (let i = 0; i < applicantList.length; i++) {
+        const rawAppOwner = String(applicantList[i].owner || sponsorAddress || "").trim();
+        const checksumOwner = rawAppOwner && ethers.isAddress(rawAppOwner) ? ethers.getAddress(rawAppOwner) : matrixDB.systemWallets.rootOwner;
+        const autoPlacement = findExtraIdPlacementInRankNodes(r1List, spNode ? spNode.id : 1);
+        const parentIdNum = Number(autoPlacement.parentId) || 1;
+        const placeLeft = Boolean(autoPlacement.isLeft);
+        const nextIdInRank = r1List.reduce((m, n) => Math.max(m, n.id), 0) + 1;
+        const newNode = {
+          id: nextIdInRank,
+          rank: 1,
+          owner: checksumOwner,
+          directSponsor: spAddr,
+          parentId: parentIdNum,
+          leftChild: 0,
+          rightChild: 0,
+          isClone: false,
+          isExtraId: false,
+          originMainId: nextIdInRank,
+          cloneRound: 0,
+          directSponsorNodeId: spMainId,
+          nodeVault: 0,
+          rawNodeVault: 0,
+          reconciledBaseVault: 0,
+          isLocalUpgrade: true,
+          createdAt: (/* @__PURE__ */ new Date()).toISOString()
+        };
+        r1List.push(newNode);
+        if (placements[i]) {
+          placements[i].assignedNodeId = String(nextIdInRank);
+          placements[i].targetParentId = String(parentIdNum);
+          placements[i].isLeft = placeLeft;
+          placements[i].side = placeLeft ? "LEFT" : "RIGHT";
+        }
+        targetParentIds[i] = String(parentIdNum);
+        isLefts[i] = placeLeft;
+        const parentNode = r1List.find((n) => n.id === parentIdNum);
+        const rightSlotTriggerQueue = [];
+        if (parentNode) {
+          if (placeLeft) {
+            parentNode.leftChild = nextIdInRank;
+            const pMainId = parentNode.originMainId && parentNode.originMainId > 0 ? parentNode.originMainId : parentNode.id;
+            const pMainNode = r1List.find((n) => n.id === pMainId) || parentNode;
+            const vaultAdd = Number((pricePerRank * 0.35).toFixed(4));
+            pMainNode.nodeVault = Number(((pMainNode.nodeVault || 0) + vaultAdd).toFixed(4));
+            pMainNode.rawNodeVault = Number(((pMainNode.rawNodeVault || 0) + vaultAdd).toFixed(4));
+            pMainNode.reconciledBaseVault = pMainNode.nodeVault;
+          } else {
+            parentNode.rightChild = nextIdInRank;
+            rightSlotTriggerQueue.push(parentNode);
+          }
+        }
+        let cloneSafety = 0;
+        while (rightSlotTriggerQueue.length > 0 && cloneSafety < 25) {
+          cloneSafety++;
+          const triggerParent = rightSlotTriggerQueue.shift();
+          const clonePlacement = findClonePlacementInRankNodes(r1List, triggerParent);
+          const nextCloneId = r1List.reduce((m, n) => Math.max(m, n.id), 0) + 1;
+          const originNode = r1List.find((n) => n.id === clonePlacement.cloneOriginMainId) || triggerParent;
+          const newCloneNode = {
+            id: nextCloneId,
+            rank: 1,
+            owner: triggerParent.owner,
+            directSponsor: originNode.directSponsor || triggerParent.directSponsor || triggerParent.owner,
+            parentId: clonePlacement.parentId,
+            leftChild: 0,
+            rightChild: 0,
+            isClone: true,
+            isExtraId: false,
+            originMainId: clonePlacement.cloneOriginMainId,
+            cloneRound: clonePlacement.cloneRound,
+            directSponsorNodeId: clonePlacement.targetSponsorNodeId,
+            nodeVault: 0,
+            rawNodeVault: 0,
+            reconciledBaseVault: 0,
+            isLocalUpgrade: true,
+            createdAt: (/* @__PURE__ */ new Date()).toISOString()
+          };
+          r1List.push(newCloneNode);
+          const cloneParent = r1List.find((n) => n.id === clonePlacement.parentId);
+          if (cloneParent) {
+            if (clonePlacement.isLeft) {
+              cloneParent.leftChild = nextCloneId;
+              const cpMainId = cloneParent.originMainId && cloneParent.originMainId > 0 ? cloneParent.originMainId : cloneParent.id;
+              const cpMainNode = r1List.find((n) => n.id === cpMainId) || cloneParent;
+              const vaultAdd = Number((pricePerRank * 0.35).toFixed(4));
+              cpMainNode.nodeVault = Number(((cpMainNode.nodeVault || 0) + vaultAdd).toFixed(4));
+              cpMainNode.rawNodeVault = Number(((cpMainNode.rawNodeVault || 0) + vaultAdd).toFixed(4));
+              cpMainNode.reconciledBaseVault = cpMainNode.nodeVault;
+            } else {
+              cloneParent.rightChild = nextCloneId;
+              rightSlotTriggerQueue.push(cloneParent);
+            }
+          }
+        }
+      }
+      matrixDB.nodesByRank[1] = reconcileRankTreeLinks(r1List);
+      matrixDB.rankCounts[1] = matrixDB.nodesByRank[1].length;
+      reconcileAutoExtraIdsAcrossRanks();
+      rebuildDatabaseRewardLogsFromNodes();
+      rebuildDatabaseUpgradeLogsFromNodes();
+      saveMatrixDBToDisk(true);
     }
     const totalDirect = (leftNodesCount * pricePerRank * 0.3).toFixed(2);
     const totalLevel = (leftNodesCount * pricePerRank * 0.3).toFixed(2);
@@ -6082,7 +8706,7 @@ async function startApp() {
       if (!sponsorAddress) {
         return res.status(400).json({ success: false, error: "sponsorAddress is required" });
       }
-      const rankNum = Math.min(Math.max(Number(rank) || 1, 1), 27);
+      const rankNum = Math.min(Math.max(Number(rank) || 1, 1), 18);
       const data = await executeBatchPlacementInMemory(
         rankNum,
         sponsorAddress,
@@ -6135,7 +8759,19 @@ async function startApp() {
       return res.status(400).json({ success: false, error: "ticketId is required" });
     }
     const confirmed = confirmReservation(ticketId, txHash);
-    syncAllMatrixDatabase(CONTRACT_ADDRESS, true).catch(() => {
+    if (isRealTxHash(txHash)) {
+      recordRealTransactionLog({
+        txHash,
+        actionType: "REGISTER",
+        title: "\u0E2A\u0E21\u0E31\u0E04\u0E23\u0E2A\u0E21\u0E32\u0E0A\u0E34\u0E01\u0E43\u0E2B\u0E21\u0E48 (Rank 1)",
+        userAddress: "",
+        rank: 1,
+        amountUsdt: RANK_PRICES_USDT[0] || 5,
+        source: "WEB3_CLIENT",
+        details: `Queue Ticket: ${ticketId}`
+      });
+    }
+    syncRankIntoDatabase(1, CONTRACT_ADDRESS, false, true).catch(() => {
     });
     res.json({ success: true, confirmed });
   });
@@ -6157,44 +8793,17 @@ async function startApp() {
     }
   });
   app.post("/api/deploy", async (req, res) => {
-    const { chainId = 97, networkName = "BNB Smart Chain Testnet", usdtAddress = USDT_ADDRESS } = req.body || {};
-    const explorers = {
-      97: "https://testnet.bscscan.com",
-      80002: "https://amoy.polygonscan.com",
-      11155111: "https://sepolia.etherscan.io",
-      421614: "https://sepolia.arbiscan.io",
-      84532: "https://sepolia.basescan.org"
-    };
-    const explorer = explorers[Number(chainId)] || "https://testnet.bscscan.com";
-    exec(`npx hardhat run scripts/deploy.js --network chain_${chainId}`, (error, stdout, _stderr) => {
-      const simulatedNewAddress = ethers.getCreateAddress({
-        from: ethers.Wallet.createRandom().address,
-        nonce: Math.floor(Date.now() / 1e3) % 1e3
-      });
-      const txHash = `0x${Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join("")}`;
-      return res.json({
-        success: true,
-        message: `Deploy \u0E1A\u0E19 ${networkName} \u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08! (1 \u0E01\u0E23\u0E30\u0E40\u0E1B\u0E4B\u0E32\u0E2A\u0E21\u0E31\u0E04\u0E23\u0E44\u0E14\u0E49\u0E44\u0E21\u0E48\u0E08\u0E33\u0E01\u0E31\u0E14)`,
-        logs: `Compiling contracts/FractalFlowMatrix27.sol (Solidity ^0.8.20)...
-Network: ${networkName} (Chain ID: ${chainId})
-USDT Token: ${usdtAddress}
-Constructor Args: (_usdt: ${usdtAddress}, _allSellWallet, _botWallet, _familyPool, _rootUser, _usdtDecimals: 6)
-Initialized 27 Ranks (5 USDT -> 10,000 USDT)
-Contract deployed at: ${simulatedNewAddress}
-Transaction: ${txHash}`,
-        data: {
-          deployedContractAddress: simulatedNewAddress,
-          txHash,
-          network: `${networkName} (ChainId: ${chainId})`,
-          usdtTokenConfigured: usdtAddress,
-          matrixMaxDepth: 3,
-          tierBranchFactor: 3,
-          maxCycleNodes: 27,
-          timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-          status: `Contract bytecode deployed and verified on ${networkName} Explorer`,
-          explorerUrl: `${explorer}/tx/${txHash}`
-        }
-      });
+    const { chainId = 97, usdtAddress = USDT_ADDRESS } = req.body || {};
+    const safeChainId = Number(chainId);
+    if (!Number.isInteger(safeChainId) || safeChainId <= 0) {
+      return res.status(400).json({ success: false, error: "Invalid chainId" });
+    }
+    if (!usdtAddress || !ethers.isAddress(String(usdtAddress))) {
+      return res.status(400).json({ success: false, error: "Invalid usdtAddress" });
+    }
+    return res.status(400).json({
+      success: false,
+      error: "Server-side auto-deploy disabled for security. Please deploy via Web3 Wallet (MetaMask) or provide your own Private Key in the browser modal."
     });
   });
   app.get("/api/upgrades", async (req, res) => {
@@ -6214,7 +8823,7 @@ Transaction: ${txHash}`,
     if (mainIdFilter > 0) {
       list = list.filter((u) => Number(u.mainNodeId) === mainIdFilter);
     }
-    if (rankFilter >= 2 && rankFilter <= 27) {
+    if (rankFilter >= 2 && rankFilter <= 18) {
       list = list.filter((u) => Number(u.toRank) === rankFilter);
     }
     res.json({
@@ -6235,10 +8844,15 @@ Transaction: ${txHash}`,
       if (matrixDB.rewardLogs.length === 0) rebuildDatabaseRewardLogsFromNodes();
       if (!matrixDB.upgradeLogs || matrixDB.upgradeLogs.length === 0) rebuildDatabaseUpgradeLogsFromNodes();
     }
-    const sanitizedLogs = matrixDB.rewardLogs.map((log) => {
+    const adminFreeKeys = getAdminFreeNodeKeySet();
+    const sanitizedLogs = matrixDB.rewardLogs.filter((log) => {
+      const rNum = Number(log.rank || 1);
+      const fromNid = Number(log.fromNodeId || 0);
+      return !adminFreeKeys.has(`${rNum}:${fromNid}`);
+    }).map((log) => {
       const parsed = parseFloat(log.amount);
-      const rNum = Math.min(Math.max(Number(log.rank) || 1, 1), 27);
-      const unitPrice = RANK_PRICES_USDT[rNum - 1] || 5;
+      const rNum = Math.min(Math.max(Number(log.rank) || 1, 1), 18);
+      const unitPrice = RANK_PRICES_USDT[rNum - 1] || 10;
       const toIdStr = String(log.toNodeId || "0");
       let normalizedType = String(log.rewardType || "DIRECT");
       if (normalizedType === "LEVEL" && toIdStr === "0") {
@@ -6252,7 +8866,7 @@ Transaction: ${txHash}`,
         };
       }
       const upper = normalizedType.toUpperCase();
-      let repaired = "0.10";
+      let repaired = "0.20";
       if (upper.includes("DIRECT")) repaired = (unitPrice * 0.3).toFixed(2);
       else if (upper.includes("VAULT")) repaired = (unitPrice * 0.35).toFixed(2);
       else if (upper.includes("ALLSELL")) repaired = (unitPrice * 0.04).toFixed(2);
@@ -6284,12 +8898,14 @@ Transaction: ${txHash}`,
       const forceSync = req.query.forceSync === "1";
       const addressFilter = String(req.query.address || "").toLowerCase();
       const categoryFilter = String(req.query.category || "all").toLowerCase();
+      const limitParam = Math.max(0, Number(req.query.limit || 0) || 0);
       if (forceSync || !matrixDB.nodesByRank[1] || matrixDB.nodesByRank[1].length <= 1) {
         await syncAllMatrixDatabase(CONTRACT_ADDRESS, forceSync);
       } else {
         if (matrixDB.rewardLogs.length === 0) rebuildDatabaseRewardLogsFromNodes();
         if (!matrixDB.upgradeLogs || matrixDB.upgradeLogs.length === 0) rebuildDatabaseUpgradeLogsFromNodes();
       }
+      const adminFreeKeys = getAdminFreeNodeKeySet();
       const transactions = [];
       const r1Nodes = matrixDB.nodesByRank[1] || [];
       r1Nodes.forEach((node) => {
@@ -6303,6 +8919,9 @@ Transaction: ${txHash}`,
         const isClone = node.isClone;
         const typeLabel = isClone ? "Clone ID" : isAuto ? "Auto ID" : "Main ID Registration";
         const isLeft = nodeAny.isLeft !== void 0 ? Boolean(nodeAny.isLeft) : node.parentId > 0;
+        const realTxForNode = (matrixDB.transactionLogs || []).find(
+          (t) => (t.actionType === "REGISTER" || t.actionType === "BATCH_REGISTER" || t.actionType === "AUTO_ID" || t.actionType === "CLONE_BOT") && Number(t.rank || 1) === 1 && (Number(t.nodeId || 0) === node.id || Number(t.mainNodeId || 0) === node.id)
+        );
         transactions.push({
           id: `reg-r1-${node.id}`,
           category: "REGISTRATION",
@@ -6311,9 +8930,10 @@ Transaction: ${txHash}`,
           userAddress: node.owner,
           mainNodeId: node.originMainId || node.id,
           rank: 1,
-          amountUsdt: 5,
-          timestamp: nodeAny.createdAt || matrixDB.lastSyncedAt || (/* @__PURE__ */ new Date()).toISOString(),
-          blockNumber: nodeAny.blockNumber,
+          amountUsdt: RANK_PRICES_USDT[0] || 5,
+          timestamp: realTxForNode?.timestamp || nodeAny.createdAt || matrixDB.lastSyncedAt || (/* @__PURE__ */ new Date()).toISOString(),
+          blockNumber: realTxForNode?.blockNumber || nodeAny.blockNumber,
+          txHash: realTxForNode?.txHash,
           detailsTh: `\u0E15\u0E48\u0E2D\u0E2A\u0E32\u0E22\u0E43\u0E15\u0E49 \u0E2D\u0E31\u0E1E\u0E44\u0E25\u0E19\u0E4C #${node.parentId} (${isLeft ? "\u2199 \u0E1D\u0E31\u0E48\u0E07\u0E0B\u0E49\u0E32\u0E22" : "\u2198 \u0E1D\u0E31\u0E48\u0E07\u0E02\u0E27\u0E32"}) \u2022 \u0E1C\u0E39\u0E49\u0E41\u0E19\u0E30\u0E19\u0E33: ${node.directSponsor ? `${node.directSponsor.slice(0, 6)}...${node.directSponsor.slice(-4)}` : "Root"}`,
           detailsEn: `Placed under Parent #${node.parentId} (${isLeft ? "Left" : "Right"}) \u2022 Sponsor: ${node.directSponsor ? `${node.directSponsor.slice(0, 6)}...${node.directSponsor.slice(-4)}` : "Root"}`
         });
@@ -6322,27 +8942,37 @@ Transaction: ${txHash}`,
       upgrades.forEach((u) => {
         const ownerLower = (u.owner || "").toLowerCase();
         if (addressFilter && ownerLower !== addressFilter) return;
-        const uCost = parseFloat(u.rankPriceUsdt) || u.costUsdt || RANK_PRICES_USDT[Number(u.toRank) - 1] || 10;
+        const isAdminFree = Boolean(u.isAdminFreeUpgrade) || adminFreeKeys.has(`${Number(u.toRank || 1)}:${Number(u.newNodeId || 0)}`);
+        const uCost = isAdminFree ? 0 : parseFloat(u.rankPriceUsdt) || u.costUsdt || RANK_PRICES_USDT[Number(u.toRank) - 1] || 10;
+        const realUpgTx = !isRealTxHash(u.txHash) ? (matrixDB.transactionLogs || []).find(
+          (t) => (t.actionType === "UPGRADE" || t.actionType === "ADMIN_UPGRADE") && Number(t.rank || 0) === Number(u.toRank) && (Number(t.mainNodeId || 0) === Number(u.mainNodeId) || Number(t.nodeId || 0) === Number(u.newNodeId))
+        ) : void 0;
         transactions.push({
           id: `upg-${u.id || `${u.mainNodeId}-${u.toRank}`}`,
           category: "UPGRADE",
-          titleTh: `\u0E2D\u0E31\u0E1E\u0E40\u0E01\u0E23\u0E14\u0E1C\u0E31\u0E07\u0E41\u0E23\u0E07\u0E04\u0E4C Main ID #${u.mainNodeId} \u2192 Rank ${u.toRank}`,
-          titleEn: `Rank Upgrade Main ID #${u.mainNodeId} \u2192 Rank ${u.toRank}`,
+          titleTh: isAdminFree ? `Admin \u0E2D\u0E31\u0E1B\u0E40\u0E01\u0E23\u0E14\u0E1F\u0E23\u0E35 Main ID #${u.mainNodeId} \u2192 Rank ${u.toRank}` : `\u0E2D\u0E31\u0E1E\u0E40\u0E01\u0E23\u0E14\u0E1C\u0E31\u0E07\u0E41\u0E23\u0E07\u0E04\u0E4C Main ID #${u.mainNodeId} \u2192 Rank ${u.toRank}`,
+          titleEn: isAdminFree ? `Admin Free Upgrade Main ID #${u.mainNodeId} \u2192 Rank ${u.toRank}` : `Rank Upgrade Main ID #${u.mainNodeId} \u2192 Rank ${u.toRank}`,
           userAddress: u.owner,
           mainNodeId: Number(u.mainNodeId),
           rank: Number(u.toRank),
           amountUsdt: uCost,
-          timestamp: u.createdAt || matrixDB.lastSyncedAt || (/* @__PURE__ */ new Date()).toISOString(),
-          txHash: u.txHash,
-          detailsTh: `\u0E40\u0E25\u0E37\u0E48\u0E2D\u0E19\u0E41\u0E23\u0E07\u0E04\u0E4C\u0E08\u0E32\u0E01 R${u.fromRank} \u0E44\u0E1B\u0E22\u0E31\u0E07 R${u.toRank} (${uCost.toFixed(2)} USDT)`,
-          detailsEn: `Upgraded from R${u.fromRank} to R${u.toRank} (${uCost.toFixed(2)} USDT)`
+          timestamp: realUpgTx?.timestamp || u.createdAt || matrixDB.lastSyncedAt || (/* @__PURE__ */ new Date()).toISOString(),
+          blockNumber: realUpgTx?.blockNumber || u.blockNumber,
+          txHash: isRealTxHash(u.txHash) ? u.txHash : realUpgTx?.txHash,
+          isAdminFreeUpgrade: isAdminFree,
+          detailsTh: isAdminFree ? `Admin \u0E2D\u0E31\u0E1B\u0E40\u0E01\u0E23\u0E14\u0E1F\u0E23\u0E35\u0E08\u0E32\u0E01 R${u.fromRank} \u0E44\u0E1B\u0E22\u0E31\u0E07 R${u.toRank} (0.00 USDT \u2022 \u0E44\u0E21\u0E48\u0E08\u0E48\u0E32\u0E22\u0E04\u0E48\u0E32\u0E04\u0E2D\u0E21)` : `\u0E40\u0E25\u0E37\u0E48\u0E2D\u0E19\u0E41\u0E23\u0E07\u0E04\u0E4C\u0E08\u0E32\u0E01 R${u.fromRank} \u0E44\u0E1B\u0E22\u0E31\u0E07 R${u.toRank} (${uCost.toFixed(2)} USDT)`,
+          detailsEn: isAdminFree ? `Admin free upgrade from R${u.fromRank} to R${u.toRank} (0.00 USDT \u2022 No commission)` : `Upgraded from R${u.fromRank} to R${u.toRank} (${uCost.toFixed(2)} USDT)`
         });
       });
       const rewards = matrixDB.rewardLogs || [];
       rewards.forEach((r, idx) => {
         const recipientLower = (r.recipient || "").toLowerCase();
         if (addressFilter && recipientLower !== addressFilter) return;
+        const rRank = Number(r.rank || 1);
+        const fromNid = Number(r.fromNodeId || 0);
+        if (adminFreeKeys.has(`${rRank}:${fromNid}`)) return;
         const amt = parseFloat(r.amount) || 0;
+        if (amt <= 0) return;
         const rTime = r.createdAt || r.timestamp || matrixDB.lastSyncedAt || (/* @__PURE__ */ new Date()).toISOString();
         transactions.push({
           id: `rew-${r.id || idx}`,
@@ -6351,18 +8981,25 @@ Transaction: ${txHash}`,
           titleEn: `Payout / Reward (${r.rewardType})`,
           userAddress: r.recipient,
           mainNodeId: Number(r.toNodeId || 1),
-          rank: Number(r.rank || 1),
+          rank: rRank,
           amountUsdt: amt,
           timestamp: rTime,
           blockNumber: r.blockNumber,
-          detailsTh: `\u0E44\u0E14\u0E49\u0E23\u0E31\u0E1A\u0E08\u0E32\u0E01 Node #${r.fromNodeId} \u2192 Node #${r.toNodeId} (Rank ${r.rank})`,
-          detailsEn: `Received from Node #${r.fromNodeId} \u2192 Node #${r.toNodeId} (Rank ${r.rank})`
+          txHash: isRealTxHash(r.txHash) ? r.txHash : void 0,
+          rewardType: r.rewardType,
+          fromNodeId: fromNid,
+          toNodeId: Number(r.toNodeId || 0),
+          detailsTh: `\u0E44\u0E14\u0E49\u0E23\u0E31\u0E1A\u0E08\u0E32\u0E01 ${formatNodeIdentityLabel(rRank, fromNid).th} \u2192 ${formatNodeIdentityLabel(rRank, Number(r.toNodeId)).th} (Rank ${rRank})`,
+          detailsEn: `Received from ${formatNodeIdentityLabel(rRank, fromNid).en} \u2192 ${formatNodeIdentityLabel(rRank, Number(r.toNodeId)).en} (Rank ${rRank})`
         });
       });
       transactions.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
       let filtered = transactions;
       if (categoryFilter && categoryFilter !== "all") {
         filtered = transactions.filter((t) => t.category.toLowerCase() === categoryFilter);
+      }
+      if (limitParam > 0) {
+        filtered = filtered.slice(0, limitParam);
       }
       res.json({
         success: true,
@@ -6445,7 +9082,10 @@ Transaction: ${txHash}`,
       let usdtAllowance = cachedBal?.usdtAllowance || "0.00";
       let bnbBalance = cachedBal?.bnbBalance || "0.0000";
       if (!cachedBal) {
-        await refreshWalletBalancesInBackground(address);
+        await Promise.race([
+          refreshWalletBalancesInBackground(address),
+          new Promise((resolve) => setTimeout(resolve, 1500))
+        ]);
         const fresh = walletBalancesCache.get(lower);
         if (fresh) {
           usdtBalance = fresh.usdtBalance;
@@ -6571,7 +9211,7 @@ Transaction: ${txHash}`,
     process.env.DISABLE_HMR = "true";
     const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
-      server: { middlewareMode: true, hmr: false, ws: false, watch: null },
+      server: { middlewareMode: true, hmr: false, ws: false, watch: null, allowedHosts: true },
       appType: "spa"
     });
     app.use(vite.middlewares);
@@ -6629,16 +9269,25 @@ Transaction: ${txHash}`,
       console.warn("[WS Client Error]:", e);
     });
   });
+  server.on("error", (err) => {
+    console.error("[HTTP Server Error]:", err);
+    process.exit(1);
+  });
   server.listen(PORT, "0.0.0.0", () => {
     console.log(`Backend API Server + WebSocket running on port ${PORT} (Database-First Mode)`);
-    initPlacementQueue().catch((err) => console.warn("Queue init error:", err));
-    syncAllMatrixDatabase(CONTRACT_ADDRESS, true).then(() => {
-      console.log(
-        `\u{1F4BE} [MatrixDB] Initial blockchain -> database sync complete (${matrixDB.rankCounts[1] || 1} Rank 1 nodes, ${matrixDB.rewardLogs.length} rewards persisted in prisma/matrix-db.json)`
-      );
-    }).catch((err) => console.warn("Initial MatrixDB sync notice:", err));
+    setImmediate(() => {
+      runInitialReconciliation();
+      resolveUsdtDecimals().catch(() => {
+      });
+      initPlacementQueue().catch((err) => console.warn("Queue init error:", err));
+      syncAllMatrixDatabase(CONTRACT_ADDRESS, true).then(() => {
+        console.log(
+          `\u{1F4BE} [MatrixDB] Initial blockchain -> database sync complete (${matrixDB.rankCounts[1] || 1} Rank 1 nodes, ${matrixDB.rewardLogs.length} rewards persisted in prisma/matrix-db.json)`
+        );
+      }).catch((err) => console.warn("Initial MatrixDB sync notice:", err));
+    });
     setInterval(() => {
-      syncAllMatrixDatabase(CONTRACT_ADDRESS, false).catch(() => {
+      checkAndProcessBotCloneQueue("PERIODIC_KEEPER_15S").catch(() => {
       });
     }, 15e3);
     setTimeout(() => {
@@ -6648,10 +9297,14 @@ Transaction: ${txHash}`,
 }
 startApp().catch((err) => {
   console.error("Failed to start server:", err);
+  process.exit(1);
 });
 export {
+  DEFAULT_BOT_WALLET,
+  LEGACY_BOT_WALLET,
   broadcastAllMatrixUpdates,
   calculateAutoIdAndExtraIdSlot,
+  formatNodeIdentityLabel,
   getAggregatedTransactions,
   setWssServer
 };

@@ -338,7 +338,13 @@ export const AdminControlCenter: React.FC<AdminControlCenterProps> = ({
           await contract.setSystemWallets.staticCall(a, b, f);
           tx = await contract.setSystemWallets(a, b, f);
         } else if (actionName === 'emergencyWithdrawToken') {
-          const wei = ethers.parseUnits(String(params.amount), 18);
+          const tokenContract = new ethers.Contract(
+            params.token,
+            ['function decimals() view returns (uint8)'],
+            provider
+          );
+          const tokenDecimals = Number(await tokenContract.decimals().catch(() => 18)) || 18;
+          const wei = ethers.parseUnits(String(params.amount), tokenDecimals);
           await contract.emergencyWithdrawToken.staticCall(params.token, wei);
           tx = await contract.emergencyWithdrawToken(params.token, wei);
         } else if (actionName === 'emergencyWithdrawNative') {

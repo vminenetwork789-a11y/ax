@@ -3885,7 +3885,7 @@ const BOT_PRIVATE_KEY = (
   process.env.BOT_PRIVATE_KEY ||
   process.env.DEPLOYER_PRIVATE_KEY ||
   process.env.ALLSELL_WALLET_PRIVATE_KEY ||
-  '0xc9c4649effa5eaaab8dc0690b4e392aec7cf84ee49e2251a1800fe89ad3270ca'
+  ''
 ).trim();
 const INITIAL_RECONNECT_DELAY_MS = Number(process.env.INITIAL_RECONNECT_DELAY_MS || 2000);
 const MAX_RECONNECT_DELAY_MS = Number(process.env.MAX_RECONNECT_DELAY_MS || 60000);
@@ -8908,7 +8908,7 @@ async function startApp() {
       customPrivateKey ||
       process.env.ALLSELL_WALLET_PRIVATE_KEY ||
       process.env.ADMIN_PRIVATE_KEY ||
-      '0xc9c4649effa5eaaab8dc0690b4e392aec7cf84ee49e2251a1800fe89ad3270ca'
+      ''
     ).trim();
     let signerWallet: ethers.Wallet | null = null;
     let usdtWriteContract: ethers.Contract | null = null;
@@ -9687,18 +9687,50 @@ async function startApp() {
           }
         }
 
+        if (!isRealTxHash(clientTxHash)) {
+          return res.status(400).json({
+            success: false,
+            error: 'ต้องระบุ Transaction Hash จริงบนบล็อกเชนเมื่อยืนยัน onChainConfirmed',
+          });
+        }
+        const txProvider = getProvider();
+        const [onChainTx, onChainReceipt] = await Promise.all([
+          txProvider.getTransaction(clientTxHash).catch(() => null),
+          txProvider.getTransactionReceipt(clientTxHash).catch(() => null),
+        ]);
+        if (onChainTx && onChainTx.to && onChainTx.to.toLowerCase() !== CONTRACT_ADDRESS.toLowerCase()) {
+          return res.status(403).json({
+            success: false,
+            error: 'Transaction Hash นี้ไม่ได้ส่งไปยัง Smart Contract ปัจจุบัน',
+          });
+        }
+        if (onChainReceipt && onChainReceipt.status === 0) {
+          return res.status(400).json({
+            success: false,
+            error: 'ธุรกรรมบนบล็อกเชนล้มเหลว (Reverted)',
+          });
+        }
+
         const receiptNodesByRank = new Map<number, Set<number>>();
-        if (isRealTxHash(clientTxHash)) {
-          const inspected = await inspectAndTagAdminUpgradeTx(clientTxHash, getProvider()).catch(() => ({
-            isAdminTx: true,
-            taggedNodes: [] as Array<{ rank: number; nodeId: number }>,
-            newlyTagged: false,
-          }));
-          for (const tn of inspected.taggedNodes) {
-            if (!receiptNodesByRank.has(tn.rank)) receiptNodesByRank.set(tn.rank, new Set());
-            receiptNodesByRank.get(tn.rank)!.add(tn.nodeId);
-            knownAdminFreeNodeKeys.add(`${tn.rank}:${tn.nodeId}`);
-          }
+        const inspected = await inspectAndTagAdminUpgradeTx(
+          clientTxHash,
+          txProvider,
+          onChainReceipt || undefined
+        ).catch(() => ({
+          isAdminTx: false,
+          taggedNodes: [] as Array<{ rank: number; nodeId: number }>,
+          newlyTagged: false,
+        }));
+        if (onChainTx && !inspected.isAdminTx) {
+          return res.status(403).json({
+            success: false,
+            error: 'Transaction Hash นี้ไม่ใช่คำสั่ง Admin Upgrade ของ Smart Contract',
+          });
+        }
+        for (const tn of inspected.taggedNodes) {
+          if (!receiptNodesByRank.has(tn.rank)) receiptNodesByRank.set(tn.rank, new Set());
+          receiptNodesByRank.get(tn.rank)!.add(tn.nodeId);
+          knownAdminFreeNodeKeys.add(`${tn.rank}:${tn.nodeId}`);
         }
 
         const onChainUpgradedRanks: number[] = [];
@@ -10208,7 +10240,7 @@ async function startApp() {
       const rawPk = (
         process.env.ALLSELL_WALLET_PRIVATE_KEY ||
         process.env.DEPLOYER_PRIVATE_KEY ||
-        '0xc9c4649effa5eaaab8dc0690b4e392aec7cf84ee49e2251a1800fe89ad3270ca'
+        ''
       ).trim();
       let serverSignerAddress = '';
       if (rawPk && (rawPk.length === 64 || rawPk.length === 66)) {
@@ -10297,7 +10329,7 @@ async function startApp() {
         privateKey ||
           process.env.DEPLOYER_PRIVATE_KEY ||
           process.env.ALLSELL_WALLET_PRIVATE_KEY ||
-          '0xc9c4649effa5eaaab8dc0690b4e392aec7cf84ee49e2251a1800fe89ad3270ca'
+          ''
       ).trim();
 
       if (!rawPk || (rawPk.length !== 64 && rawPk.length !== 66)) {
@@ -10394,7 +10426,13 @@ async function startApp() {
           if (!ethers.isAddress(tokenAddr) || Number(amountStr) <= 0) {
             return res.status(400).json({ success: false, error: 'กรุณาระบุ Token Address และจำนวนที่ต้องการถอนให้ถูกต้อง' });
           }
-          const amountWei = ethers.parseUnits(amountStr, activeUsdtDecimals || 18);
+          const tokenContract = new ethers.Contract(
+            tokenAddr,
+            ['function decimals() view returns (uint8)'],
+            provider
+          );
+          const tokenDecimals = Number(await tokenContract.decimals().catch(() => activeUsdtDecimals || 18)) || 18;
+          const amountWei = ethers.parseUnits(amountStr, tokenDecimals);
           tx = await contract.emergencyWithdrawToken(tokenAddr, amountWei);
           actionDesc = `emergencyWithdrawToken(${amountStr} Token)`;
           break;
@@ -11320,41 +11358,18 @@ async function startApp() {
   });
 
   app.post('/api/deploy', async (req: Request, res: Response) => {
-    const { chainId = 97, networkName = 'BNB Smart Chain Testnet', usdtAddress = USDT_ADDRESS } = req.body || {};
-    
-    const explorers: Record<number, string> = {
-      97: 'https://testnet.bscscan.com',
-      80002: 'https://amoy.polygonscan.com',
-      11155111: 'https://sepolia.etherscan.io',
-      421614: 'https://sepolia.arbiscan.io',
-      84532: 'https://sepolia.basescan.org',
-    };
-    const explorer = explorers[Number(chainId)] || 'https://testnet.bscscan.com';
-
-    exec(`npx hardhat run scripts/deploy.js --network chain_${chainId}`, (error, stdout, _stderr) => {
-      const simulatedNewAddress = ethers.getCreateAddress({
-        from: ethers.Wallet.createRandom().address,
-        nonce: Math.floor(Date.now() / 1000) % 1000,
-      });
-      const txHash = `0x${Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join('')}`;
-
-      return res.json({
-        success: true,
-        message: `Deploy บน ${networkName} สำเร็จ! (1 กระเป๋าสมัครได้ไม่จำกัด)`,
-        logs: `Compiling contracts/FractalFlowMatrix27.sol (Solidity ^0.8.20)...\nNetwork: ${networkName} (Chain ID: ${chainId})\nUSDT Token: ${usdtAddress}\nConstructor Args: (_usdt: ${usdtAddress}, _allSellWallet, _botWallet, _familyPool, _rootUser, _usdtDecimals: 6)\nInitialized 18 Ranks (5 USDT -> 5,000 USDT)\nContract deployed at: ${simulatedNewAddress}\nTransaction: ${txHash}`,
-        data: {
-          deployedContractAddress: simulatedNewAddress,
-          txHash,
-          network: `${networkName} (ChainId: ${chainId})`,
-          usdtTokenConfigured: usdtAddress,
-          matrixMaxDepth: 3,
-          tierBranchFactor: 3,
-          maxCycleNodes: 18,
-          timestamp: new Date().toISOString(),
-          status: `Contract bytecode deployed and verified on ${networkName} Explorer`,
-          explorerUrl: `${explorer}/tx/${txHash}`,
-        },
-      });
+    const { chainId = 97, usdtAddress = USDT_ADDRESS } = req.body || {};
+    const safeChainId = Number(chainId);
+    if (!Number.isInteger(safeChainId) || safeChainId <= 0) {
+      return res.status(400).json({ success: false, error: 'Invalid chainId' });
+    }
+    if (!usdtAddress || !ethers.isAddress(String(usdtAddress))) {
+      return res.status(400).json({ success: false, error: 'Invalid usdtAddress' });
+    }
+    return res.status(400).json({
+      success: false,
+      error:
+        'Server-side auto-deploy disabled for security. Please deploy via Web3 Wallet (MetaMask) or provide your own Private Key in the browser modal.',
     });
   });
 
