@@ -1097,6 +1097,31 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
   }, [botWalletEditInput, botWalletLiveData?.botWallet, fetchBotWalletHistory, systemPoolsData]);
   const [isRunningAllSellAuto, setIsRunningAllSellAuto] = useState<boolean>(false);
   const [allSellAutoMsg, setAllSellAutoMsg] = useState<string | null>(null);
+  const [allSellPoolsPgData, setAllSellPoolsPgData] = useState<any>(null);
+  const [isLoadingAllSellPoolsPg, setIsLoadingAllSellPoolsPg] = useState<boolean>(false);
+  const [selectedAllSellPoolTab, setSelectedAllSellPoolTab] = useState<0 | 1 | 2 | 3 | 4>(0);
+  const fetchAllSellPoolsHistory = useCallback(async (poolNum?: number) => {
+    setIsLoadingAllSellPoolsPg(true);
+    try {
+      const qs = poolNum && poolNum >= 1 && poolNum <= 4 ? `?poolNumber=${poolNum}` : '';
+      const res = await fetch(`/api/matrix/allsell-pools-history${qs}`);
+      if (res.ok) {
+        const json = await res.json();
+        if (json?.success) {
+          setAllSellPoolsPgData(json);
+        }
+      }
+    } catch {
+      // Fallback to systemPoolsData.allSellFourPools
+    } finally {
+      setIsLoadingAllSellPoolsPg(false);
+    }
+  }, []);
+  useEffect(() => {
+    if (isSystemPoolsModalOpen) {
+      fetchAllSellPoolsHistory();
+    }
+  }, [isSystemPoolsModalOpen, fetchAllSellPoolsHistory]);
   const [isAutoExtraAlertModalOpen, setIsAutoExtraAlertModalOpen] = useState<boolean>(false);
   const [autoExtraAlertTab, setAutoExtraAlertTab] = useState<
     'all' | 'auto' | 'extra' | 'pool' | 'mine'
@@ -12310,7 +12335,10 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                     const data = await res.json();
                     if (data.success) {
                       setAllSellAutoMsg(data.message || 'ตัดรอบจ่าย AllSell อัตโนมัติสำเร็จ!');
-                      const refreshRes = await fetch('/api/matrix/per-id-history');
+                      const [refreshRes] = await Promise.all([
+                        fetch('/api/matrix/per-id-history'),
+                        fetchAllSellPoolsHistory(),
+                      ]);
                       const refreshJson = await refreshRes.json();
                       if (refreshJson?.success && refreshJson.systemPools) {
                         setSystemPoolsData(refreshJson.systemPools);
@@ -12471,9 +12499,19 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
 
                           <div className="pt-2 border-t border-slate-800 space-y-1 text-[10.5px]">
                             <div className="flex items-center justify-between">
-                              <span className="text-slate-400">ยอดกองนี้ (25%):</span>
+                              <span className="text-slate-400">ยอดเข้ากองนี้สะสม (25%):</span>
                               <span className="font-extrabold text-emerald-400">
                                 +{Number(pool.poolTotalUsdt || 0).toFixed(2)} USDT
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-slate-400">จ่ายออกแล้ว / คงเหลือรอจ่าย:</span>
+                              <span className="font-bold text-slate-200">
+                                <span className="text-amber-300">{Number(pool.poolPaidUsdt || 0).toFixed(2)}</span>
+                                {' / '}
+                                <span className="text-cyan-300">
+                                  {Number(pool.poolRemainingUsdt ?? pool.poolTotalUsdt ?? 0).toFixed(2)} U
+                                </span>
                               </span>
                             </div>
                             <div className="flex items-center justify-between">
@@ -12493,9 +12531,195 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                                   : 'รอผู้ผ่านเงื่อนไข'}
                               </span>
                             </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedAllSellPoolTab(pool.poolNumber as 1 | 2 | 3 | 4);
+                                setSystemPoolsModalTab('allsell');
+                                fetchAllSellPoolsHistory();
+                              }}
+                              className="w-full mt-1 px-2 py-1 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-200 border border-cyan-500/35 text-[10px] font-bold cursor-pointer transition"
+                            >
+                              🗄️ ดูประวัติกองที่ {pool.poolNumber} ใน PostgreSQL
+                            </button>
                           </div>
                         </div>
                       ))}
+                    </div>
+
+                    {/* ประวัติ AllSell แยกตามกองที่ 1–4 จาก PostgreSQL */}
+                    <div className="rounded-xl bg-slate-950/95 border border-cyan-500/30 p-3 space-y-2.5 text-[11px]">
+                      <div className="flex items-center justify-between flex-wrap gap-2 border-b border-slate-800 pb-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-extrabold text-cyan-300 text-xs">
+                            🗄️ ประวัติ AllSell แยกตามแต่ละกอง (PostgreSQL)
+                          </span>
+                          <span className="px-2 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/35 text-emerald-300 text-[10px] font-bold">
+                            {allSellPoolsPgData?.source === 'POSTGRESQL' ? '🐘 PostgreSQL Connected' : '💾 Live Store'}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={isLoadingAllSellPoolsPg}
+                          onClick={() => fetchAllSellPoolsHistory()}
+                          className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-cyan-300 border border-slate-700 text-[10.5px] font-bold cursor-pointer disabled:opacity-50"
+                        >
+                          {isLoadingAllSellPoolsPg ? '⏳ กำลังโหลด...' : '🔄 รีเฟรชจาก DB'}
+                        </button>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {[
+                          { num: 0, label: '📊 ทุกกอง (1–4)' },
+                          { num: 1, label: 'กองที่ 1 (r-11)' },
+                          { num: 2, label: 'กองที่ 2 (r-14)' },
+                          { num: 3, label: 'กองที่ 3 (r-16)' },
+                          { num: 4, label: 'กองที่ 4 (r-18)' },
+                        ].map((tab) => (
+                          <button
+                            key={`allsell-pg-tab-${tab.num}`}
+                            type="button"
+                            onClick={() => setSelectedAllSellPoolTab(tab.num as 0 | 1 | 2 | 3 | 4)}
+                            className={`px-2.5 py-1 rounded-lg text-[10.5px] font-bold border transition cursor-pointer ${
+                              selectedAllSellPoolTab === tab.num
+                                ? 'bg-cyan-600 text-white border-cyan-400 shadow'
+                                : 'bg-slate-900/80 text-slate-300 border-slate-800 hover:text-white'
+                            }`}
+                          >
+                            {tab.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      {(() => {
+                        const pgPoolsList: any[] = Array.isArray(allSellPoolsPgData?.pools)
+                          ? allSellPoolsPgData.pools
+                          : fourPoolsList.map((p: any) => ({
+                              poolNumber: p.poolNumber,
+                              titleTh: p.titleTh,
+                              cumulativeInflowUsdt: Number(p.poolTotalUsdt || 0),
+                              totalDistributedUsdt: Number(p.poolPaidUsdt || 0),
+                              remainingCarriedOverUsdt: Number(p.poolRemainingUsdt ?? p.poolTotalUsdt ?? 0),
+                              cycles: p.recentPoolCycles || [],
+                              inflows: [],
+                              payouts: [],
+                            }));
+                        const visiblePools =
+                          selectedAllSellPoolTab === 0
+                            ? pgPoolsList
+                            : pgPoolsList.filter((p) => Number(p.poolNumber) === selectedAllSellPoolTab);
+
+                        return (
+                          <div
+                            className={`grid gap-2.5 ${
+                              selectedAllSellPoolTab === 0 ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1'
+                            }`}
+                          >
+                            {visiblePools.map((pgPoolItem: any) => {
+                              const cycles: any[] = Array.isArray(pgPoolItem.cycles) ? pgPoolItem.cycles : [];
+                              const inflows: any[] = Array.isArray(pgPoolItem.inflows) ? pgPoolItem.inflows : [];
+                              const payouts: any[] = Array.isArray(pgPoolItem.payouts) ? pgPoolItem.payouts : [];
+                              return (
+                                <div
+                                  key={`pg-pool-hist-${pgPoolItem.poolNumber}`}
+                                  className="rounded-xl bg-slate-900/85 border border-slate-800 p-2.5 space-y-2"
+                                >
+                                  <div className="flex items-center justify-between flex-wrap gap-1 border-b border-slate-800 pb-1.5">
+                                    <span className="font-extrabold text-amber-300 text-[11px]">
+                                      {pgPoolItem.titleTh}
+                                    </span>
+                                    <div className="flex items-center gap-2 text-[10px]">
+                                      <span className="text-emerald-400 font-bold">
+                                        เข้าสะสม: +{Number(pgPoolItem.cumulativeInflowUsdt || 0).toFixed(2)} U
+                                      </span>
+                                      <span className="text-amber-300 font-bold">
+                                        จ่ายแล้ว: {Number(pgPoolItem.totalDistributedUsdt || 0).toFixed(2)} U
+                                      </span>
+                                      <span className="text-cyan-300 font-bold">
+                                        คงเหลือ: {Number(pgPoolItem.remainingCarriedOverUsdt || 0).toFixed(2)} U
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  <div className="space-y-1">
+                                    <div className="text-[10px] text-cyan-300 font-bold">
+                                      รอบตัดจ่ายของกองนี้ ({cycles.length} รอบ) · ยอดเข้า 25% ({pgPoolItem.inflowsCount ?? inflows.length} รายการ) · โอนจ่าย ({pgPoolItem.payoutsCount ?? payouts.length} รายการ)
+                                    </div>
+
+                                    {cycles.length === 0 && inflows.length === 0 && payouts.length === 0 ? (
+                                      <div className="text-[10px] text-slate-500 py-2 text-center bg-slate-950/60 rounded-lg border border-slate-800/70">
+                                        ยังไม่มีประวัติรอบตัดจ่ายหรือยอดเข้าของกองที่ {pgPoolItem.poolNumber} ใน PostgreSQL
+                                      </div>
+                                    ) : (
+                                      <div className="max-h-44 overflow-y-auto space-y-1 pr-1">
+                                        {cycles.slice(0, 10).map((cy: any, cIdx: number) => (
+                                          <div
+                                            key={`pg-cy-${pgPoolItem.poolNumber}-${cIdx}`}
+                                            className="rounded-lg bg-slate-950/90 border border-slate-800 px-2 py-1.5 text-[10px] space-y-0.5"
+                                          >
+                                            <div className="flex items-center justify-between gap-1">
+                                              <span className="text-amber-300 font-bold">
+                                                [{cy.cycleLabelTh || cy.cycleKey}]
+                                              </span>
+                                              <span
+                                                className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                                                  cy.status === 'PAID'
+                                                    ? 'bg-emerald-500/20 text-emerald-300'
+                                                    : 'bg-slate-800 text-slate-300'
+                                                }`}
+                                              >
+                                                {cy.status === 'PAID' ? 'จ่ายแล้ว' : 'ยกยอดสะสม'}
+                                              </span>
+                                            </div>
+                                            <div className="text-slate-300">{cy.noteTh}</div>
+                                            <div className="flex items-center justify-between text-[9.5px] text-slate-400">
+                                              <span>
+                                                พร้อมจ่าย: {Number(cy.poolAvailableUsdt || 0).toFixed(2)} U · จ่ายจริง:{' '}
+                                                {Number(cy.poolDistributedUsdt || 0).toFixed(2)} U · ยกยอด:{' '}
+                                                {Number(cy.poolCarriedOverUsdt || 0).toFixed(2)} U
+                                              </span>
+                                              <span className="text-cyan-400">{formatModalRowTime(cy.executedAt)}</span>
+                                            </div>
+                                          </div>
+                                        ))}
+
+                                        {payouts.slice(0, 10).map((pay: any, pIdx: number) => (
+                                          <div
+                                            key={`pg-pay-${pgPoolItem.poolNumber}-${pIdx}`}
+                                            className="rounded-lg bg-emerald-950/25 border border-emerald-500/30 px-2 py-1 text-[10px] flex items-center justify-between gap-2"
+                                          >
+                                            <span className="text-emerald-200 truncate">
+                                              💸 โอนให้ Main #{pay.mainId} ({String(pay.recipientWallet || '').slice(0, 6)}...
+                                              {String(pay.recipientWallet || '').slice(-4)})
+                                            </span>
+                                            <span className="text-emerald-300 font-bold shrink-0">
+                                              +{Number(pay.amountUsdt || 0).toFixed(2)} U
+                                            </span>
+                                          </div>
+                                        ))}
+
+                                        {inflows.slice(0, 8).map((inf: any, iIdx: number) => (
+                                          <div
+                                            key={`pg-inf-${pgPoolItem.poolNumber}-${iIdx}`}
+                                            className="rounded-lg bg-slate-950/75 border border-cyan-500/20 px-2 py-1 text-[10px] flex items-center justify-between gap-2"
+                                          >
+                                            <span className="text-slate-300 truncate">
+                                              📥 [Rank {inf.rank}] ส่วนแบ่ง 25% จาก R{inf.rank}-#{inf.fromNodeId} (Main #{inf.fromMainId})
+                                            </span>
+                                            <span className="text-cyan-300 font-bold shrink-0">
+                                              +{Number(inf.poolShareUsdt || 0).toFixed(2)} U
+                                            </span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
                 );

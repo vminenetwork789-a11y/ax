@@ -473,6 +473,69 @@ async function ensurePostgresSchema() {
       last_synced_block BIGINT DEFAULT 0,
       updated_at TIMESTAMPTZ DEFAULT NOW()
     );
+    CREATE TABLE IF NOT EXISTS allsell_pool_inflows (
+      id TEXT PRIMARY KEY,
+      contract_address TEXT NOT NULL,
+      pool_number INTEGER NOT NULL,
+      pool_key TEXT NOT NULL,
+      pool_title_th TEXT NOT NULL,
+      rank INTEGER NOT NULL,
+      from_node_id INTEGER NOT NULL,
+      from_main_id INTEGER NOT NULL DEFAULT 0,
+      parent_id INTEGER NOT NULL DEFAULT 0,
+      from_node_type TEXT,
+      total_allsell_usdt NUMERIC(20, 6) NOT NULL,
+      pool_share_usdt NUMERIC(20, 6) NOT NULL,
+      recipient_wallet TEXT,
+      tx_hash TEXT,
+      block_number BIGINT,
+      event_time TIMESTAMPTZ DEFAULT NOW(),
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_allsell_pool_inflows_contract_pool
+      ON allsell_pool_inflows (LOWER(contract_address), pool_number, rank);
+    CREATE TABLE IF NOT EXISTS allsell_pool_history (
+      id TEXT PRIMARY KEY,
+      cycle_id TEXT NOT NULL,
+      contract_address TEXT NOT NULL,
+      pool_number INTEGER NOT NULL,
+      pool_key TEXT NOT NULL,
+      pool_title_th TEXT NOT NULL,
+      cycle_key TEXT NOT NULL,
+      cycle_label_th TEXT NOT NULL,
+      trigger_type TEXT NOT NULL,
+      pool_cumulative_inflow_usdt NUMERIC(20, 6) NOT NULL DEFAULT 0,
+      pool_available_usdt NUMERIC(20, 6) NOT NULL DEFAULT 0,
+      pool_distributed_usdt NUMERIC(20, 6) NOT NULL DEFAULT 0,
+      pool_carried_over_usdt NUMERIC(20, 6) NOT NULL DEFAULT 0,
+      qualified_count INTEGER NOT NULL DEFAULT 0,
+      qualified_main_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+      share_per_id_usdt NUMERIC(20, 6) NOT NULL DEFAULT 0,
+      transfers JSONB NOT NULL DEFAULT '[]'::jsonb,
+      status TEXT NOT NULL DEFAULT 'CARRIED_OVER',
+      note_th TEXT,
+      executed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_allsell_pool_history_contract_pool
+      ON allsell_pool_history (LOWER(contract_address), pool_number, executed_at DESC);
+    CREATE TABLE IF NOT EXISTS allsell_pool_payouts (
+      id TEXT PRIMARY KEY,
+      cycle_id TEXT NOT NULL,
+      pool_history_id TEXT NOT NULL,
+      contract_address TEXT NOT NULL,
+      pool_number INTEGER NOT NULL,
+      pool_key TEXT NOT NULL,
+      pool_title_th TEXT NOT NULL,
+      cycle_key TEXT NOT NULL,
+      main_id INTEGER NOT NULL,
+      recipient_wallet TEXT NOT NULL,
+      amount_usdt NUMERIC(20, 6) NOT NULL,
+      tx_hash TEXT,
+      mode TEXT NOT NULL DEFAULT 'CYCLE_SETTLEMENT',
+      executed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_allsell_pool_payouts_contract_pool
+      ON allsell_pool_payouts (LOWER(contract_address), pool_number, executed_at DESC);
     ALTER TABLE matrix_nodes ADD COLUMN IF NOT EXISTS rank INTEGER NOT NULL DEFAULT 1;
     ALTER TABLE matrix_nodes ADD COLUMN IF NOT EXISTS node_id INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE matrix_nodes ADD COLUMN IF NOT EXISTS owner TEXT;
@@ -485,14 +548,412 @@ async function ensurePostgresSchema() {
   pgSchemaReady = true;
 }
 
-async function clearPostgresTables() {
+const ALLSELL_PAYOUT_FILE_PATH = path.resolve(__dirname, 'prisma/allsell-payouts.json');
+
+interface AllSellPayoutTransferItem {
+  poolNumber: number;
+  poolTitleTh: string;
+  mainId: number;
+  recipientWallet: string;
+  amountUsdt: number;
+  txHash: string;
+  mode: 'ONCHAIN_TRANSFER' | 'CYCLE_SETTLEMENT';
+}
+
+interface AllSellPoolBreakdownItem {
+  poolNumber: number;
+  poolKey: string;
+  poolTitleTh: string;
+  poolCumulativeInflowUsdt: number;
+  poolAvailableUsdt: number;
+  poolDistributedUsdt: number;
+  poolCarriedOverUsdt: number;
+  qualifiedCount: number;
+  qualifiedMainIds: number[];
+  sharePerIdUsdt: number;
+  status: 'PAID' | 'CARRIED_OVER';
+  noteTh: string;
+  transfers: AllSellPayoutTransferItem[];
+}
+
+interface AllSellPayoutCycleRecord {
+  id: string;
+  contractAddress: string;
+  cycleKey: string;
+  cycleLabelTh: string;
+  triggerType: 'AUTO_SCHEDULE' | 'MANUAL_TRIGGER';
+  executedAt: string;
+  totalAllSellPoolUsdt: number;
+  totalDistributedUsdt: number;
+  carriedOverUsdt: number;
+  qualifiedRecipientsCount: number;
+  transfers: AllSellPayoutTransferItem[];
+  poolBreakdowns?: AllSellPoolBreakdownItem[];
+  noteTh: string;
+}
+
+interface AllSellAutoStore {
+  autoEnabled: boolean;
+  lastExecutedCycleKey: string | null;
+  lastExecutedAt: string | null;
+  history: AllSellPayoutCycleRecord[];
+}
+
+function getAllSellFourPoolDefs() {
+  return [
+    {
+      poolNumber: 1,
+      key: 'pool1_r11',
+      titleTh: `กองที่ 1 : r-11 (${(RANK_PRICES_USDT[10] || 300).toLocaleString()} USDT)`,
+      targetRank: 11,
+      targetRankPriceUsdt: RANK_PRICES_USDT[10] || 300,
+      requiredSelfRank: 11,
+      requiredDirectCount: 5,
+      allowedDirectRanks: [8, 9, 10, 11],
+      allowedDirectRanksLabel: 'r-8 หรือ r-9 หรือ r-10 หรือ r-11',
+    },
+    {
+      poolNumber: 2,
+      key: 'pool2_r14',
+      titleTh: `กองที่ 2 : r-14 (${(RANK_PRICES_USDT[13] || 800).toLocaleString()} USDT)`,
+      targetRank: 14,
+      targetRankPriceUsdt: RANK_PRICES_USDT[13] || 800,
+      requiredSelfRank: 14,
+      requiredDirectCount: 2,
+      allowedDirectRanks: [12, 13, 14],
+      allowedDirectRanksLabel: 'r-12 หรือ r-13 หรือ r-14',
+    },
+    {
+      poolNumber: 3,
+      key: 'pool3_r16',
+      titleTh: `กองที่ 3 : r-16 (${(RANK_PRICES_USDT[15] || 2000).toLocaleString()} USDT)`,
+      targetRank: 16,
+      targetRankPriceUsdt: RANK_PRICES_USDT[15] || 2000,
+      requiredSelfRank: 16,
+      requiredDirectCount: 2,
+      allowedDirectRanks: [14, 15, 16],
+      allowedDirectRanksLabel: 'r-14 หรือ r-15 หรือ r-16',
+    },
+    {
+      poolNumber: 4,
+      key: 'pool4_r18',
+      titleTh: `กองที่ 4 : r-18 (${(RANK_PRICES_USDT[17] || 5000).toLocaleString()} USDT)`,
+      targetRank: 18,
+      targetRankPriceUsdt: RANK_PRICES_USDT[17] || 5000,
+      requiredSelfRank: 18,
+      requiredDirectCount: 5,
+      allowedDirectRanks: [16, 17, 18],
+      allowedDirectRanksLabel: 'r-16 หรือ r-17 หรือ r-18',
+    },
+  ];
+}
+
+const loadAllSellAutoStore = (): AllSellAutoStore => {
+  try {
+    if (fs.existsSync(ALLSELL_PAYOUT_FILE_PATH)) {
+      const raw = fs.readFileSync(ALLSELL_PAYOUT_FILE_PATH, 'utf8');
+      const parsed = JSON.parse(raw);
+      return {
+        autoEnabled: parsed.autoEnabled !== false,
+        lastExecutedCycleKey: parsed.lastExecutedCycleKey || null,
+        lastExecutedAt: parsed.lastExecutedAt || null,
+        history: Array.isArray(parsed.history) ? parsed.history : [],
+      };
+    }
+  } catch {
+    // ignore read errors
+  }
+  return {
+    autoEnabled: true,
+    lastExecutedCycleKey: null,
+    lastExecutedAt: null,
+    history: [],
+  };
+};
+
+let allSellAutoStore: AllSellAutoStore = loadAllSellAutoStore();
+
+const saveAllSellAutoStore = () => {
+  try {
+    const dir = path.dirname(ALLSELL_PAYOUT_FILE_PATH);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(ALLSELL_PAYOUT_FILE_PATH, JSON.stringify(allSellAutoStore, null, 2), 'utf8');
+  } catch {
+    // ignore write errors
+  }
+};
+
+function buildPoolBreakdownsFromCycleRecord(record: AllSellPayoutCycleRecord): AllSellPoolBreakdownItem[] {
+  if (Array.isArray(record.poolBreakdowns) && record.poolBreakdowns.length === 4) {
+    return record.poolBreakdowns;
+  }
+  const defs = getAllSellFourPoolDefs();
+  const basePoolShare = Number(((Number(record.totalAllSellPoolUsdt || 0)) * 0.25).toFixed(2));
+  return defs.map((pDef) => {
+    const poolTransfers = (record.transfers || []).filter(
+      (t) => Number(t.poolNumber) === pDef.poolNumber
+    );
+    const poolDist = Number(
+      poolTransfers.reduce((acc, t) => acc + Number(t.amountUsdt || 0), 0).toFixed(2)
+    );
+    const poolAvail = Math.max(basePoolShare, poolDist);
+    const poolCarry = Number(Math.max(0, poolAvail - poolDist).toFixed(2));
+    const qualIds = Array.from(new Set(poolTransfers.map((t) => Number(t.mainId)).filter((id) => id > 0)));
+    const sharePerId =
+      qualIds.length > 0 ? Number((poolDist / qualIds.length).toFixed(2)) : 0;
+    const status: 'PAID' | 'CARRIED_OVER' = poolTransfers.length > 0 ? 'PAID' : 'CARRIED_OVER';
+    return {
+      poolNumber: pDef.poolNumber,
+      poolKey: pDef.key,
+      poolTitleTh: pDef.titleTh,
+      poolCumulativeInflowUsdt: poolAvail,
+      poolAvailableUsdt: poolAvail,
+      poolDistributedUsdt: poolDist,
+      poolCarriedOverUsdt: poolCarry,
+      qualifiedCount: qualIds.length,
+      qualifiedMainIds: qualIds,
+      sharePerIdUsdt: sharePerId,
+      status,
+      noteTh:
+        poolTransfers.length > 0
+          ? `จ่ายให้ผู้ผ่านเกณฑ์ ${qualIds.length} รหัส รวม ${poolDist.toFixed(2)} USDT`
+          : `ยังไม่มีรหัสผ่านเกณฑ์ในรอบนี้ ยกยอด ${poolCarry.toFixed(2)} USDT ไปรอบถัดไป`,
+      transfers: poolTransfers,
+    };
+  });
+}
+
+async function upsertAllSellCycleIntoPgClient(
+  client: pg.PoolClient,
+  record: AllSellPayoutCycleRecord
+) {
+  const breakdowns = buildPoolBreakdownsFromCycleRecord(record);
+  const contractAddr = (record.contractAddress || CONTRACT_ADDRESS).toLowerCase();
+  const executedIso = record.executedAt || new Date().toISOString();
+
+  for (const pb of breakdowns) {
+    const poolHistoryId = `${record.id}-pool${pb.poolNumber}`;
+    await client.query(
+      `INSERT INTO allsell_pool_history (
+         id, cycle_id, contract_address, pool_number, pool_key, pool_title_th,
+         cycle_key, cycle_label_th, trigger_type,
+         pool_cumulative_inflow_usdt, pool_available_usdt, pool_distributed_usdt, pool_carried_over_usdt,
+         qualified_count, qualified_main_ids, share_per_id_usdt, transfers, status, note_th, executed_at
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16, $17::jsonb, $18, $19, $20)
+       ON CONFLICT (id) DO UPDATE SET
+         pool_cumulative_inflow_usdt = EXCLUDED.pool_cumulative_inflow_usdt,
+         pool_available_usdt = EXCLUDED.pool_available_usdt,
+         pool_distributed_usdt = EXCLUDED.pool_distributed_usdt,
+         pool_carried_over_usdt = EXCLUDED.pool_carried_over_usdt,
+         qualified_count = EXCLUDED.qualified_count,
+         qualified_main_ids = EXCLUDED.qualified_main_ids,
+         share_per_id_usdt = EXCLUDED.share_per_id_usdt,
+         transfers = EXCLUDED.transfers,
+         status = EXCLUDED.status,
+         note_th = EXCLUDED.note_th,
+         executed_at = EXCLUDED.executed_at`,
+      [
+        poolHistoryId,
+        record.id,
+        contractAddr,
+        pb.poolNumber,
+        pb.poolKey,
+        pb.poolTitleTh,
+        record.cycleKey,
+        record.cycleLabelTh,
+        record.triggerType,
+        Number(pb.poolCumulativeInflowUsdt || 0).toFixed(6),
+        Number(pb.poolAvailableUsdt || 0).toFixed(6),
+        Number(pb.poolDistributedUsdt || 0).toFixed(6),
+        Number(pb.poolCarriedOverUsdt || 0).toFixed(6),
+        Number(pb.qualifiedCount || 0),
+        JSON.stringify(pb.qualifiedMainIds || []),
+        Number(pb.sharePerIdUsdt || 0).toFixed(6),
+        JSON.stringify(pb.transfers || []),
+        pb.status,
+        pb.noteTh || record.noteTh || '',
+        executedIso,
+      ]
+    );
+
+    for (let idx = 0; idx < (pb.transfers || []).length; idx++) {
+      const tr = pb.transfers[idx];
+      const payoutId = `${poolHistoryId}-id${tr.mainId}-${idx}`;
+      await client.query(
+        `INSERT INTO allsell_pool_payouts (
+           id, cycle_id, pool_history_id, contract_address, pool_number, pool_key, pool_title_th,
+           cycle_key, main_id, recipient_wallet, amount_usdt, tx_hash, mode, executed_at
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+         ON CONFLICT (id) DO UPDATE SET
+           amount_usdt = EXCLUDED.amount_usdt,
+           tx_hash = COALESCE(EXCLUDED.tx_hash, allsell_pool_payouts.tx_hash),
+           mode = EXCLUDED.mode,
+           executed_at = EXCLUDED.executed_at`,
+        [
+          payoutId,
+          record.id,
+          poolHistoryId,
+          contractAddr,
+          pb.poolNumber,
+          pb.poolKey,
+          pb.poolTitleTh,
+          record.cycleKey,
+          Number(tr.mainId || 0),
+          String(tr.recipientWallet || ''),
+          Number(tr.amountUsdt || 0).toFixed(6),
+          tr.txHash || null,
+          tr.mode || 'CYCLE_SETTLEMENT',
+          executedIso,
+        ]
+      );
+    }
+  }
+}
+
+async function saveAllSellCycleToPostgres(record: AllSellPayoutCycleRecord) {
   if (!pgPool || !pgConnected) return;
   try {
     if (!pgSchemaReady) {
       await ensurePostgresSchema();
     }
+    const client = await pgPool.connect();
+    try {
+      await client.query('BEGIN');
+      await upsertAllSellCycleIntoPgClient(client, record);
+      await client.query('COMMIT');
+    } catch (txErr) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw txErr;
+    } finally {
+      client.release();
+    }
+    await refreshPgTableCounts();
+  } catch (e: any) {
+    console.warn('⚠️ [PostgreSQL] saveAllSellCycleToPostgres notice:', e?.message);
+  }
+}
+
+async function hydrateAllSellFromPostgres() {
+  if (!pgPool || !pgConnected || !pgSchemaReady) return;
+  try {
+    const res = await pgPool.query(
+      `SELECT * FROM allsell_pool_history WHERE LOWER(contract_address) = LOWER($1) ORDER BY executed_at DESC, pool_number ASC`,
+      [CONTRACT_ADDRESS]
+    );
+    if (!res.rows || res.rows.length === 0) return;
+
+    const cyclesMap = new Map<string, AllSellPayoutCycleRecord>();
+    for (const row of res.rows) {
+      const cycleId = String(row.cycle_id);
+      const executedAtIso =
+        row.executed_at instanceof Date
+          ? row.executed_at.toISOString()
+          : String(row.executed_at || new Date().toISOString());
+      let rec = cyclesMap.get(cycleId);
+      if (!rec) {
+        rec = {
+          id: cycleId,
+          contractAddress: String(row.contract_address || CONTRACT_ADDRESS),
+          cycleKey: String(row.cycle_key || ''),
+          cycleLabelTh: String(row.cycle_label_th || ''),
+          triggerType:
+            row.trigger_type === 'AUTO_SCHEDULE' ? 'AUTO_SCHEDULE' : 'MANUAL_TRIGGER',
+          executedAt: executedAtIso,
+          totalAllSellPoolUsdt: 0,
+          totalDistributedUsdt: 0,
+          carriedOverUsdt: 0,
+          qualifiedRecipientsCount: 0,
+          transfers: [],
+          poolBreakdowns: [],
+          noteTh: '',
+        };
+        cyclesMap.set(cycleId, rec);
+      }
+
+      const rowTransfers: AllSellPayoutTransferItem[] = Array.isArray(row.transfers)
+        ? row.transfers
+        : [];
+      const rowQualIds: number[] = Array.isArray(row.qualified_main_ids)
+        ? row.qualified_main_ids.map((x: any) => Number(x)).filter((x: number) => x > 0)
+        : [];
+
+      const pb: AllSellPoolBreakdownItem = {
+        poolNumber: Number(row.pool_number),
+        poolKey: String(row.pool_key),
+        poolTitleTh: String(row.pool_title_th),
+        poolCumulativeInflowUsdt: Number(row.pool_cumulative_inflow_usdt || 0),
+        poolAvailableUsdt: Number(row.pool_available_usdt || 0),
+        poolDistributedUsdt: Number(row.pool_distributed_usdt || 0),
+        poolCarriedOverUsdt: Number(row.pool_carried_over_usdt || 0),
+        qualifiedCount: Number(row.qualified_count || 0),
+        qualifiedMainIds: rowQualIds,
+        sharePerIdUsdt: Number(row.share_per_id_usdt || 0),
+        status: row.status === 'PAID' ? 'PAID' : 'CARRIED_OVER',
+        noteTh: String(row.note_th || ''),
+        transfers: rowTransfers,
+      };
+      rec.poolBreakdowns = rec.poolBreakdowns || [];
+      rec.poolBreakdowns.push(pb);
+      rec.totalAllSellPoolUsdt = Number(
+        (rec.totalAllSellPoolUsdt + pb.poolAvailableUsdt).toFixed(2)
+      );
+      rec.totalDistributedUsdt = Number(
+        (rec.totalDistributedUsdt + pb.poolDistributedUsdt).toFixed(2)
+      );
+      rec.carriedOverUsdt = Number((rec.carriedOverUsdt + pb.poolCarriedOverUsdt).toFixed(2));
+      rec.transfers.push(...rowTransfers);
+      rec.qualifiedRecipientsCount = rec.transfers.length;
+    }
+
+    const pgCycles = Array.from(cyclesMap.values()).map((rec) => {
+      rec.poolBreakdowns = (rec.poolBreakdowns || []).sort((a, b) => a.poolNumber - b.poolNumber);
+      rec.noteTh =
+        rec.transfers.length > 0
+          ? `ตัดรอบจ่าย AllSell สำเร็จ (${rec.transfers.length} รายการ รวม ${rec.totalDistributedUsdt.toFixed(2)} USDT • ยกยอดสะสมต่อ ${rec.carriedOverUsdt.toFixed(2)} USDT)`
+          : `ตรวจสอบรอบ ${rec.cycleLabelTh} เรียบร้อยแล้ว (ยังไม่มีรหัสที่ครบเกณฑ์ในรอบนี้ • ยกยอดสะสม ${rec.carriedOverUsdt.toFixed(2)} USDT ไปรอบถัดไปอัตโนมัติ)`;
+      return rec;
+    });
+
+    const existingIds = new Set(allSellAutoStore.history.map((h) => h.id));
+    let added = 0;
+    for (const c of pgCycles) {
+      if (!existingIds.has(c.id)) {
+        allSellAutoStore.history.push(c);
+        existingIds.add(c.id);
+        added++;
+      }
+    }
+    if (added > 0) {
+      allSellAutoStore.history.sort(
+        (a, b) => new Date(b.executedAt).getTime() - new Date(a.executedAt).getTime()
+      );
+      allSellAutoStore.history = allSellAutoStore.history.slice(0, 100);
+      if (allSellAutoStore.history[0]) {
+        allSellAutoStore.lastExecutedCycleKey =
+          allSellAutoStore.lastExecutedCycleKey || allSellAutoStore.history[0].cycleKey;
+        allSellAutoStore.lastExecutedAt =
+          allSellAutoStore.lastExecutedAt || allSellAutoStore.history[0].executedAt;
+      }
+      saveAllSellAutoStore();
+    }
+  } catch (e: any) {
+    console.warn('⚠️ [PostgreSQL] hydrateAllSellFromPostgres notice:', e?.message);
+  }
+}
+
+async function clearPostgresTables() {
+  if (!pgPool || !pgConnected) return;
+  try {
+    if (pgSyncInFlight) {
+      await pgSyncInFlight.catch(() => {});
+    }
+    if (!pgSchemaReady) {
+      await ensurePostgresSchema();
+    }
     await pgPool.query(
-      `TRUNCATE TABLE accounts, wallets, matrix_levels, matrix_nodes, income_channels, activities, matrix_db_snapshots RESTART IDENTITY CASCADE;`
+      `TRUNCATE TABLE accounts, wallets, matrix_levels, matrix_nodes, income_channels, activities, matrix_db_snapshots, allsell_pool_inflows, allsell_pool_history, allsell_pool_payouts RESTART IDENTITY CASCADE;`
     );
     pgTablesCount = {
       accounts: 0,
@@ -501,6 +962,9 @@ async function clearPostgresTables() {
       activities: 0,
       wallets: 0,
       matrix_nodes: 0,
+      allsell_pool_inflows: 0,
+      allsell_pool_history: 0,
+      allsell_pool_payouts: 0,
     };
     console.log('🧹 [PostgreSQL] Cleared all tables cleanly.');
   } catch (e: any) {
@@ -595,6 +1059,7 @@ function initPostgresPool() {
         try {
           await ensurePostgresSchema();
           await hydrateMatrixDBFromPostgres();
+          await hydrateAllSellFromPostgres();
           await syncAllMatrixDBToPostgres();
         } catch (schemaErr: any) {
           pgLastError = schemaErr?.message || String(schemaErr);
@@ -611,7 +1076,17 @@ function initPostgresPool() {
 async function refreshPgTableCounts() {
   if (!pgPool || !pgConnected) return;
   try {
-    const tables = ['accounts', 'matrix_levels', 'income_channels', 'activities', 'wallets', 'matrix_nodes'];
+    const tables = [
+      'accounts',
+      'matrix_levels',
+      'income_channels',
+      'activities',
+      'wallets',
+      'matrix_nodes',
+      'allsell_pool_inflows',
+      'allsell_pool_history',
+      'allsell_pool_payouts',
+    ];
     const counts: Record<string, number> = {};
     for (const t of tables) {
       try {
@@ -973,7 +1448,119 @@ async function syncAllMatrixDBToPostgres() {
           );
         }
 
-        // 7. Persist full JSONB snapshot
+        // 7. Sync AllSell 4-pool inflows (25% per pool from every left-child 4% contribution) & cycle history
+        const contractAddrLower = (matrixDB.contractAddress || CONTRACT_ADDRESS).toLowerCase();
+        const allSellPoolDefs = getAllSellFourPoolDefs();
+        const allSellWalletTarget =
+          matrixDB.systemWallets?.allSellWallet || '0xBeFEB9871a20656aeF7E8d218f751e9C23FAF710';
+        const activeInflowIds: string[] = [];
+
+        for (let rankNum = 1; rankNum <= 18; rankNum++) {
+          const rNodes = matrixDB.nodesByRank[rankNum] || [];
+          if (rNodes.length <= 1) continue;
+          const unitPrice = RANK_PRICES_USDT[rankNum - 1] || 5;
+          const totalAllSellAmt = Number((unitPrice * 0.04).toFixed(4));
+          const poolShareAmt = Number((totalAllSellAmt * 0.25).toFixed(6));
+          const nodesMap = new Map<number, IndexedTreeNode>();
+          for (const n of rNodes) nodesMap.set(n.id, n);
+
+          for (const child of rNodes) {
+            if (child.id <= 1 || child.isAdminFreeUpgrade) continue;
+            const parent = nodesMap.get(child.parentId);
+            if (!parent || parent.leftChild !== child.id) continue;
+
+            const canonMainId =
+              child.originMainId && child.originMainId > 0 ? child.originMainId : child.id;
+            const nodeTypeLabel = child.isExtraId
+              ? 'EXTRA_ID'
+              : child.isClone
+              ? 'CLONE_ID'
+              : 'MAIN_ID';
+
+            const matchRew = (matrixDB.rewardLogs || []).find(
+              (rw) =>
+                String(rw.rewardType || '').toUpperCase() === 'ALLSELL' &&
+                Number(rw.rank || 1) === rankNum &&
+                Number(rw.fromNodeId || 0) === child.id
+            );
+            const matchTx = (matrixDB.transactionLogs || []).find(
+              (t) =>
+                Number(t.rank || 1) === rankNum &&
+                (Number(t.nodeId || 0) === child.id || Number(t.mainNodeId || 0) === canonMainId) &&
+                isRealTxHash(t.txHash)
+            );
+            const txHash = isRealTxHash(matchRew?.txHash)
+              ? matchRew?.txHash
+              : matchTx?.txHash || null;
+            const blockNum = matchRew?.blockNumber || matchTx?.blockNumber || null;
+            const evTime =
+              matchRew?.createdAt ||
+              matchTx?.timestamp ||
+              child.createdAt ||
+              matrixDB.lastSyncedAt ||
+              new Date().toISOString();
+
+            for (const pDef of allSellPoolDefs) {
+              const inflowId = `${contractAddrLower}:r${rankNum}-n${child.id}-p${pDef.poolNumber}`;
+              activeInflowIds.push(inflowId);
+              await client.query(
+                `INSERT INTO allsell_pool_inflows (
+                   id, contract_address, pool_number, pool_key, pool_title_th,
+                   rank, from_node_id, from_main_id, parent_id, from_node_type,
+                   total_allsell_usdt, pool_share_usdt, recipient_wallet, tx_hash, block_number, event_time
+                 )
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                 ON CONFLICT (id) DO UPDATE SET
+                   total_allsell_usdt = EXCLUDED.total_allsell_usdt,
+                   pool_share_usdt = EXCLUDED.pool_share_usdt,
+                   recipient_wallet = EXCLUDED.recipient_wallet,
+                   tx_hash = COALESCE(EXCLUDED.tx_hash, allsell_pool_inflows.tx_hash),
+                   block_number = COALESCE(EXCLUDED.block_number, allsell_pool_inflows.block_number),
+                   event_time = EXCLUDED.event_time`,
+                [
+                  inflowId,
+                  contractAddrLower,
+                  pDef.poolNumber,
+                  pDef.key,
+                  pDef.titleTh,
+                  rankNum,
+                  child.id,
+                  canonMainId,
+                  parent.id,
+                  nodeTypeLabel,
+                  totalAllSellAmt.toFixed(6),
+                  poolShareAmt.toFixed(6),
+                  allSellWalletTarget,
+                  txHash,
+                  blockNum ? Number(blockNum) : null,
+                  evTime,
+                ]
+              );
+            }
+          }
+        }
+
+        if (activeInflowIds.length === 0) {
+          await client.query(
+            `DELETE FROM allsell_pool_inflows WHERE LOWER(contract_address) = LOWER($1)`,
+            [contractAddrLower]
+          );
+        } else {
+          await client.query(
+            `DELETE FROM allsell_pool_inflows WHERE LOWER(contract_address) = LOWER($1) AND NOT (id = ANY($2::text[]))`,
+            [contractAddrLower, activeInflowIds]
+          );
+        }
+
+        for (const cycleRec of allSellAutoStore.history || []) {
+          if (
+            (cycleRec.contractAddress || '').toLowerCase() === contractAddrLower
+          ) {
+            await upsertAllSellCycleIntoPgClient(client, cycleRec);
+          }
+        }
+
+        // 8. Persist full JSONB snapshot
         await client.query(
           `INSERT INTO matrix_db_snapshots (contract_address, payload, last_synced_block, updated_at)
            VALUES ($1, $2::jsonb, $3, NOW())
@@ -3249,6 +3836,84 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
   const spawnedCountByMain = new Map<number, number>();
   const r1EntryPrice = RANK_PRICES_USDT[0] || 5;
 
+  // Build authoritative on-chain Auto ID vs Manual ID evidence from transactionLogs
+  const txLogs = Array.isArray(matrixDB.transactionLogs) ? matrixDB.transactionLogs : [];
+  const autoTxLogs = txLogs.filter(
+    (t) => t.actionType === 'AUTO_ID' && isRealTxHash(t.txHash)
+  );
+  const autoTxHashSet = new Set(autoTxLogs.map((t) => String(t.txHash).toLowerCase()));
+  const confirmedAutoNodeIds = new Set<number>();
+  const confirmedManualNodeIds = new Set<number>();
+  const r1RegLogsByHash = new Map<string, typeof txLogs>();
+  const r1RegHashByNodeId = new Map<number, string>();
+  const explicitUserRegisteredIds = new Set<number>();
+
+  for (const t of txLogs) {
+    if (
+      t.actionType === 'REGISTER' &&
+      Number(t.rank || 1) === 1 &&
+      isRealTxHash(t.txHash)
+    ) {
+      const nId = Number(t.nodeId || t.mainNodeId || 0);
+      const hLower = String(t.txHash).toLowerCase();
+      if (nId > 1) {
+        r1RegHashByNodeId.set(nId, hLower);
+        const arr = r1RegLogsByHash.get(hLower) || [];
+        arr.push(t);
+        r1RegLogsByHash.set(hLower, arr);
+        const titleStr = String(t.title || '');
+        const detailsStr = String(t.details || '');
+        if (
+          titleStr.startsWith('สมัครสมาชิก Main ID #') ||
+          detailsStr.startsWith('Sponsor #')
+        ) {
+          explicitUserRegisteredIds.add(nId);
+        }
+      }
+    }
+  }
+
+  for (const autoLog of autoTxLogs) {
+    const hLower = String(autoLog.txHash).toLowerCase();
+    const explicitNodeId = Number(autoLog.nodeId || autoLog.mainNodeId || 0);
+    if (explicitNodeId > 1) {
+      confirmedAutoNodeIds.add(explicitNodeId);
+      continue;
+    }
+    const autoOwner = String(autoLog.userAddress || '').toLowerCase();
+    const autoCount = Math.max(
+      1,
+      Math.round(Number(autoLog.amountUsdt || r1EntryPrice) / r1EntryPrice)
+    );
+    const sameTxRegs = (r1RegLogsByHash.get(hLower) || [])
+      .filter((r) => {
+        const rid = Number(r.nodeId || r.mainNodeId || 0);
+        if (rid <= 1 || explicitUserRegisteredIds.has(rid)) return false;
+        const rn = byIdR1.get(rid);
+        if (!rn || rn.isClone || rn.isExtraId) return false;
+        return !autoOwner || (rn.owner || '').toLowerCase() === autoOwner;
+      })
+      .sort(
+        (a, b) =>
+          Number(a.nodeId || a.mainNodeId || 0) - Number(b.nodeId || b.mainNodeId || 0)
+      );
+    // _checkAutoNewMainId runs AFTER manual register/upgrade placement inside the same tx
+    const picked = sameTxRegs.slice(-autoCount);
+    for (const pLog of picked) {
+      const rid = Number(pLog.nodeId || pLog.mainNodeId || 0);
+      if (rid > 1) confirmedAutoNodeIds.add(rid);
+    }
+  }
+
+  if (autoTxLogs.length > 0) {
+    for (const [nId, hLower] of r1RegHashByNodeId.entries()) {
+      if (confirmedAutoNodeIds.has(nId)) continue;
+      if (explicitUserRegisteredIds.has(nId) || !autoTxHashSet.has(hLower)) {
+        confirmedManualNodeIds.add(nId);
+      }
+    }
+  }
+
   for (const n of sortedR1) {
     if (!n.isClone && !n.isExtraId) {
       n.originType = n.isSyntheticExtra ? 'AUTO_NEW_MAIN' : 'MANUAL_REGISTER';
@@ -3268,7 +3933,8 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
         n.originType = 'AUTO_NEW_MAIN';
         autoMainSourceMap.set(n.id, synSource);
         spawnedCountByMain.set(synSource, (spawnedCountByMain.get(synSource) || 0) + 1);
-      } else if (n.id > firstMain) {
+      } else if (n.id > firstMain && !confirmedManualNodeIds.has(n.id)) {
+        const isConfirmedOnChainAuto = confirmedAutoNodeIds.has(n.id);
         const explicitSpId = n.directSponsorNodeId || 0;
         const priorMains = (ownerAllMainsMap.get(oKey) || []).filter((mId) => {
           if (mId >= n.id) return false;
@@ -3278,6 +3944,7 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
           if (curSpawns >= maxSpawns) return false;
           // กฎเหล็กการจัดวางบนสัญญา (_findPlacementSpot): Auto ID ที่เกิดจาก mId จะต้องวางอยู่ใต้สายงาน/โคลนของ mId เท่านั้น
           if (!isPlacedUnderMainOrClonesR1(mId, n.id)) return false;
+          if (isConfirmedOnChainAuto) return true;
           const mNode = byIdR1.get(mId);
           const mSpId = mNode?.directSponsorNodeId || 1;
           return explicitSpId === 0 || explicitSpId === mId || explicitSpId === mSpId;
@@ -3290,7 +3957,7 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
           sourceMain = priorMains.find((mId) => {
             if (usedExtraR2To3.has(mId)) return false;
             const minReqR1Id = extraR2To3MinR1IdByMain.get(mId) || mId;
-            if (n.id <= minReqR1Id) return false;
+            if (!isConfirmedOnChainAuto && n.id <= minReqR1Id) return false;
             const r1Bal = simAutoVaultByMain.get(mId) || 0;
             const extraBal = extraR2To3VaultByMain.get(mId) || 0;
             return r1Bal + extraBal + 1e-6 >= r1EntryPrice;
@@ -3305,6 +3972,22 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
               )
             );
           }
+        }
+
+        if (sourceMain === undefined && isConfirmedOnChainAuto) {
+          const fallbackPriorMains = (ownerAllMainsMap.get(oKey) || []).filter(
+            (mId) =>
+              mId < n.id &&
+              getMainWindow5Start(mId) > 1 &&
+              (expectedAutoSpawnsByMain.get(mId) || 0) > (spawnedCountByMain.get(mId) || 0) &&
+              isPlacedUnderMainOrClonesR1(mId, n.id)
+          );
+          sourceMain =
+            fallbackPriorMains[fallbackPriorMains.length - 1] ??
+            (ownerAllMainsMap.get(oKey) || []).find(
+              (mId) => mId < n.id && getMainWindow5Start(mId) > 1
+            ) ??
+            firstMain;
         }
 
         if (sourceMain !== undefined) {
@@ -6653,12 +7336,12 @@ async function startApp() {
           if (fromBlk <= 0) break;
         }
 
-        if (newlyTaggedAdminNodes) {
+        addedCount = Math.max(0, (matrixDB.transactionLogs || []).length - beforeLen);
+        if (newlyTaggedAdminNodes || addedCount > 0) {
           reconcileAutoExtraIdsAcrossRanks();
           rebuildDatabaseRewardLogsFromNodes();
           rebuildDatabaseUpgradeLogsFromNodes();
         }
-        addedCount = Math.max(0, (matrixDB.transactionLogs || []).length - beforeLen);
         lastChainTxSyncAt = Date.now();
         saveMatrixDBToDisk();
       } catch (err) {
@@ -6791,14 +7474,14 @@ async function startApp() {
           }
         }
 
+        if (force || Date.now() - lastChainTxSyncAt > 45000 || (matrixDB.transactionLogs || []).length === 0) {
+          await syncRecentOnChainTxHashes(targetContract, 35000).catch(() => {});
+        }
         reconcileAutoExtraIdsAcrossRanks();
         rebuildDatabaseRewardLogsFromNodes();
         rebuildDatabaseUpgradeLogsFromNodes();
         matrixDB.lastSyncedAt = new Date().toISOString();
         saveMatrixDBToDisk();
-        if (force || Date.now() - lastChainTxSyncAt > 45000 || (matrixDB.transactionLogs || []).length === 0) {
-          syncRecentOnChainTxHashes(targetContract, 35000).catch(() => {});
-        }
         syncAllMatrixDBToPostgres().catch(() => {});
       } catch (err) {
         console.warn('[MatrixDB Full Sync] Notice:', err);
@@ -8456,57 +9139,34 @@ async function startApp() {
       const eligibleMainReports = allReports.filter((r) => !r.isClone && !r.isExtraId);
 
       // เงื่อนไข AllSell 4 กอง (แบ่งยอด AllSell 4% ออกเป็น 4 กอง กองละ 25% = 1% ต่อเม็ดซ้าย)
-      const ALLSELL_FOUR_POOL_DEFS = [
-        {
-          poolNumber: 1,
-          key: 'pool1_r11',
-          titleTh: `กองที่ 1 : r-11 (${(RANK_PRICES_USDT[10] || 300).toLocaleString()} USDT)`,
-          targetRank: 11,
-          targetRankPriceUsdt: RANK_PRICES_USDT[10] || 300,
-          requiredSelfRank: 11,
-          requiredDirectCount: 5,
-          allowedDirectRanks: [8, 9, 10, 11],
-          allowedDirectRanksLabel: 'r-8 หรือ r-9 หรือ r-10 หรือ r-11',
-        },
-        {
-          poolNumber: 2,
-          key: 'pool2_r14',
-          titleTh: `กองที่ 2 : r-14 (${(RANK_PRICES_USDT[13] || 800).toLocaleString()} USDT)`,
-          targetRank: 14,
-          targetRankPriceUsdt: RANK_PRICES_USDT[13] || 800,
-          requiredSelfRank: 14,
-          requiredDirectCount: 2,
-          allowedDirectRanks: [12, 13, 14],
-          allowedDirectRanksLabel: 'r-12 หรือ r-13 หรือ r-14',
-        },
-        {
-          poolNumber: 3,
-          key: 'pool3_r16',
-          titleTh: `กองที่ 3 : r-16 (${(RANK_PRICES_USDT[15] || 2000).toLocaleString()} USDT)`,
-          targetRank: 16,
-          targetRankPriceUsdt: RANK_PRICES_USDT[15] || 2000,
-          requiredSelfRank: 16,
-          requiredDirectCount: 2,
-          allowedDirectRanks: [14, 15, 16],
-          allowedDirectRanksLabel: 'r-14 หรือ r-15 หรือ r-16',
-        },
-        {
-          poolNumber: 4,
-          key: 'pool4_r18',
-          titleTh: `กองที่ 4 : r-18 (${(RANK_PRICES_USDT[17] || 5000).toLocaleString()} USDT)`,
-          targetRank: 18,
-          targetRankPriceUsdt: RANK_PRICES_USDT[17] || 5000,
-          requiredSelfRank: 18,
-          requiredDirectCount: 5,
-          allowedDirectRanks: [16, 17, 18],
-          allowedDirectRanksLabel: 'r-16 หรือ r-17 หรือ r-18',
-        },
-      ];
+      const ALLSELL_FOUR_POOL_DEFS = getAllSellFourPoolDefs();
 
       const poolQualifiedIdsMap = new Map<number, number[]>();
       for (const pDef of ALLSELL_FOUR_POOL_DEFS) {
         poolQualifiedIdsMap.set(pDef.poolNumber, []);
       }
+
+      const activeContractCycles = (allSellAutoStore.history || []).filter(
+        (h) => (h.contractAddress || '').toLowerCase() === (matrixDB.contractAddress || '').toLowerCase()
+      );
+      const getPaidForPool = (poolNum: number) => {
+        let sum = 0;
+        for (const h of activeContractCycles) {
+          if (Array.isArray(h.poolBreakdowns) && h.poolBreakdowns.length > 0) {
+            const pb = h.poolBreakdowns.find((b) => Number(b.poolNumber) === poolNum);
+            if (pb) {
+              sum += Number(pb.poolDistributedUsdt || 0);
+              continue;
+            }
+          }
+          for (const tr of h.transfers || []) {
+            if (Number(tr.poolNumber) === poolNum) {
+              sum += Number(tr.amountUsdt || 0);
+            }
+          }
+        }
+        return Number(sum.toFixed(2));
+      };
 
       // First pass: evaluate each Main ID's direct referrals and qualification per pool
       for (const rep of eligibleMainReports) {
@@ -8536,6 +9196,8 @@ async function startApp() {
             poolQualifiedIdsMap.get(pDef.poolNumber)?.push(rep.id);
           }
           const singlePoolTotalUsdt = Number((allSellTotalUsdt * 0.25).toFixed(2));
+          const poolPaidUsdt = getPaidForPool(pDef.poolNumber);
+          const poolRemainingUsdt = Number(Math.max(0, singlePoolTotalUsdt - poolPaidUsdt).toFixed(2));
           return {
             poolNumber: pDef.poolNumber,
             key: pDef.key,
@@ -8551,6 +9213,8 @@ async function startApp() {
             qualifiedDirectCount,
             isQualified,
             poolTotalUsdt: singlePoolTotalUsdt,
+            poolPaidUsdt,
+            poolRemainingUsdt,
             estimatedShareUsdt: 0,
           };
         });
@@ -8568,9 +9232,31 @@ async function startApp() {
       const allSellFourPools = ALLSELL_FOUR_POOL_DEFS.map((pDef) => {
         const qualifiedIds = poolQualifiedIdsMap.get(pDef.poolNumber) || [];
         const poolTotalUsdt = Number((allSellTotalUsdt * 0.25).toFixed(2));
+        const poolPaidUsdt = getPaidForPool(pDef.poolNumber);
+        const poolRemainingUsdt = Number(Math.max(0, poolTotalUsdt - poolPaidUsdt).toFixed(2));
         const poolOnChainUsdt = Number((onChainAllSellBal * 0.25).toFixed(2));
         const sharePerQualifiedIdUsdt =
-          qualifiedIds.length > 0 ? Number((poolTotalUsdt / qualifiedIds.length).toFixed(2)) : 0;
+          qualifiedIds.length > 0 ? Number((poolRemainingUsdt / qualifiedIds.length).toFixed(2)) : 0;
+
+        const recentPoolCycles = activeContractCycles
+          .map((h) => {
+            const b = buildPoolBreakdownsFromCycleRecord(h).find(
+              (x) => Number(x.poolNumber) === pDef.poolNumber
+            );
+            return b
+              ? {
+                  cycleId: h.id,
+                  cycleKey: h.cycleKey,
+                  cycleLabelTh: h.cycleLabelTh,
+                  triggerType: h.triggerType,
+                  executedAt: h.executedAt,
+                  ...b,
+                }
+              : null;
+          })
+          .filter(Boolean)
+          .slice(0, 15);
+
         return {
           poolNumber: pDef.poolNumber,
           key: pDef.key,
@@ -8584,10 +9270,14 @@ async function startApp() {
           sharePercentOfAllSell: 25,
           payoutScheduleTh: 'จ่ายเงินให้ผู้ผ่านเกณฑ์ ทุกกลางเดือน และ ต้นเดือน (วันที่ 1 และ 15 ของทุกเดือน)',
           poolTotalUsdt,
+          poolPaidUsdt,
+          poolRemainingUsdt,
           poolOnChainUsdt,
           qualifiedMainIds: qualifiedIds,
           qualifiedCount: qualifiedIds.length,
           sharePerQualifiedIdUsdt,
+          cycleHistoryCount: recentPoolCycles.length,
+          recentPoolCycles,
         };
       });
 
@@ -8951,75 +9641,6 @@ async function startApp() {
   // ============================================================================
   // AUTO ALLSELL PAYOUT ENGINE (ตัดรอบและจ่าย AllSell 4 กอง อัตโนมัติ ทุกวันที่ 1 และ 15)
   // ============================================================================
-  const ALLSELL_PAYOUT_FILE_PATH = path.resolve(__dirname, 'prisma/allsell-payouts.json');
-
-  interface AllSellPayoutTransferItem {
-    poolNumber: number;
-    poolTitleTh: string;
-    mainId: number;
-    recipientWallet: string;
-    amountUsdt: number;
-    txHash: string;
-    mode: 'ONCHAIN_TRANSFER' | 'CYCLE_SETTLEMENT';
-  }
-
-  interface AllSellPayoutCycleRecord {
-    id: string;
-    contractAddress: string;
-    cycleKey: string;
-    cycleLabelTh: string;
-    triggerType: 'AUTO_SCHEDULE' | 'MANUAL_TRIGGER';
-    executedAt: string;
-    totalAllSellPoolUsdt: number;
-    totalDistributedUsdt: number;
-    carriedOverUsdt: number;
-    qualifiedRecipientsCount: number;
-    transfers: AllSellPayoutTransferItem[];
-    noteTh: string;
-  }
-
-  interface AllSellAutoStore {
-    autoEnabled: boolean;
-    lastExecutedCycleKey: string | null;
-    lastExecutedAt: string | null;
-    history: AllSellPayoutCycleRecord[];
-  }
-
-  const loadAllSellAutoStore = (): AllSellAutoStore => {
-    try {
-      if (fs.existsSync(ALLSELL_PAYOUT_FILE_PATH)) {
-        const raw = fs.readFileSync(ALLSELL_PAYOUT_FILE_PATH, 'utf8');
-        const parsed = JSON.parse(raw);
-        return {
-          autoEnabled: parsed.autoEnabled !== false,
-          lastExecutedCycleKey: parsed.lastExecutedCycleKey || null,
-          lastExecutedAt: parsed.lastExecutedAt || null,
-          history: Array.isArray(parsed.history) ? parsed.history : [],
-        };
-      }
-    } catch {
-      // ignore read errors
-    }
-    return {
-      autoEnabled: true,
-      lastExecutedCycleKey: null,
-      lastExecutedAt: null,
-      history: [],
-    };
-  };
-
-  let allSellAutoStore: AllSellAutoStore = loadAllSellAutoStore();
-
-  const saveAllSellAutoStore = () => {
-    try {
-      const dir = path.dirname(ALLSELL_PAYOUT_FILE_PATH);
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(ALLSELL_PAYOUT_FILE_PATH, JSON.stringify(allSellAutoStore, null, 2), 'utf8');
-    } catch {
-      // ignore write errors
-    }
-  };
-
   const computeNextAllSellCycleInfo = () => {
     const nowMs = Date.now();
     // Convert to Thailand Time (UTC+7)
@@ -9125,6 +9746,7 @@ async function startApp() {
       pendingPoolUsdt: Number(Math.max(0, allSellTotalUsdt - totalAlreadyPaidUsdt).toFixed(2)),
       onChainAllSellBal,
       totalQualifiedAcrossPools,
+      postgresSynced: pgConnected,
       historyCount: contractHistory.length,
       history: contractHistory.slice(0, 30),
     };
@@ -9147,7 +9769,7 @@ async function startApp() {
     const r1Nodes = matrixDB.nodesByRank[1] || [];
     const eligibleMains = r1Nodes.filter((n) => !n.isClone && !n.isExtraId);
 
-    // Calculate total AllSell 4% across Ranks 1..27
+    // Calculate total AllSell 4% across Ranks 1..18
     let allSellTotalUsdt = 0;
     for (let rankNum = 1; rankNum <= 18; rankNum++) {
       const rNodes = matrixDB.nodesByRank[rankNum] || [];
@@ -9168,43 +9790,31 @@ async function startApp() {
     const contractHistory = allSellAutoStore.history.filter(
       (h) => (h.contractAddress || '').toLowerCase() === (matrixDB.contractAddress || '').toLowerCase()
     );
+    const getPaidForPool = (poolNum: number) => {
+      let sum = 0;
+      for (const h of contractHistory) {
+        if (Array.isArray(h.poolBreakdowns) && h.poolBreakdowns.length > 0) {
+          const pb = h.poolBreakdowns.find((b) => Number(b.poolNumber) === poolNum);
+          if (pb) {
+            sum += Number(pb.poolDistributedUsdt || 0);
+            continue;
+          }
+        }
+        for (const tr of h.transfers || []) {
+          if (Number(tr.poolNumber) === poolNum) {
+            sum += Number(tr.amountUsdt || 0);
+          }
+        }
+      }
+      return Number(sum.toFixed(2));
+    };
+
     const alreadyPaidUsdt = contractHistory.reduce(
       (acc, h) => acc + Number(h.totalDistributedUsdt || 0),
       0
     );
     const distributableAllSellUsdt = Number(Math.max(0, allSellTotalUsdt - alreadyPaidUsdt).toFixed(2));
-    const singlePoolUsdt = Number((distributableAllSellUsdt * 0.25).toFixed(2));
-
-    const poolDefs = [
-      {
-        poolNumber: 1,
-        titleTh: `กองที่ 1 : r-11 (${(RANK_PRICES_USDT[10] || 300).toLocaleString()} USDT)`,
-        requiredSelfRank: 11,
-        requiredDirectCount: 5,
-        allowedDirectRanks: [8, 9, 10, 11],
-      },
-      {
-        poolNumber: 2,
-        titleTh: `กองที่ 2 : r-14 (${(RANK_PRICES_USDT[13] || 800).toLocaleString()} USDT)`,
-        requiredSelfRank: 14,
-        requiredDirectCount: 2,
-        allowedDirectRanks: [12, 13, 14],
-      },
-      {
-        poolNumber: 3,
-        titleTh: `กองที่ 3 : r-16 (${(RANK_PRICES_USDT[15] || 2000).toLocaleString()} USDT)`,
-        requiredSelfRank: 16,
-        requiredDirectCount: 2,
-        allowedDirectRanks: [14, 15, 16],
-      },
-      {
-        poolNumber: 4,
-        titleTh: `กองที่ 4 : r-18 (${(RANK_PRICES_USDT[17] || 5000).toLocaleString()} USDT)`,
-        requiredSelfRank: 18,
-        requiredDirectCount: 5,
-        allowedDirectRanks: [16, 17, 18],
-      },
-    ];
+    const poolDefs = getAllSellFourPoolDefs();
 
     const mainMaxRankMap = new Map<number, number>();
     const mainRanksSetMap = new Map<number, Set<number>>();
@@ -9222,6 +9832,7 @@ async function startApp() {
     }
 
     const transfers: AllSellPayoutTransferItem[] = [];
+    const poolBreakdowns: AllSellPoolBreakdownItem[] = [];
     let totalDistributedUsdt = 0;
     let carriedOverUsdt = 0;
 
@@ -9257,6 +9868,12 @@ async function startApp() {
     }
 
     for (const pDef of poolDefs) {
+      const poolCumulativeInflowUsdt = Number((allSellTotalUsdt * 0.25).toFixed(2));
+      const paidForThisPool = getPaidForPool(pDef.poolNumber);
+      const poolAvailableUsdt = Number(
+        Math.max(0, poolCumulativeInflowUsdt - paidForThisPool).toFixed(2)
+      );
+
       const qualifiedMains = eligibleMains.filter((m) => {
         const maxR = mainMaxRankMap.get(m.id) || 1;
         const rSet = mainRanksSetMap.get(m.id) || new Set([1]);
@@ -9275,13 +9892,35 @@ async function startApp() {
         });
         return qualDirects.length >= pDef.requiredDirectCount;
       });
+      const qualifiedMainIds = qualifiedMains.map((q) => q.id);
 
-      if (qualifiedMains.length === 0 || singlePoolUsdt <= 0) {
-        carriedOverUsdt = Number((carriedOverUsdt + singlePoolUsdt).toFixed(2));
+      if (qualifiedMains.length === 0 || poolAvailableUsdt <= 0) {
+        carriedOverUsdt = Number((carriedOverUsdt + poolAvailableUsdt).toFixed(2));
+        poolBreakdowns.push({
+          poolNumber: pDef.poolNumber,
+          poolKey: pDef.key,
+          poolTitleTh: pDef.titleTh,
+          poolCumulativeInflowUsdt,
+          poolAvailableUsdt,
+          poolDistributedUsdt: 0,
+          poolCarriedOverUsdt: poolAvailableUsdt,
+          qualifiedCount: qualifiedMainIds.length,
+          qualifiedMainIds,
+          sharePerIdUsdt: 0,
+          status: 'CARRIED_OVER',
+          noteTh:
+            poolAvailableUsdt <= 0
+              ? `ยังไม่มียอดรอจ่ายใน${pDef.titleTh} (ยอดสะสมเข้ากอง ${poolCumulativeInflowUsdt.toFixed(2)} USDT • จ่ายแล้ว ${paidForThisPool.toFixed(2)} USDT)`
+              : `ยังไม่มีรหัสผ่านเกณฑ์ใน${pDef.titleTh} • ยกยอด ${poolAvailableUsdt.toFixed(2)} USDT ไปรอบถัดไป`,
+          transfers: [],
+        });
         continue;
       }
 
-      const sharePerId = Number((singlePoolUsdt / qualifiedMains.length).toFixed(2));
+      const sharePerId = Number((poolAvailableUsdt / qualifiedMains.length).toFixed(2));
+      const poolTransfers: AllSellPayoutTransferItem[] = [];
+      let poolDistributedUsdt = 0;
+
       for (const qMain of qualifiedMains) {
         if (sharePerId <= 0) continue;
         let txHash = `0xauto_allsell_p${pDef.poolNumber}_id${qMain.id}_${Date.now().toString(16)}`;
@@ -9312,7 +9951,8 @@ async function startApp() {
         }
 
         totalDistributedUsdt = Number((totalDistributedUsdt + sharePerId).toFixed(2));
-        transfers.push({
+        poolDistributedUsdt = Number((poolDistributedUsdt + sharePerId).toFixed(2));
+        const tItem: AllSellPayoutTransferItem = {
           poolNumber: pDef.poolNumber,
           poolTitleTh: pDef.titleTh,
           mainId: qMain.id,
@@ -9320,8 +9960,31 @@ async function startApp() {
           amountUsdt: sharePerId,
           txHash,
           mode,
-        });
+        };
+        transfers.push(tItem);
+        poolTransfers.push(tItem);
       }
+
+      const poolCarriedOver = Number(Math.max(0, poolAvailableUsdt - poolDistributedUsdt).toFixed(2));
+      carriedOverUsdt = Number((carriedOverUsdt + poolCarriedOver).toFixed(2));
+      poolBreakdowns.push({
+        poolNumber: pDef.poolNumber,
+        poolKey: pDef.key,
+        poolTitleTh: pDef.titleTh,
+        poolCumulativeInflowUsdt,
+        poolAvailableUsdt,
+        poolDistributedUsdt,
+        poolCarriedOverUsdt: poolCarriedOver,
+        qualifiedCount: qualifiedMainIds.length,
+        qualifiedMainIds,
+        sharePerIdUsdt: sharePerId,
+        status: poolTransfers.length > 0 ? 'PAID' : 'CARRIED_OVER',
+        noteTh:
+          poolTransfers.length > 0
+            ? `ตัดจ่าย${pDef.titleTh} สำเร็จ ${poolTransfers.length} รหัส รวม ${poolDistributedUsdt.toFixed(2)} USDT (เฉลี่ย ${sharePerId.toFixed(2)} USDT/รหัส)`
+            : `ยกยอด ${poolCarriedOver.toFixed(2)} USDT ไปรอบถัดไป`,
+        transfers: poolTransfers,
+      });
     }
 
     const nowIso = new Date().toISOString();
@@ -9337,6 +10000,7 @@ async function startApp() {
       carriedOverUsdt,
       qualifiedRecipientsCount: transfers.length,
       transfers,
+      poolBreakdowns,
       noteTh:
         transfers.length > 0
           ? `ตัดรอบจ่าย AllSell สำเร็จ (${transfers.length} รายการ รวม ${totalDistributedUsdt.toFixed(2)} USDT • ยกยอดสะสมต่อ ${carriedOverUsdt.toFixed(2)} USDT)`
@@ -9350,6 +10014,7 @@ async function startApp() {
       allSellAutoStore.history = allSellAutoStore.history.slice(0, 100);
     }
     saveAllSellAutoStore();
+    await saveAllSellCycleToPostgres(record);
     return record;
   };
 
@@ -9397,6 +10062,208 @@ async function startApp() {
       });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // API ดึงประวัติ AllSell แยกตามกองที่ 1..4 จากฐานข้อมูล PostgreSQL
+  app.get('/api/matrix/allsell-pools-history', async (req: Request, res: Response) => {
+    try {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      const poolFilter = Number(req.query.poolNumber || 0);
+      const limit = Math.min(200, Math.max(10, Number(req.query.limit || 50)));
+      const contractAddr = (matrixDB.contractAddress || CONTRACT_ADDRESS).toLowerCase();
+      const poolDefs = getAllSellFourPoolDefs();
+
+      if (pgPool && pgConnected && pgSchemaReady) {
+        const paramsBase: any[] = [contractAddr];
+        const poolWhere =
+          poolFilter >= 1 && poolFilter <= 4
+            ? ` AND pool_number = $2`
+            : '';
+        if (poolFilter >= 1 && poolFilter <= 4) {
+          paramsBase.push(poolFilter);
+        }
+
+        const [inflowsRes, historyRes, payoutsRes, inflowAggRes, payoutAggRes] = await Promise.all([
+          pgPool.query(
+            `SELECT * FROM allsell_pool_inflows WHERE LOWER(contract_address) = LOWER($1)${poolWhere} ORDER BY event_time DESC, rank DESC, from_node_id DESC LIMIT ${limit}`,
+            paramsBase
+          ),
+          pgPool.query(
+            `SELECT * FROM allsell_pool_history WHERE LOWER(contract_address) = LOWER($1)${poolWhere} ORDER BY executed_at DESC, pool_number ASC LIMIT ${limit}`,
+            paramsBase
+          ),
+          pgPool.query(
+            `SELECT * FROM allsell_pool_payouts WHERE LOWER(contract_address) = LOWER($1)${poolWhere} ORDER BY executed_at DESC, pool_number ASC LIMIT ${limit}`,
+            paramsBase
+          ),
+          pgPool.query(
+            `SELECT pool_number, COALESCE(SUM(pool_share_usdt), 0)::numeric(20,6) AS total_inflow, COUNT(*)::int AS inflows_count
+             FROM allsell_pool_inflows WHERE LOWER(contract_address) = LOWER($1) GROUP BY pool_number`,
+            [contractAddr]
+          ),
+          pgPool.query(
+            `SELECT pool_number, COALESCE(SUM(amount_usdt), 0)::numeric(20,6) AS total_paid, COUNT(*)::int AS payouts_count
+             FROM allsell_pool_payouts WHERE LOWER(contract_address) = LOWER($1) GROUP BY pool_number`,
+            [contractAddr]
+          ),
+        ]);
+
+        const inflowMap = new Map<number, { totalInflow: number; count: number }>();
+        for (const r of inflowAggRes.rows) {
+          inflowMap.set(Number(r.pool_number), {
+            totalInflow: Number(r.total_inflow || 0),
+            count: Number(r.inflows_count || 0),
+          });
+        }
+        const payoutMap = new Map<number, { totalPaid: number; count: number }>();
+        for (const r of payoutAggRes.rows) {
+          payoutMap.set(Number(r.pool_number), {
+            totalPaid: Number(r.total_paid || 0),
+            count: Number(r.payouts_count || 0),
+          });
+        }
+
+        const pools = poolDefs
+          .filter((d) => !(poolFilter >= 1 && poolFilter <= 4) || d.poolNumber === poolFilter)
+          .map((d) => {
+            const infStats = inflowMap.get(d.poolNumber) || { totalInflow: 0, count: 0 };
+            const payStats = payoutMap.get(d.poolNumber) || { totalPaid: 0, count: 0 };
+            const cycles = historyRes.rows
+              .filter((r: any) => Number(r.pool_number) === d.poolNumber)
+              .map((r: any) => ({
+                id: r.id,
+                cycleId: r.cycle_id,
+                cycleKey: r.cycle_key,
+                cycleLabelTh: r.cycle_label_th,
+                triggerType: r.trigger_type,
+                poolCumulativeInflowUsdt: Number(r.pool_cumulative_inflow_usdt || 0),
+                poolAvailableUsdt: Number(r.pool_available_usdt || 0),
+                poolDistributedUsdt: Number(r.pool_distributed_usdt || 0),
+                poolCarriedOverUsdt: Number(r.pool_carried_over_usdt || 0),
+                qualifiedCount: Number(r.qualified_count || 0),
+                qualifiedMainIds: Array.isArray(r.qualified_main_ids) ? r.qualified_main_ids : [],
+                sharePerIdUsdt: Number(r.share_per_id_usdt || 0),
+                transfers: Array.isArray(r.transfers) ? r.transfers : [],
+                status: r.status,
+                noteTh: r.note_th,
+                executedAt:
+                  r.executed_at instanceof Date ? r.executed_at.toISOString() : r.executed_at,
+              }));
+            const inflows = inflowsRes.rows
+              .filter((r: any) => Number(r.pool_number) === d.poolNumber)
+              .map((r: any) => ({
+                id: r.id,
+                rank: Number(r.rank),
+                fromNodeId: Number(r.from_node_id),
+                fromMainId: Number(r.from_main_id),
+                parentId: Number(r.parent_id),
+                fromNodeType: r.from_node_type,
+                totalAllSellUsdt: Number(r.total_allsell_usdt || 0),
+                poolShareUsdt: Number(r.pool_share_usdt || 0),
+                txHash: r.tx_hash,
+                blockNumber: r.block_number ? Number(r.block_number) : null,
+                eventTime:
+                  r.event_time instanceof Date ? r.event_time.toISOString() : r.event_time,
+              }));
+            const payouts = payoutsRes.rows
+              .filter((r: any) => Number(r.pool_number) === d.poolNumber)
+              .map((r: any) => ({
+                id: r.id,
+                cycleId: r.cycle_id,
+                cycleKey: r.cycle_key,
+                mainId: Number(r.main_id),
+                recipientWallet: r.recipient_wallet,
+                amountUsdt: Number(r.amount_usdt || 0),
+                txHash: r.tx_hash,
+                mode: r.mode,
+                executedAt:
+                  r.executed_at instanceof Date ? r.executed_at.toISOString() : r.executed_at,
+              }));
+
+            return {
+              ...d,
+              cumulativeInflowUsdt: Number(infStats.totalInflow.toFixed(2)),
+              totalDistributedUsdt: Number(payStats.totalPaid.toFixed(2)),
+              remainingCarriedOverUsdt: Number(
+                Math.max(0, infStats.totalInflow - payStats.totalPaid).toFixed(2)
+              ),
+              inflowsCount: infStats.count,
+              cyclesCount: cycles.length,
+              payoutsCount: payStats.count,
+              cycles,
+              inflows,
+              payouts,
+            };
+          });
+
+        return res.json({
+          success: true,
+          source: 'POSTGRESQL',
+          contractAddress: matrixDB.contractAddress,
+          pools,
+        });
+      }
+
+      // Memory fallback if PostgreSQL is temporarily unavailable
+      const contractCycles = (allSellAutoStore.history || []).filter(
+        (h) => (h.contractAddress || '').toLowerCase() === contractAddr
+      );
+      const pools = poolDefs
+        .filter((d) => !(poolFilter >= 1 && poolFilter <= 4) || d.poolNumber === poolFilter)
+        .map((d) => {
+          const cycles = contractCycles.map((c) => {
+            const b = buildPoolBreakdownsFromCycleRecord(c).find(
+              (x) => x.poolNumber === d.poolNumber
+            )!;
+            return {
+              id: `${c.id}-pool${d.poolNumber}`,
+              cycleId: c.id,
+              cycleKey: c.cycleKey,
+              cycleLabelTh: c.cycleLabelTh,
+              triggerType: c.triggerType,
+              executedAt: c.executedAt,
+              ...b,
+            };
+          });
+          const payouts = cycles.flatMap((c) =>
+            (c.transfers || []).map((t, idx) => ({
+              id: `${c.id}-id${t.mainId}-${idx}`,
+              cycleId: c.cycleId,
+              cycleKey: c.cycleKey,
+              mainId: t.mainId,
+              recipientWallet: t.recipientWallet,
+              amountUsdt: t.amountUsdt,
+              txHash: t.txHash,
+              mode: t.mode,
+              executedAt: c.executedAt,
+            }))
+          );
+          const totalPaid = Number(
+            payouts.reduce((acc, p) => acc + Number(p.amountUsdt || 0), 0).toFixed(2)
+          );
+          return {
+            ...d,
+            cumulativeInflowUsdt: 0,
+            totalDistributedUsdt: totalPaid,
+            remainingCarriedOverUsdt: 0,
+            inflowsCount: 0,
+            cyclesCount: cycles.length,
+            payoutsCount: payouts.length,
+            cycles,
+            inflows: [],
+            payouts,
+          };
+        });
+
+      return res.json({
+        success: true,
+        source: 'MEMORY_FALLBACK',
+        contractAddress: matrixDB.contractAddress,
+        pools,
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'Database error' });
     }
   });
 
