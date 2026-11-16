@@ -1044,7 +1044,7 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
   const needsUsdtApproval = Number(allowance || 0) < walletNeededForNextRank;
 
   return (
-    <div className="relative min-h-[calc(100vh-56px)] w-full rounded-2xl overflow-x-hidden bg-gradient-to-br from-[#043b9c] via-[#087fe9] via-25% to-[#e7f6ff] text-[#09265f] pb-28">
+    <div className="relative min-h-screen w-full overflow-x-hidden bg-gradient-to-br from-[#043b9c] via-[#087fe9] via-25% to-[#e7f6ff] text-[#09265f] pb-28">
       {/* Subtle Sparkle Starfield Overlay matching prototype */}
       <div className="pointer-events-none fixed inset-0 opacity-60 bg-[radial-gradient(circle_at_17%_12%,#8efaff_0_1px,transparent_3px),radial-gradient(circle_at_68%_8%,#ffffff_0_2px,transparent_4px),radial-gradient(circle_at_83%_23%,#72e5ff_0_2px,transparent_5px),radial-gradient(circle_at_31%_40%,#ffffff_0_1px,transparent_4px),radial-gradient(circle_at_92%_57%,#6beaff_0_2px,transparent_5px)] bg-[length:230px_210px,300px_260px,260px_230px,190px_180px,320px_280px]" />
 

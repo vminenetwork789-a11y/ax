@@ -483,27 +483,29 @@ export default function App() {
       {/* Subtle Pastel Gradient on Hero Section Top Background (Light Mode) */}
       <div className="pointer-events-none fixed inset-x-0 top-0 h-80 bg-gradient-to-b from-indigo-100/60 via-sky-50/40 to-transparent dark:from-indigo-950/20 dark:via-slate-950/10 dark:to-transparent z-0" />
 
-      <Header
-        account={account}
-        chainId={chainId}
-        isBscTestnet={isBscTestnet}
-        isConnecting={isConnecting}
-        onConnect={connectWallet}
-        onDisconnect={handleFullLogout}
-        onSwitchNetwork={switchToBscTestnet}
-        onRefresh={refreshUserData}
-        language={language}
-        onToggleLanguage={() => setLanguage(language === 'th' ? 'en' : 'th')}
-        theme={theme}
-        onToggleTheme={toggleTheme}
-        onOpenDeployModal={() => setIsDeployModalOpen(true)}
-        contractAddress={contractAddress}
-        isAdminUser={isAdminUser}
-        isAdminView={isAdminUser && isAdminView}
-        onToggleAdminView={toggleAdminView}
-        isDashboard2View={isDashboard2View}
-        onToggleDashboard2={() => toggleDashboard2View()}
-      />
+      {!(isDashboard2View && !(isAdminUser && isAdminView)) && (
+        <Header
+          account={account}
+          chainId={chainId}
+          isBscTestnet={isBscTestnet}
+          isConnecting={isConnecting}
+          onConnect={connectWallet}
+          onDisconnect={handleFullLogout}
+          onSwitchNetwork={switchToBscTestnet}
+          onRefresh={refreshUserData}
+          language={language}
+          onToggleLanguage={() => setLanguage(language === 'th' ? 'en' : 'th')}
+          theme={theme}
+          onToggleTheme={toggleTheme}
+          onOpenDeployModal={() => setIsDeployModalOpen(true)}
+          contractAddress={contractAddress}
+          isAdminUser={isAdminUser}
+          isAdminView={isAdminUser && isAdminView}
+          onToggleAdminView={toggleAdminView}
+          isDashboard2View={isDashboard2View}
+          onToggleDashboard2={() => toggleDashboard2View()}
+        />
+      )}
 
       {/* Quick Banner when browsing in Guest / Bypass mode */}
       {(!account || (!isWalletRegistered && !isAdminUser)) && !(isAdminUser && isAdminView) && (
@@ -537,7 +539,13 @@ export default function App() {
         </div>
       )}
 
-      <main className="relative z-10 flex-1 w-full max-w-none mx-auto px-1 sm:px-2.5 py-1.5 sm:py-3 flex flex-col space-y-2.5">
+      <main
+        className={
+          isDashboard2View && !(isAdminUser && isAdminView)
+            ? 'relative z-10 flex-1 w-full max-w-none mx-auto flex flex-col'
+            : 'relative z-10 flex-1 w-full max-w-none mx-auto px-1 sm:px-2.5 py-1.5 sm:py-3 flex flex-col space-y-2.5'
+        }
+      >
         {/* Global Framer Motion Blockchain Transaction Toast Notification System */}
         <TransactionToast
           txState={txState}
