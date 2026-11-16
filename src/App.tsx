@@ -7,6 +7,7 @@ import { DeployContractModal } from './components/DeployContractModal';
 import { QuickContractSwitcherModal } from './components/QuickContractSwitcherModal';
 import { AuthAndOnboardingGate } from './components/AuthAndOnboardingGate';
 import { AdminControlCenter } from './components/AdminControlCenter';
+import { Dashboard2View } from './components/Dashboard2View';
 import { CONTRACT_ADDRESS, USDT_ADDRESS, isAuthorizedAdminWallet } from './contracts/config';
 import { X, LogIn } from 'lucide-react';
 import { TransactionToast } from './components/TransactionToast';
@@ -34,6 +35,14 @@ export default function App() {
   const [, setSelectedVaultBalance] = useState<string>('0.00 USDT');
   const [bypassGateToDashboard, setBypassGateToDashboard] = useState<boolean>(false);
   const [isAdminView, setIsAdminView] = useState<boolean>(false);
+  const [isDashboard2View, setIsDashboard2View] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const hash = window.location.hash.toLowerCase();
+      const q = new URLSearchParams(window.location.search).get('dashboard');
+      return hash === '#dashboard2' || q === '2';
+    }
+    return false;
+  });
 
   useEffect(() => {
     const handleOpenSwitcher = () => setIsContractSwitcherOpen(true);
@@ -116,6 +125,7 @@ export default function App() {
     if (!isAdminUser) return;
     const next = !isAdminView;
     setIsAdminView(next);
+    if (next) setIsDashboard2View(false);
     if (typeof window !== 'undefined') {
       const url = new URL(window.location.href);
       if (next) {
@@ -123,6 +133,22 @@ export default function App() {
       } else {
         url.hash = '';
         url.searchParams.delete('admin');
+      }
+      window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+    }
+  };
+
+  const toggleDashboard2View = (forceState?: boolean) => {
+    const next = typeof forceState === 'boolean' ? forceState : !isDashboard2View;
+    setIsDashboard2View(next);
+    if (next) setIsAdminView(false);
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      if (next) {
+        url.hash = 'dashboard2';
+      } else {
+        if (url.hash.toLowerCase() === '#dashboard2') url.hash = '';
+        url.searchParams.delete('dashboard');
       }
       window.history.replaceState(null, '', url.pathname + url.search + url.hash);
     }
@@ -305,6 +331,7 @@ export default function App() {
   const handleFullLogout = () => {
     setBypassGateToDashboard(false);
     setIsAdminView(false);
+    setIsDashboard2View(false);
     disconnectWallet();
   };
 
@@ -474,6 +501,8 @@ export default function App() {
         isAdminUser={isAdminUser}
         isAdminView={isAdminUser && isAdminView}
         onToggleAdminView={toggleAdminView}
+        isDashboard2View={isDashboard2View}
+        onToggleDashboard2={() => toggleDashboard2View()}
       />
 
       {/* Quick Banner when browsing in Guest / Bypass mode */}
@@ -531,6 +560,37 @@ export default function App() {
             onInspectRank={inspectRankData}
             onClose={() => toggleAdminView()}
           />
+        ) : isDashboard2View ? (
+          <Dashboard2View
+            language={language}
+            theme={theme}
+            onToggleLanguage={() => setLanguage(language === 'th' ? 'en' : 'th')}
+            onToggleTheme={toggleTheme}
+            account={account}
+            chainId={chainId}
+            isBscTestnet={isBscTestnet}
+            usdtBalance={usdtBalance}
+            bnbBalance={bnbBalance}
+            allowance={allowance}
+            contractAddress={contractAddress || CONTRACT_ADDRESS}
+            profile={profile}
+            selectedMainId={selectedMainId}
+            onSelectMainId={(idStr) => setSelectedMainId(idStr)}
+            onOpenMatrixTree={(targetRank) => {
+              if (targetRank && targetRank >= 1 && targetRank <= 18) {
+                setSelectedInspectRank(targetRank);
+              }
+              toggleDashboard2View(false);
+            }}
+            onOpenRegisterModal={() => setIsRegisterModalOpen(true)}
+            onOpenContractSwitcher={() => setIsContractSwitcherOpen(true)}
+            onConnectWallet={connectWallet}
+            onSwitchNetwork={switchToBscTestnet}
+            onApproveUsdt={handleApproveUsdt}
+            onUpgradeToRank={handleUpgradeRank}
+            isLoadingTx={txState.isLoading}
+            refreshTrigger={txState.successMessage}
+          />
         ) : (
           <>
             {/* Binary Matrix Tree Visualizer */}
@@ -555,6 +615,7 @@ export default function App() {
               ownedWalletAllIds={profile?.ownedAllIdsRank1 || []}
               selectedMainId={selectedMainId}
               onSelectMainId={(idStr) => setSelectedMainId(idStr)}
+              externalInspectRank={selectedInspectRank}
               lastTxSuccess={txState.successMessage}
               refreshTrigger={txState.successMessage}
             />

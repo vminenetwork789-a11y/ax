@@ -11,6 +11,7 @@ import {
   Sun,
   Moon,
   Zap,
+  LayoutDashboard,
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -29,6 +30,8 @@ interface HeaderProps {
   isAdminUser?: boolean;
   isAdminView?: boolean;
   onToggleAdminView?: () => void;
+  isDashboard2View?: boolean;
+  onToggleDashboard2?: () => void;
   onClearCache?: () => void;
   theme?: 'light' | 'dark';
   onToggleTheme?: () => void;
@@ -49,6 +52,8 @@ export const Header: React.FC<HeaderProps> = ({
   isAdminUser = false,
   isAdminView = false,
   onToggleAdminView,
+  isDashboard2View = false,
+  onToggleDashboard2,
   onClearCache,
   theme = 'light',
   onToggleTheme,
@@ -163,6 +168,38 @@ export const Header: React.FC<HeaderProps> = ({
                 title={language === 'th' ? 'รีเฟรชข้อมูลบล็อกเชน' : 'Refresh blockchain data'}
               >
                 <RefreshCw className="w-3.5 h-3.5" />
+              </button>
+            )}
+
+            {onToggleDashboard2 && (
+              <button
+                type="button"
+                onClick={onToggleDashboard2}
+                className={`text-[11px] sm:text-xs px-2.5 py-1.5 rounded-xl font-bold transition duration-200 inline-flex items-center gap-1 shadow-sm whitespace-nowrap shrink-0 cursor-pointer ${
+                  isDashboard2View
+                    ? 'bg-[#087cf4] text-white border border-sky-400'
+                    : 'bg-sky-50 hover:bg-sky-100 border border-sky-200/80 text-sky-700 dark:bg-sky-500/15 dark:hover:bg-sky-500/25 dark:border-sky-500/40 dark:text-sky-300'
+                }`}
+                title={
+                  language === 'th'
+                    ? isDashboard2View
+                      ? 'กลับหน้าผัง Matrix'
+                      : 'เปิดหน้าแดชบอร์ด 2'
+                    : isDashboard2View
+                    ? 'Back to Matrix Tree'
+                    : 'Open Dashboard 2'
+                }
+              >
+                <LayoutDashboard className="w-3.5 h-3.5 shrink-0" />
+                <span>
+                  {isDashboard2View
+                    ? language === 'th'
+                      ? 'ผัง Matrix'
+                      : 'Matrix'
+                    : language === 'th'
+                    ? 'แดชบอร์ด 2'
+                    : 'Dashboard 2'}
+                </span>
               </button>
             )}
 

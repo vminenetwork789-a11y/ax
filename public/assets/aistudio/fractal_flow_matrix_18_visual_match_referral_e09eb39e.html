@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0759d7">
+<title>FRACTAL FLOW MATRIX 18</title>
+<style>
+:root{--blue:#087cf4;--deep:#031e68;--ink:#09265f;--sky:#bceeff;--glass:rgba(255,255,255,.83);--edge:#b8e5ff;--shadow:0 8px 22px rgba(0,72,190,.23)}
+*{box-sizing:border-box}body{margin:0;color:var(--ink);font-family:Arial,"Noto Sans Thai",sans-serif;background:linear-gradient(160deg,#043b9c 0,#087fe9 22%,#c6efff 48%,#e7f6ff 100%);min-height:100vh}
+body:before{content:"";position:fixed;inset:0;pointer-events:none;opacity:.7;background:radial-gradient(circle at 17% 12%,#8efaff 0 1px,transparent 3px),radial-gradient(circle at 68% 8%,#fff 0 2px,transparent 4px),radial-gradient(circle at 83% 23%,#72e5ff 0 2px,transparent 5px),radial-gradient(circle at 31% 40%,#fff 0 1px,transparent 4px),radial-gradient(circle at 92% 57%,#6beaff 0 2px,transparent 5px);background-size:230px 210px,300px 260px,260px 230px,190px 180px,320px 280px}
+.app{max-width:760px;margin:auto;min-height:100vh;padding:0 13px 94px;position:relative}
+.header{height:166px;color:#fff;padding:24px 12px 12px;position:relative;overflow:hidden;background:radial-gradient(ellipse at 80% 72%,#40d9ff88,transparent 30%),linear-gradient(125deg,#05256d,#0066d7 58%,#031e68);border-radius:0 0 28px 28px;box-shadow:0 8px 28px #003e9b88}
+.header:after{content:"";position:absolute;width:310px;height:190px;right:-55px;bottom:-76px;border:2px solid #69eaff99;border-radius:50%;box-shadow:0 0 0 13px #46cfff22,0 0 0 28px #46cfff18,0 0 30px #5ceaff;transform:rotate(-24deg)}
+.brand{display:flex;align-items:center;gap:13px;position:relative;z-index:1}.infinity{font-size:66px;line-height:.8;color:#7af1ff;text-shadow:0 0 8px #fff,0 0 25px #00baff;font-weight:bold}.brand h1{font-size:22px;line-height:1.05;margin:0;letter-spacing:.4px}.brand small{display:block;font-size:11px;letter-spacing:1.2px;margin-top:7px;color:#d8f8ff}
+.header-actions{position:absolute;right:14px;top:24px;z-index:2;font-size:25px;color:white}.id-card{position:relative;z-index:3;margin:-1px 4px 16px;padding:15px 14px;display:flex;align-items:center;gap:12px;border-radius:25px;background:linear-gradient(115deg,#fffefaed,#d5f3ffed);border:2px solid #a9e7ff;box-shadow:0 8px 24px #0058b855}
+.avatar{width:83px;height:83px;flex:none;border-radius:50%;display:grid;place-items:center;color:white;font-size:42px;background:radial-gradient(circle at 35% 25%,#5ceaff,#087cf4 48%,#032b93);box-shadow:0 0 0 5px #b7eaff,0 0 20px #00aaff}
+.identity{min-width:0;flex:1}.identity strong{font-size:22px}.pill{display:inline-block;background:linear-gradient(90deg,#ffdb62,#fff0a6);border-radius:18px;padding:4px 11px;font-weight:bold;font-size:12px;margin:5px 0}.wallet{font-size:12px;font-weight:bold;white-space:nowrap}.switch{border:0;border-radius:16px;padding:13px 12px;color:#fff;font-weight:bold;background:linear-gradient(135deg,#23caff,#0755d7);box-shadow:0 5px 15px #087cf477;white-space:nowrap}
+.referral-card{margin:0 4px 15px;padding:13px 15px;border-radius:21px;background:linear-gradient(120deg,#ffffffed,#d7f0ffed);border:1.5px solid #a8ddff;box-shadow:var(--shadow)}.referral-title{display:flex;align-items:center;gap:10px;margin-bottom:10px}.referral-title>span{font-size:27px;color:#087cf4}.referral-title strong{display:block;font-size:15px}.referral-title small{display:block;font-size:10px;color:#58769e;margin-top:3px}.referral-row{display:flex;gap:7px}.referral-row input{min-width:0;flex:1;border:1px solid #a9d7ff;border-radius:12px;background:#f7fcff;padding:11px 10px;color:#17477e;font-size:12px}.referral-row button{border:0;border-radius:12px;padding:0 16px;color:#fff;font-weight:bold;background:linear-gradient(135deg,#24caff,#0754d2);box-shadow:0 4px 12px #087cf455}.referral-hint{font-size:10px;color:#55769b;margin-top:7px}.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin:0 4px 16px}.stat{min-width:0;padding:13px 11px;border-radius:21px;background:linear-gradient(145deg,#fff,#d8f0ff);border:1.5px solid #a8dfff;box-shadow:var(--shadow);min-height:132px}.stat .ico{font-size:28px;color:#087cf4}.stat label{font-size:12px;font-weight:bold;display:block;min-height:30px}.stat strong{display:block;font-size:25px;line-height:1.15;margin:4px 0 1px;letter-spacing:-.5px}.stat small{font-size:11px;font-weight:bold;color:#0c559f}
+.panel{background:linear-gradient(145deg,#ffffffed,#dff4ffed);border:1.5px solid #a9ddff;border-radius:24px;padding:14px;margin:0 4px 15px;box-shadow:var(--shadow)}.section-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 2px 12px;font-size:18px;font-weight:900}.section-head span:last-child{font-size:12px;color:#0756bc}
+.vaults{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}.vault{padding:12px 8px;border-radius:20px;text-align:center;background:linear-gradient(145deg,#f4fcff,#cce8ff);border:1px solid #a8d9ff;box-shadow:0 4px 13px #0b73c52a}.vault:nth-child(2){background:linear-gradient(145deg,#eafff4,#bdf5dc);border-color:#9ce9c5}.vault:nth-child(3){background:linear-gradient(145deg,#fbf5ff,#e0ccff);border-color:#d4b8ff}.vault .ico{font-size:29px}.vault h3{font-size:12px;line-height:1.35;margin:3px 0 7px}.vault strong{font-size:21px;display:block}.vault small{font-size:10px;font-weight:bold}.bar{height:9px;border-radius:12px;background:#9ccdf1;margin:8px 0 4px;overflow:hidden}.bar i{display:block;height:100%;border-radius:12px;background:linear-gradient(90deg,#087cf4,#54dfff)}
+.rank-hero{margin:0 4px 15px;border-radius:23px;padding:15px 17px;color:white;background:radial-gradient(circle at 16% 50%,#1168d9,#061d68 47%,#063f9f);box-shadow:0 7px 22px #0343a477;display:flex;align-items:center;gap:13px;border:1px solid #42bfff}.trophy{font-size:49px;filter:drop-shadow(0 0 7px #ffdc5a)}.rank-main{flex:1}.rank-main small{font-size:12px;color:#d7f3ff}.rank-main strong{display:block;font-size:34px;line-height:1.05;color:#fff2a4}.rank-main em{font-size:11px;font-style:normal}.rank-progress{width:38%;font-size:12px;font-weight:bold}.rank-progress .bar{background:#164c93;border:1px solid #77cfff;height:14px}.rank-progress .bar i{background:linear-gradient(90deg,#ffc52e,#fff18b)}
+.rank-table{margin-bottom:16px}.rank-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.rank-card{border-radius:16px;padding:10px 8px;background:linear-gradient(145deg,#fff,#d9efff);border:1px solid #a6d8ff;box-shadow:0 4px 11px #0756a52b;min-width:0}.rank-card.current{background:linear-gradient(145deg,#087cf4,#0646b3);border:1px solid #5ddcff;color:white;box-shadow:0 5px 14px #0865d777}.rank-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:7px}.rank-head b{font-size:15px;color:#0754b9}.rank-card.current .rank-head b{color:#fff}.rank-head span{font-size:9px;background:#d7efff;color:#0754b9;padding:3px 6px;border-radius:10px}.rank-card.current .rank-head span{background:#ffdf6d;color:#173b77}.rank-detail{font-size:10px;line-height:1.55;color:#45668f}.rank-card.current .rank-detail{color:#e3f6ff}.rank-detail strong{color:#082d73}.rank-card.current .rank-detail strong{color:#fff}
+.menu-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}.menu-item{padding:13px 5px;text-align:center;border-radius:18px;background:linear-gradient(145deg,#fff,#d5edff);border:1px solid #a7d8ff;box-shadow:0 4px 12px #0756a52b;font-size:12px;font-weight:900}.menu-item b{display:block;font-size:28px;color:#087cf4;margin-bottom:3px}
+.footer-banner{margin:0 4px 15px;padding:17px 12px;text-align:center;color:white;border-radius:20px;background:radial-gradient(circle at 20% 50%,#168be9,#041b61 70%);box-shadow:var(--shadow);font-weight:bold}.footer-banner strong{font-size:17px;color:#ffe57d;display:block;margin:4px}
+.bottom{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:min(760px,100%);display:grid;grid-template-columns:repeat(5,1fr);padding:8px 7px calc(8px + env(safe-area-inset-bottom));background:#ffffffed;border:1px solid #c5e6ff;border-radius:24px 24px 0 0;box-shadow:0 -6px 22px #0755b52c;z-index:9}.bottom a{text-align:center;text-decoration:none;color:#42689c;font-size:11px;font-weight:bold}.bottom b{display:block;font-size:22px}.bottom a:first-child{color:white;background:linear-gradient(135deg,#21bfff,#0754d2);border-radius:16px;padding:5px 0;box-shadow:0 4px 12px #0577df77}
+.note{font-size:10px;color:#54759c;line-height:1.5;margin:10px 4px 0}
+@media(min-width:700px){.app{max-width:1080px;padding-left:22px;padding-right:22px}.header{height:190px}.brand h1{font-size:27px}.id-card{padding:18px 22px}.avatar{width:94px;height:94px}.stat{padding:17px}.stat strong{font-size:29px}.vault h3{font-size:14px}.vault{padding:16px}.rank-grid{grid-template-columns:repeat(6,minmax(0,1fr))}.rank-card{padding:12px}.rank-detail{font-size:11px}.bottom{width:min(1080px,100%)}}
+@media(max-width:390px){.app{padding-left:8px;padding-right:8px}.header{height:150px}.brand h1{font-size:18px}.infinity{font-size:53px}.id-card{gap:8px;padding:11px}.avatar{width:65px;height:65px;font-size:33px}.identity strong{font-size:18px}.switch{font-size:11px;padding:10px 8px}.stat{padding:10px 7px}.stat strong{font-size:20px}.stat label{font-size:10px}.rank-hero{padding:12px}.trophy{font-size:38px}.rank-main strong{font-size:28px}.rank-progress{width:36%;font-size:10px}}
+</style>
+</head>
+<body>
+<div class="app">
+<header class="header">
+ <div class="brand"><div class="infinity">∞</div><div><h1>FRACTAL FLOW<br>MATRIX 18</h1><small>Smart · Secure · Sustainable</small></div></div>
+ <div class="header-actions">♟　☰</div>
+</header>
+<section class="id-card">
+ <div class="avatar">♙</div>
+ <div class="identity"><strong>ID #1001</strong><br><span class="pill">⭐ Rank — Member</span><div class="wallet">▣ Wallet: 0x622E...05311</div></div>
+ <button class="switch" onclick="alert('ตัวเลือกสลับ ID จะทำงานเมื่อเชื่อมต่อระบบบัญชี')">⇄ สลับบัญชี</button>
+</section>
+<section class="referral-card">
+ <div class="referral-title"><span>🔗</span><div><strong>ลิงก์ผู้แนะนำของคุณ</strong><small>ส่งลิงก์นี้ให้สมาชิกใหม่สมัครภายใต้รหัสแนะนำของคุณ</small></div></div>
+ <div class="referral-row"><input id="referralLink" type="text" readonly value="ลิงก์จะแสดงเมื่อเปิดเว็บไซต์บนโดเมนจริง" aria-label="ลิงก์ผู้แนะนำ"><button type="button" id="copyReferral">คัดลอก</button></div>
+ <div class="referral-hint" id="referralStatus">รหัสผู้แนะนำ: ID #1001 · ตรวจสอบรหัสก่อนแชร์ทุกครั้ง</div>
+</section>
+<section class="stats">
+ <article class="stat"><div class="ico">▰</div><label>รายได้ทั้งหมด</label><strong>—</strong><small>USDT</small></article>
+ <article class="stat"><div class="ico">👥</div><label>สมาชิกทั้งหมด</label><strong>—</strong><small>Members</small></article>
+ <article class="stat"><div class="ico">▣</div><label>ยอดสะสมในถัง (Vault)</label><strong>—</strong><small>USDT</small></article>
+</section>
+<section class="panel">
+ <h2 class="section-head">🛡 ถังสะสมเงิน (My Vault) <span>ดูทั้งหมด ›</span></h2>
+ <div class="vaults">
+  <article class="vault"><div class="ico">🚀</div><h3>ถังอัปเกรดแรงก์<br>(Upgrade Rank Pool)</h3><strong>—</strong><small>USDT</small><div class="bar"><i style="width:0"></i></div></article>
+  <article class="vault"><div class="ico">👤</div><h3>ถังสร้าง Main ID<br>(New Auto ID Pool)</h3><strong>—</strong><small>USDT</small><div class="bar"><i style="width:0"></i></div></article>
+  <article class="vault"><div class="ico">✦</div><h3>ถังสร้าง Extra ID<br>(New Extra ID Pool)</h3><strong>—</strong><small>USDT</small><div class="bar"><i style="width:0"></i></div></article>
+ </div>
+</section>
+<section class="rank-hero">
+ <div class="trophy">🏆</div><div class="rank-main"><small>ระดับปัจจุบันของคุณ</small><strong>RANK —</strong><em>FRACTAL FLOW MATRIX 18</em></div>
+ <div class="rank-progress">ความคืบหน้า —<div class="bar"><i style="width:0"></i></div><small>รอข้อมูลจริง</small></div>
+</section>
+<section class="panel rank-table">
+ <h2 class="section-head">👑 ตารางสมาชิกครบ 18 RANK <span>RANK 1–18</span></h2>
+ <div class="rank-grid" id="ranks"></div>
+ <p class="note">ทีม = จำนวนสมาชิกทั้งหมดในทีม · Direct = จำนวนผู้แนะนำโดยตรงที่ต้องมี/มีอยู่จริง เมื่อเกณฑ์ได้รับการยืนยันแล้วจะแสดงตัวเลขในช่องนี้ ปัจจุบันไม่ใส่ตัวเลขคาดเดา</p>
+</section>
+<section class="panel">
+ <h2 class="section-head">เมนูหลัก</h2>
+ <div class="menu-grid">
+  <div class="menu-item"><b>👥</b>สมาชิก</div><div class="menu-item"><b>⌘</b>Matrix</div><div class="menu-item"><b>📈</b>อัปเกรด Rank</div>
+  <div class="menu-item"><b>▰</b>กระเป๋าเงิน</div><div class="menu-item"><b>▣</b>Vault</div><div class="menu-item"><b>🎁</b>AllSell Pool</div>
+ </div>
+</section>
+<div class="footer-banner"><div style="font-size:34px;color:#66eaff">∞</div>Together We Grow<strong>“เติบโตไปด้วยกัน สู่ความสำเร็จที่ยิ่งใหญ่”</strong>FRACTAL FLOW MATRIX 18</div>
+<p class="note">ภาพต้นแบบหน้าเว็บ · ข้อมูลยอดเงิน สมาชิก และเกณฑ์ Rank ยังไม่เชื่อมต่อฐานข้อมูลหรือ Smart Contract</p>
+</div>
+<nav class="bottom"><a href="#"><b>⌂</b>หน้าหลัก</a><a href="#"><b>▥</b>ประวัติ</a><a href="#"><b>⇄</b>ธุรกรรม</a><a href="#"><b>◉</b>ช่วยเหลือ</a><a href="#"><b>⚙</b>ตั้งค่า</a></nav>
+<script>
+// สร้าง referral URL จาก URL ปัจจุบันและ ID ที่กำลังแสดง โดยไม่กำหนดโดเมนปลอม
+const referralInput = document.getElementById('referralLink');
+const referralStatus = document.getElementById('referralStatus');
+function refreshReferralLink(){
+ const id = '1001'; // เปลี่ยนเป็น ID ที่ผ่านการยืนยันจากระบบบัญชีเมื่อเชื่อมต่อ backend
+ try {
+  const url = new URL(window.location.href);
+  url.searchParams.set('ref', id);
+  referralInput.value = url.toString();
+  referralStatus.textContent = `รหัสผู้แนะนำ: ID #${id} · ลิงก์นี้ใช้โดเมนของเว็บไซต์ที่เปิดอยู่`;
+ } catch(e) {
+  referralInput.value = 'ลิงก์จะแสดงเมื่อเปิดเว็บไซต์บนโดเมนจริง';
+ }
+}
+refreshReferralLink();
+document.getElementById('copyReferral').addEventListener('click', async () => {
+ try {
+  await navigator.clipboard.writeText(referralInput.value);
+  referralStatus.textContent = 'คัดลอกลิงก์แล้ว สามารถส่งให้ผู้สมัครใหม่ได้';
+ } catch(e) {
+  referralInput.focus(); referralInput.select();
+  referralStatus.textContent = 'เลือกคัดลอกลิงก์ด้วยตนเองได้เลย';
+ }
+});
+const host=document.getElementById('ranks');
+for(let n=1;n<=18;n++){
+ const card=document.createElement('article');
+ card.className='rank-card';
+ const direct=({11:'5 IDs*',14:'2 IDs*',16:'2 IDs*',18:'5 IDs*'})[n]||'รอยืนยัน';
+ card.innerHTML=`<div class="rank-head"><b>RANK ${n}</b><span>${n===1?'START':'LEVEL '+n}</span></div><div class="rank-detail">สมาชิกในทีม: <strong>—</strong><br>Direct Sponsor: <strong>${direct}</strong></div>`;
+ host.appendChild(card);
+}
+</script>
+</body></html>

@@ -435,7 +435,10 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
             const maxCheck = Math.min(totalNodes, 50);
             for (let nid = 1; nid <= maxCheck; nid++) {
               try {
-                const nd = await contract.rankNodes(1, nid);
+                const [nd, sponsorNodeBn] = await Promise.all([
+                  contract.rankNodes(1, nid),
+                  contract.nodeDirectSponsorNodeId(1, nid).catch(() => 1n),
+                ]);
                 nodesMap.set(nid, {
                   id: nid,
                   owner: String(nd.owner),
@@ -445,7 +448,7 @@ export const EventLogsSection: React.FC<EventLogsSectionProps> = ({ language, ac
                   rightChild: Number(nd.rightChild),
                   isClone: Boolean(nd.isClone),
                   isExtraId: Boolean(nd.isExtraId),
-                  directSponsorNodeId: 1,
+                  directSponsorNodeId: Number(sponsorNodeBn || 1n),
                 });
               } catch {
                 // Ignore

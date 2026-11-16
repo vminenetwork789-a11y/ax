@@ -195,6 +195,7 @@ interface MatrixTreeVisualizerProps {
   ownedWalletAllIds?: string[];
   selectedMainId?: string;
   onSelectMainId?: (mainId: string) => void;
+  externalInspectRank?: number;
 }
 
 interface WalletOwnedIdOption {
@@ -675,6 +676,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
   ownedWalletAllIds = [],
   selectedMainId = '1',
   onSelectMainId,
+  externalInspectRank,
 }) => {
   const initialPostTxTargetRef = useRef<PostTxViewTarget | null | undefined>(undefined);
   if (initialPostTxTargetRef.current === undefined) {
@@ -683,13 +685,24 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
   const initialPostTxTarget = initialPostTxTargetRef.current;
 
   const [selectedRank, setSelectedRank] = useState<number>(() => {
-    const r = Number(initialPostTxTarget?.selectedRank || 0);
+    const r = Number(initialPostTxTarget?.selectedRank || externalInspectRank || 0);
     return r >= 1 && r <= 18 ? r : 1;
   });
   const selectedRankRef = useRef<number>(selectedRank);
   useEffect(() => {
     selectedRankRef.current = selectedRank;
   }, [selectedRank]);
+  useEffect(() => {
+    if (
+      externalInspectRank &&
+      externalInspectRank >= 1 &&
+      externalInspectRank <= 18 &&
+      externalInspectRank !== selectedRankRef.current
+    ) {
+      selectedRankRef.current = externalInspectRank;
+      setSelectedRank(externalInspectRank);
+    }
+  }, [externalInspectRank]);
   const treeLoadSeqRef = useRef<number>(0);
   const inFlightRankRef = useRef<number | null>(null);
   const inFlightTreePromiseRef = useRef<Promise<void> | null>(null);
@@ -2396,7 +2409,14 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
               const ownerMainsR1 = r1List.filter(
                 (m) => !m.isClone && !m.isExtraId && (m.owner || '').toLowerCase() === ok
               );
-              if (ownerMainsR1.length === 1) {
+              const hasValidExistingSp =
+                node.directSponsorNodeId > 0 &&
+                (ownerMainsR1.length === 0 ||
+                  ownerMainsR1.some((m) => m.id === node.directSponsorNodeId));
+              if (hasValidExistingSp) {
+                const matchedSp = r1List.find((m) => m.id === node.directSponsorNodeId);
+                if (matchedSp?.owner) node.directSponsor = matchedSp.owner;
+              } else if (ownerMainsR1.length === 1) {
                 node.directSponsorNodeId = ownerMainsR1[0].id;
                 node.directSponsor = ownerMainsR1[0].owner;
               } else if (ownerMainsR1.length > 1) {
@@ -3366,11 +3386,24 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
       const snap1ForExtra = multiRankSnapshots.get(1);
       const snap4ForExtra = multiRankSnapshots.get(4);
       const resolveExtraSpawnerInR1 = (rankNum: number, extraNode: any): number => {
+        const explicitSp = Number(
+          (rankNum === activeRank ? onChainSponsorNodeMap.get(extraNode.id) : 0) ||
+            extraNode.directSponsorNodeId ||
+            0
+        );
         if (snap1ForExtra) {
           const extraOwner = (extraNode.owner || '').toLowerCase();
           const ownerMains = Array.from(snap1ForExtra.values()).filter(
             (m) => !m.isClone && !m.isExtraId && (m.owner || '').toLowerCase() === extraOwner
           );
+          if (
+            explicitSp > 0 &&
+            (ownerMains.length === 0
+              ? snap1ForExtra.has(explicitSp)
+              : ownerMains.some((m) => m.id === explicitSp))
+          ) {
+            return explicitSp;
+          }
           if (ownerMains.length === 1) return ownerMains[0].id;
           if (ownerMains.length > 1) {
             const rank9Main = ownerMains.find(
@@ -3389,10 +3422,9 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             return ownerMains[0].id;
           }
         }
+        if (explicitSp > 0) return explicitSp;
         const sourceMainInR =
-          extraNode.directSponsorNodeId && extraNode.directSponsorNodeId > 0
-            ? extraNode.directSponsorNodeId
-            : extraNode.originMainId > 0 && extraNode.originMainId !== extraNode.id
+          extraNode.originMainId > 0 && extraNode.originMainId !== extraNode.id
             ? extraNode.originMainId
             : 1;
         return rankNum === 1

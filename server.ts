@@ -287,7 +287,7 @@ const __dirname = path.dirname(__filename);
 
 const portArgIdx = process.argv.indexOf('--port');
 const cliPort = portArgIdx !== -1 ? Number(process.argv[portArgIdx + 1]) : NaN;
-const PORT = Number.isFinite(cliPort) && cliPort > 0 ? cliPort : Number(process.env.PORT || 3000);
+const PORT = Number.isFinite(cliPort) && cliPort > 0 ? cliPort : 3000;
 
 // Persistent Database / Store File for Contract Address & Settings
 const CONFIG_FILE_PATH = path.resolve(__dirname, 'prisma/contract-config.json');
@@ -3902,14 +3902,29 @@ function reconcileAutoExtraIdsAcrossRanks(): Array<{
     const ownerMains = r1Nodes.filter(
       (m) => !m.isClone && !m.isExtraId && (m.owner || '').toLowerCase() === extraOwner
     );
+    if (
+      extraNode.directSponsorNodeId > 0 &&
+      (ownerMains.length === 0
+        ? r1Nodes.some((m) => !m.isClone && !m.isExtraId && m.id === extraNode.directSponsorNodeId)
+        : ownerMains.some((m) => m.id === extraNode.directSponsorNodeId))
+    ) {
+      return extraNode.directSponsorNodeId;
+    }
     if (ownerMains.length === 1) return ownerMains[0].id;
     if (ownerMains.length > 1) {
+      const r9Nodes = matrixDB.nodesByRank[9] || [];
       const r4Nodes = matrixDB.nodesByRank[4] || [];
-      const eligibleMain = ownerMains.find(
-        (m) =>
-          m.id === 1 ||
-          r4Nodes.some((x) => !x.isClone && !x.isExtraId && x.originMainId === m.id)
-      );
+      const eligibleMain =
+        ownerMains.find(
+          (m) =>
+            m.id === 1 ||
+            r9Nodes.some((x) => !x.isClone && !x.isExtraId && x.originMainId === m.id)
+        ) ||
+        ownerMains.find(
+          (m) =>
+            m.id === 1 ||
+            r4Nodes.some((x) => !x.isClone && !x.isExtraId && x.originMainId === m.id)
+        );
       if (eligibleMain) return eligibleMain.id;
       return ownerMains[0].id;
     }
@@ -7405,14 +7420,29 @@ async function startApp() {
       const ownerMains = r1Nodes.filter(
         (m) => !m.isClone && !m.isExtraId && (m.owner || '').toLowerCase() === extraOwner
       );
+      if (
+        extraNode.directSponsorNodeId > 0 &&
+        (ownerMains.length === 0
+          ? r1Nodes.some((m) => !m.isClone && !m.isExtraId && m.id === extraNode.directSponsorNodeId)
+          : ownerMains.some((m) => m.id === extraNode.directSponsorNodeId))
+      ) {
+        return extraNode.directSponsorNodeId;
+      }
       if (ownerMains.length === 1) return ownerMains[0].id;
       if (ownerMains.length > 1) {
+        const r9Nodes = matrixDB.nodesByRank[9] || [];
         const r4Nodes = matrixDB.nodesByRank[4] || [];
-        const eligibleMain = ownerMains.find(
-          (m) =>
-            m.id === 1 ||
-            r4Nodes.some((x) => !x.isClone && !x.isExtraId && x.originMainId === m.id)
-        );
+        const eligibleMain =
+          ownerMains.find(
+            (m) =>
+              m.id === 1 ||
+              r9Nodes.some((x) => !x.isClone && !x.isExtraId && x.originMainId === m.id)
+          ) ||
+          ownerMains.find(
+            (m) =>
+              m.id === 1 ||
+              r4Nodes.some((x) => !x.isClone && !x.isExtraId && x.originMainId === m.id)
+          );
         if (eligibleMain) return eligibleMain.id;
         return ownerMains[0].id;
       }
@@ -8170,22 +8200,37 @@ async function startApp() {
             n.parentId === 0 ? 'ROOT' : pNode && pNode.leftChild === n.id ? 'LEFT' : 'RIGHT';
 
           if (n.isExtraId && !n.isClone) {
-            // Find which Rank 1 Main ID spawned this Extra ID (by matching Extra ID owner's Rank 4+ Main ID)
+            // Find which Rank 1 Main ID spawned this Extra ID (prioritize persisted/on-chain directSponsorNodeId)
             const extraOwner = (n.owner || '').toLowerCase();
             const ownerMains = r1Nodes.filter(
               (m) => !m.isClone && !m.isExtraId && (m.owner || '').toLowerCase() === extraOwner
             );
             let r1MainSpId = 1;
-            if (ownerMains.length === 1) {
+            if (
+              n.directSponsorNodeId > 0 &&
+              (ownerMains.length === 0
+                ? reportsMap.has(n.directSponsorNodeId)
+                : ownerMains.some((m) => m.id === n.directSponsorNodeId))
+            ) {
+              r1MainSpId = n.directSponsorNodeId;
+            } else if (ownerMains.length === 1) {
               r1MainSpId = ownerMains[0].id;
             } else if (ownerMains.length > 1) {
+              const r9Nodes = matrixDB.nodesByRank[9] || [];
               const r4Nodes = matrixDB.nodesByRank[4] || [];
-              const eligibleMain = ownerMains.find(
-                (m) =>
-                  m.id === 1 ||
-                  r4Nodes.some((x) => !x.isClone && !x.isExtraId && x.originMainId === m.id)
-              );
-              r1MainSpId = eligibleMain ? eligibleMain.id : ownerMains[0].id;
+              const eligibleMain =
+                ownerMains.find(
+                  (m) =>
+                    m.id === 1 ||
+                    r9Nodes.some((x) => !x.isClone && !x.isExtraId && x.originMainId === m.id)
+                ) ||
+                ownerMains.find(
+                  (m) =>
+                    m.id === 1 ||
+                    r4Nodes.some((x) => !x.isClone && !x.isExtraId && x.originMainId === m.id)
+                ) ||
+                ownerMains[0];
+              r1MainSpId = eligibleMain.id;
             } else {
               const localSpId = n.directSponsorNodeId || 1;
               const localSpNode = nodesMap.get(localSpId);
@@ -8425,8 +8470,21 @@ async function startApp() {
             const ownerMains = r1Nodes.filter(
               (m) => !m.isClone && !m.isExtraId && (m.owner || '').toLowerCase() === extraOwner
             );
+            const explicitExtraSpId =
+              parentOrigin.directSponsorNodeId > 0
+                ? parentOrigin.directSponsorNodeId
+                : parent.directSponsorNodeId > 0
+                ? parent.directSponsorNodeId
+                : 0;
             let targetMainId = 1;
-            if (ownerMains.length === 1) {
+            if (
+              explicitExtraSpId > 0 &&
+              (ownerMains.length === 0
+                ? reportsMap.has(explicitExtraSpId)
+                : ownerMains.some((m) => m.id === explicitExtraSpId))
+            ) {
+              targetMainId = explicitExtraSpId;
+            } else if (ownerMains.length === 1) {
               targetMainId = ownerMains[0].id;
             } else if (ownerMains.length > 1) {
               const r9Nodes = matrixDB.nodesByRank[9] || [];
@@ -8445,12 +8503,7 @@ async function startApp() {
                 ownerMains[0];
               targetMainId = eligibleMain.id;
             } else {
-              const extraSpLocalId =
-                parentOrigin.directSponsorNodeId > 0
-                  ? parentOrigin.directSponsorNodeId
-                  : parent.directSponsorNodeId > 0
-                  ? parent.directSponsorNodeId
-                  : 1;
+              const extraSpLocalId = explicitExtraSpId > 0 ? explicitExtraSpId : 1;
               const extraSpNode = nodesMap.get(extraSpLocalId);
               targetMainId =
                 rankNum === 1
