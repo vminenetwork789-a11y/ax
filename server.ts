@@ -7842,6 +7842,312 @@ async function startApp() {
     }
   });
 
+  app.get('/api/matrix/id-members/:mainId', async (req: Request, res: Response) => {
+    try {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      const mainIdNum = Math.max(1, Number(req.params.mainId) || 1);
+      if (!matrixDB.nodesByRank[1] || matrixDB.nodesByRank[1].length <= 1) {
+        await syncAllMatrixDatabase(CONTRACT_ADDRESS, false);
+      } else {
+        reconcileAutoExtraIdsAcrossRanks();
+      }
+
+      const autoMainSourceMap = reconcileRank1AutoMainIds();
+      const r1Nodes = (matrixDB.nodesByRank[1] || []).filter((n) => !n.isSyntheticExtra);
+      const r1ById = new Map<number, IndexedTreeNode>();
+      for (const n of r1Nodes) r1ById.set(n.id, n);
+
+      const targetR1 = r1ById.get(mainIdNum);
+      if (!targetR1) {
+        return res.json({
+          success: true,
+          source: 'DATABASE',
+          mainId: mainIdNum,
+          owner: ethers.ZeroAddress,
+          currentMaxRank: 1,
+          summary: {
+            totalAllMembersAcrossRanks: 0,
+            totalUniqueMemberMainIds: 0,
+            totalDirectMainIds: 0,
+            totalDirectNodesAcrossRanks: 0,
+            totalSubtreeNodesAcrossRanks: 0,
+            totalAutoIds: 0,
+            totalExtraIds: 0,
+            totalClones: 0,
+            unlockedRanksCount: 0,
+            ranksWithMembersCount: 0,
+          },
+          directSummaryList: [],
+          ranks: [],
+        });
+      }
+
+      // Compute currentMaxRank for every Rank 1 Main/Auto ID
+      const maxRankByR1Main = new Map<number, number>();
+      for (const n of r1Nodes) {
+        if (!n.isClone && !n.isExtraId) {
+          maxRankByR1Main.set(n.id, n.id === 1 ? 18 : 1);
+        }
+      }
+      for (let r = 2; r <= 18; r++) {
+        for (const rn of matrixDB.nodesByRank[r] || []) {
+          if (!rn.isClone && !rn.isExtraId && rn.originMainId > 0) {
+            const prev = maxRankByR1Main.get(rn.originMainId) || 1;
+            if (r > prev) maxRankByR1Main.set(rn.originMainId, r);
+          }
+        }
+      }
+
+      const directSummaryMap = new Map<
+        number,
+        {
+          id: number;
+          owner: string;
+          currentMaxRank: number;
+          isAutoId: boolean;
+          ranksPresent: number[];
+        }
+      >();
+
+      const uniqueMemberMainIds = new Set<number>();
+      let totalAllMembersAcrossRanks = 0;
+      let totalDirectNodesAcrossRanks = 0;
+      let totalSubtreeNodesAcrossRanks = 0;
+      let totalAutoIds = 0;
+      let totalExtraIds = 0;
+      let totalClones = 0;
+      let unlockedRanksCount = 0;
+      let ranksWithMembersCount = 0;
+
+      const ranksData: Array<{
+        rank: number;
+        rankPriceUsdt: number;
+        totalInSystemRank: number;
+        selfNodeId: number | null;
+        selfCloneIds: number[];
+        totalMembersInRank: number;
+        directCountInRank: number;
+        subtreeCountInRank: number;
+        members: Array<{
+          nodeId: number;
+          rank: number;
+          originMainId: number;
+          memberType: 'MANUAL_ID' | 'AUTO_ID' | 'EXTRA_ID' | 'CLONE_ID';
+          label: string;
+          owner: string;
+          parentId: number;
+          side: 'LEFT' | 'RIGHT' | 'ROOT';
+          directSponsorNodeId: number;
+          isDirect: boolean;
+          isInSubtree: boolean;
+          tier: number | null;
+          viaCloneNodeId: number | null;
+          currentMaxRank: number;
+          nodeVault: number;
+        }>;
+      }> = [];
+
+      for (let r = 1; r <= 18; r++) {
+        const rList = (matrixDB.nodesByRank[r] || []).filter((n) => !n.isSyntheticExtra);
+        const byId = new Map<number, IndexedTreeNode>();
+        for (const n of rList) byId.set(n.id, n);
+
+        const selfNode = rList.find(
+          (n) => !n.isClone && !n.isExtraId && (r === 1 ? n.id === mainIdNum : n.originMainId === mainIdNum)
+        );
+        const selfCloneIds = rList
+          .filter((n) => n.isClone && !n.isExtraId && Number(n.originMainId || 0) === mainIdNum)
+          .map((n) => n.id)
+          .sort((a, b) => a - b);
+
+        if (selfNode) unlockedRanksCount++;
+
+        // BFS from selfNode & selfCloneIds in Rank r to track downline tiers
+        const subtreeInfo = new Map<
+          number,
+          { tier: number; viaCloneNodeId: number | null }
+        >();
+
+        const runSubtreeBfs = (startId: number, viaCloneNodeId: number | null) => {
+          const startNode = byId.get(startId);
+          if (!startNode) return;
+          const visited = new Set<number>([startId]);
+          const queue: Array<{ id: number; tier: number }> = [];
+          if (startNode.leftChild > 0 && byId.has(startNode.leftChild)) {
+            queue.push({ id: startNode.leftChild, tier: 1 });
+            visited.add(startNode.leftChild);
+          }
+          if (startNode.rightChild > 0 && byId.has(startNode.rightChild)) {
+            queue.push({ id: startNode.rightChild, tier: 1 });
+            visited.add(startNode.rightChild);
+          }
+          while (queue.length > 0) {
+            const cur = queue.shift()!;
+            const existing = subtreeInfo.get(cur.id);
+            if (!existing || (!viaCloneNodeId && existing.viaCloneNodeId !== null)) {
+              subtreeInfo.set(cur.id, { tier: cur.tier, viaCloneNodeId });
+            }
+            const curNode = byId.get(cur.id);
+            if (!curNode) continue;
+            if (curNode.leftChild > 0 && byId.has(curNode.leftChild) && !visited.has(curNode.leftChild)) {
+              visited.add(curNode.leftChild);
+              queue.push({ id: curNode.leftChild, tier: cur.tier + 1 });
+            }
+            if (curNode.rightChild > 0 && byId.has(curNode.rightChild) && !visited.has(curNode.rightChild)) {
+              visited.add(curNode.rightChild);
+              queue.push({ id: curNode.rightChild, tier: cur.tier + 1 });
+            }
+          }
+        };
+
+        if (selfNode) runSubtreeBfs(selfNode.id, null);
+        for (const cId of selfCloneIds) {
+          runSubtreeBfs(cId, cId);
+        }
+
+        const membersInRank: (typeof ranksData)[number]['members'] = [];
+        for (const n of rList) {
+          if (selfNode && n.id === selfNode.id) continue;
+          const isOwnClone = Boolean(n.isClone && Number(n.originMainId || 0) === mainIdNum);
+          if (isOwnClone) continue;
+
+          const sub = subtreeInfo.get(n.id);
+          const isDirectNode = Number(n.directSponsorNodeId || 0) === mainIdNum && n.id !== mainIdNum;
+          if (!sub && !isDirectNode) continue;
+
+          const origMainId =
+            r === 1 && !n.isClone && !n.isExtraId ? n.id : Number(n.originMainId || n.id);
+          const r1Orig = r1ById.get(origMainId);
+          const isAutoMain =
+            !n.isClone &&
+            !n.isExtraId &&
+            (autoMainSourceMap.has(origMainId) || r1Orig?.originType === 'AUTO_NEW_MAIN');
+
+          const memberType: 'MANUAL_ID' | 'AUTO_ID' | 'EXTRA_ID' | 'CLONE_ID' = n.isClone
+            ? 'CLONE_ID'
+            : n.isExtraId
+            ? 'EXTRA_ID'
+            : isAutoMain
+            ? 'AUTO_ID'
+            : 'MANUAL_ID';
+
+          const pNode = byId.get(n.parentId);
+          const side: 'LEFT' | 'RIGHT' | 'ROOT' =
+            n.parentId === 0 ? 'ROOT' : pNode && pNode.leftChild === n.id ? 'LEFT' : 'RIGHT';
+
+          const label =
+            memberType === 'CLONE_ID'
+              ? `โคลน R${r}-#${n.id} (Main #${origMainId})`
+              : memberType === 'EXTRA_ID'
+              ? `Extra R${r}-#${n.id}`
+              : memberType === 'AUTO_ID'
+              ? r === 1
+                ? `Auto #${origMainId}`
+                : `Auto #${origMainId} (R${r}-#${n.id})`
+              : r === 1
+              ? `Main #${origMainId}`
+              : `Main #${origMainId} (R${r}-#${n.id})`;
+
+          const mMaxRank = maxRankByR1Main.get(origMainId) || r;
+          membersInRank.push({
+            nodeId: n.id,
+            rank: r,
+            originMainId: origMainId,
+            memberType,
+            label,
+            owner: n.owner || ethers.ZeroAddress,
+            parentId: n.parentId,
+            side,
+            directSponsorNodeId: Number(n.directSponsorNodeId || 0),
+            isDirect: isDirectNode && !n.isClone,
+            isInSubtree: Boolean(sub),
+            tier: sub ? sub.tier : null,
+            viaCloneNodeId: sub ? sub.viaCloneNodeId : null,
+            currentMaxRank: mMaxRank,
+            nodeVault: Number((n.nodeVault || 0).toFixed(2)),
+          });
+
+          if (!n.isClone && !n.isExtraId && origMainId > 0) {
+            uniqueMemberMainIds.add(origMainId);
+            if (isDirectNode) {
+              const existingDirect = directSummaryMap.get(origMainId);
+              if (existingDirect) {
+                if (!existingDirect.ranksPresent.includes(r)) existingDirect.ranksPresent.push(r);
+              } else {
+                directSummaryMap.set(origMainId, {
+                  id: origMainId,
+                  owner: n.owner || ethers.ZeroAddress,
+                  currentMaxRank: mMaxRank,
+                  isAutoId: isAutoMain,
+                  ranksPresent: [r],
+                });
+              }
+            }
+          }
+        }
+
+        membersInRank.sort((a, b) => {
+          if (a.isDirect !== b.isDirect) return a.isDirect ? -1 : 1;
+          const ta = a.tier ?? 9999;
+          const tb = b.tier ?? 9999;
+          if (ta !== tb) return ta - tb;
+          return a.nodeId - b.nodeId;
+        });
+
+        const directCountInRank = membersInRank.filter((m) => m.isDirect).length;
+        const subtreeCountInRank = membersInRank.filter((m) => m.isInSubtree).length;
+
+        totalAllMembersAcrossRanks += membersInRank.length;
+        totalDirectNodesAcrossRanks += directCountInRank;
+        totalSubtreeNodesAcrossRanks += subtreeCountInRank;
+        totalAutoIds += membersInRank.filter((m) => m.memberType === 'AUTO_ID' && r === 1).length;
+        totalExtraIds += membersInRank.filter((m) => m.memberType === 'EXTRA_ID').length;
+        totalClones += membersInRank.filter((m) => m.memberType === 'CLONE_ID').length;
+
+        if (membersInRank.length > 0) ranksWithMembersCount++;
+
+        ranksData.push({
+          rank: r,
+          rankPriceUsdt: RANK_PRICES_USDT[r - 1] || 5,
+          totalInSystemRank: rList.length,
+          selfNodeId: selfNode ? selfNode.id : null,
+          selfCloneIds,
+          totalMembersInRank: membersInRank.length,
+          directCountInRank,
+          subtreeCountInRank,
+          members: membersInRank,
+        });
+      }
+
+      const directSummaryList = Array.from(directSummaryMap.values()).sort((a, b) => a.id - b.id);
+
+      res.json({
+        success: true,
+        source: 'DATABASE',
+        mainId: mainIdNum,
+        owner: targetR1.owner || ethers.ZeroAddress,
+        currentMaxRank: maxRankByR1Main.get(mainIdNum) || 1,
+        summary: {
+          totalAllMembersAcrossRanks,
+          totalUniqueMemberMainIds: uniqueMemberMainIds.size,
+          totalDirectMainIds: directSummaryList.length,
+          totalDirectNodesAcrossRanks,
+          totalSubtreeNodesAcrossRanks,
+          totalAutoIds,
+          totalExtraIds,
+          totalClones,
+          unlockedRanksCount,
+          ranksWithMembersCount,
+        },
+        directSummaryList,
+        ranks: ranksData,
+      });
+    } catch (err: any) {
+      console.warn('[API /api/matrix/id-members/:mainId error]', err);
+      res.status(500).json({ success: false, error: err?.message || 'Failed to load ID members' });
+    }
+  });
+
   app.get('/api/matrix/per-id-history', async (req: Request, res: Response) => {
     try {
       const forceSync = req.query.forceSync === '1';
