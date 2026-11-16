@@ -1989,10 +1989,23 @@ function recordRealTransactionLog(input: {
   if (existing) {
     if (!existing.blockNumber && input.blockNumber) existing.blockNumber = input.blockNumber;
     if (!existing.amountUsdt && input.amountUsdt) existing.amountUsdt = input.amountUsdt;
-    if (!existing.mainNodeId && normMain) existing.mainNodeId = normMain;
-    if (!existing.nodeId && normNode) existing.nodeId = normNode;
     if (!existing.userAddress && cleanUser) existing.userAddress = cleanUser;
-    if (!existing.details && input.details) existing.details = input.details;
+    if (
+      input.actionType === 'AUTO_ID' &&
+      input.source === 'ONCHAIN_EVENT' &&
+      normNode &&
+      normNode > 1 &&
+      normMain &&
+      normMain > 0
+    ) {
+      if (existing.mainNodeId !== normMain) existing.mainNodeId = normMain;
+      if (input.title && existing.title !== input.title) existing.title = input.title;
+      if (input.details && existing.details !== input.details) existing.details = input.details;
+    } else {
+      if (!existing.mainNodeId && normMain) existing.mainNodeId = normMain;
+      if (!existing.details && input.details) existing.details = input.details;
+    }
+    if (!existing.nodeId && normNode) existing.nodeId = normNode;
     if (input.timestamp && (!existing.timestamp || input.source === 'ONCHAIN_EVENT')) {
       existing.timestamp = input.timestamp;
     }
@@ -3653,27 +3666,48 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
         spawnedCountByMain.set(synSource, (spawnedCountByMain.get(synSource) || 0) + 1);
       } else if (n.confirmedOriginType === 'AUTO_NEW_MAIN') {
         // Confirmed from on-chain AutoNewMainIdCreated transaction receipt
-        let sourceMain =
+        const candMains = (ownerAllMainsMap.get(oKey) || [])
+          .filter((mId) => {
+            if (mId >= n.id) return false;
+            if (getMainWindow5Start(mId) <= 1) return false;
+            return isPlacedUnderMainOrClonesR1(mId, n.id);
+          })
+          .sort((a, b) => {
+            const remA = (expectedAutoSpawnsByMain.get(a) || 0) - (spawnedCountByMain.get(a) || 0);
+            const remB = (expectedAutoSpawnsByMain.get(b) || 0) - (spawnedCountByMain.get(b) || 0);
+            if ((remB > 0) !== (remA > 0)) return remB > 0 ? 1 : -1;
+            const sa = getSpecificityScoreR1(a, n.id);
+            const sb = getSpecificityScoreR1(b, n.id);
+            if (sa !== sb) return sa - sb;
+            return b - a;
+          });
+        const bestCand = candMains[0] || 0;
+        const persistedSrc =
           n.autoSourceMainId && n.autoSourceMainId > 0 && n.autoSourceMainId < n.id
             ? n.autoSourceMainId
             : 0;
+        let sourceMain = 0;
+        if (persistedSrc > 0 && candMains.includes(persistedSrc)) {
+          const remPersisted =
+            (expectedAutoSpawnsByMain.get(persistedSrc) || 0) - (spawnedCountByMain.get(persistedSrc) || 0);
+          const remBest =
+            bestCand > 0
+              ? (expectedAutoSpawnsByMain.get(bestCand) || 0) - (spawnedCountByMain.get(bestCand) || 0)
+              : 0;
+          const strictlyMoreSpecificCand =
+            bestCand > 0 &&
+            bestCand !== persistedSrc &&
+            remBest > 0 &&
+            getSpecificityScoreR1(bestCand, n.id) < getSpecificityScoreR1(persistedSrc, n.id);
+          if (remPersisted > 0 && !strictlyMoreSpecificCand) {
+            sourceMain = persistedSrc;
+          }
+        }
         if (!sourceMain) {
-          const candMains = (ownerAllMainsMap.get(oKey) || [])
-            .filter((mId) => {
-              if (mId >= n.id) return false;
-              if (getMainWindow5Start(mId) <= 1) return false;
-              return isPlacedUnderMainOrClonesR1(mId, n.id);
-            })
-            .sort((a, b) => {
-              const sa = getSpecificityScoreR1(a, n.id);
-              const sb = getSpecificityScoreR1(b, n.id);
-              if (sa !== sb) return sa - sb;
-              const remA = (expectedAutoSpawnsByMain.get(a) || 0) - (spawnedCountByMain.get(a) || 0);
-              const remB = (expectedAutoSpawnsByMain.get(b) || 0) - (spawnedCountByMain.get(b) || 0);
-              if ((remB > 0) !== (remA > 0)) return remB > 0 ? 1 : -1;
-              return b - a;
-            });
-          sourceMain = candMains[0] || (n.directSponsorNodeId > 0 ? n.directSponsorNodeId : firstMain);
+          sourceMain =
+            bestCand ||
+            persistedSrc ||
+            (n.directSponsorNodeId > 0 && n.directSponsorNodeId < n.id ? n.directSponsorNodeId : firstMain);
         }
         n.originType = 'AUTO_NEW_MAIN';
         n.autoSourceMainId = sourceMain;
@@ -3773,6 +3807,33 @@ function reconcileRank1AutoMainIds(): Map<number, number> {
       n.directSponsorNodeId = spId;
       const srcOwner = byIdR1.get(spId)?.owner;
       if (srcOwner) n.directSponsor = srcOwner;
+    }
+  }
+
+  // Heal any persisted AUTO_ID transaction logs whose mainNodeId/title/details diverged from autoMainSourceMap
+  if (Array.isArray(matrixDB.transactionLogs) && autoMainSourceMap.size > 0) {
+    for (const t of matrixDB.transactionLogs) {
+      if (t.actionType === 'AUTO_ID' && Number(t.nodeId || 0) > 1) {
+        const autoId = Number(t.nodeId);
+        const trueMain = autoMainSourceMap.get(autoId);
+        if (trueMain && trueMain > 0) {
+          const aNode = byIdR1.get(autoId);
+          const pNode = aNode ? byIdR1.get(aNode.parentId) : undefined;
+          const sideLabel =
+            !aNode || aNode.parentId === 0
+              ? 'ROOT'
+              : pNode && pNode.leftChild === aNode.id
+              ? 'LEFT'
+              : 'RIGHT';
+          t.mainNodeId = trueMain;
+          t.title = `แตก Auto ID #${autoId} (จาก Main #${trueMain})`;
+          if (aNode) {
+            t.details = `Parent #${aNode.parentId} [${sideLabel}] • Spawned by Main #${trueMain}`;
+          } else if (t.details && /Spawned by Main #\d+/.test(t.details)) {
+            t.details = t.details.replace(/Spawned by Main #\d+/, `Spawned by Main #${trueMain}`);
+          }
+        }
+      }
     }
   }
 
@@ -6489,7 +6550,22 @@ async function startApp() {
                 item.confirmedOriginType = confirmedOrigin;
                 if (confirmedOrigin === 'AUTO_NEW_MAIN') {
                   item.originType = 'AUTO_NEW_MAIN';
-                  if (savedAutoSrc && savedAutoSrc > 0) item.autoSourceMainId = savedAutoSrc;
+                  const onChainSp =
+                    item.directSponsorNodeId > 0 && item.directSponsorNodeId < item.id
+                      ? item.directSponsorNodeId
+                      : 0;
+                  const onChainSpNode = onChainSp > 0 ? mergedMap.get(onChainSp) : undefined;
+                  const useOnChainSp =
+                    onChainSp > 0 &&
+                    (!onChainSpNode ||
+                      (!onChainSpNode.isClone &&
+                        !onChainSpNode.isExtraId &&
+                        (onChainSpNode.owner || '').toLowerCase() === (item.owner || '').toLowerCase()));
+                  if (useOnChainSp) {
+                    item.autoSourceMainId = onChainSp;
+                  } else if (savedAutoSrc && savedAutoSrc > 0) {
+                    item.autoSourceMainId = savedAutoSrc;
+                  }
                 } else {
                   item.originType = 'MANUAL_REGISTER';
                 }
@@ -6539,7 +6615,22 @@ async function startApp() {
                   pItem.confirmedOriginType = confirmedOrigin;
                   if (confirmedOrigin === 'AUTO_NEW_MAIN') {
                     pItem.originType = 'AUTO_NEW_MAIN';
-                    if (savedAutoSrc && savedAutoSrc > 0) pItem.autoSourceMainId = savedAutoSrc;
+                    const onChainSp =
+                      pItem.directSponsorNodeId > 0 && pItem.directSponsorNodeId < pItem.id
+                        ? pItem.directSponsorNodeId
+                        : 0;
+                    const onChainSpNode = onChainSp > 0 ? mergedMap.get(onChainSp) : undefined;
+                    const useOnChainSp =
+                      onChainSp > 0 &&
+                      (!onChainSpNode ||
+                        (!onChainSpNode.isClone &&
+                          !onChainSpNode.isExtraId &&
+                          (onChainSpNode.owner || '').toLowerCase() === (pItem.owner || '').toLowerCase()));
+                    if (useOnChainSp) {
+                      pItem.autoSourceMainId = onChainSp;
+                    } else if (savedAutoSrc && savedAutoSrc > 0) {
+                      pItem.autoSourceMainId = savedAutoSrc;
+                    }
                   } else {
                     pItem.originType = 'MANUAL_REGISTER';
                   }
@@ -6703,6 +6794,7 @@ async function startApp() {
         ];
         const logIface = new ethers.Interface(eventAbi);
         const contract = new ethers.Contract(targetContract, eventAbi, provider);
+        const readContract = new ethers.Contract(targetContract, MATRIX_READ_ABI, provider);
         const hasUnconfirmedR1Nodes = () =>
           (matrixDB.nodesByRank[1] || []).some(
             (n) => !n.isClone && !n.isExtraId && !n.isSyntheticExtra && n.id > 1 && !n.confirmedOriginType
@@ -6766,20 +6858,23 @@ async function startApp() {
             return mId === 1 ? 100000 : 999999;
           };
 
-          for (const pref of preferredCandidates) {
-            if (pref > 0 && pref < autoNodeId) {
+          const validPrefs = Array.from(new Set(preferredCandidates))
+            .filter((pref) => {
+              if (pref <= 0 || pref >= autoNodeId) return false;
               const pNode = byId.get(pref);
-              if (
-                pNode &&
-                !pNode.isClone &&
-                !pNode.isExtraId &&
-                (pNode.owner || '').toLowerCase() === ownerLower &&
+              return (
+                Boolean(pNode) &&
+                !pNode!.isClone &&
+                !pNode!.isExtraId &&
+                (pNode!.owner || '').toLowerCase() === ownerLower &&
                 isMainRankEligible(pref) &&
                 getDepthUnderMainOrClone(pref) < 999999
-              ) {
-                return pref;
-              }
-            }
+              );
+            })
+            .sort((a, b) => getDepthUnderMainOrClone(a) - getDepthUnderMainOrClone(b) || b - a);
+
+          if (validPrefs.length > 0) {
+            return validPrefs[0];
           }
 
           const candidates = r1List
@@ -6882,7 +6977,25 @@ async function startApp() {
               for (const autoId of autoNodeIds) {
                 const dbNode = r1List.find((n) => n.id === autoId);
                 if (!dbNode || dbNode.isClone || dbNode.isExtraId) continue;
-                const srcMain = resolveAutoSourceInR1Tree(autoId, userLower, prefList);
+                let srcMain = 0;
+                const onChainSpId = await Promise.race([
+                  readContract.nodeDirectSponsorNodeId(1, autoId).then(Number),
+                  new Promise<number>((resolve) => setTimeout(() => resolve(0), 2500)),
+                ]).catch(() => 0);
+                if (onChainSpId > 0 && onChainSpId < autoId) {
+                  const spNode = r1List.find((n) => n.id === onChainSpId);
+                  if (
+                    spNode &&
+                    !spNode.isClone &&
+                    !spNode.isExtraId &&
+                    (spNode.owner || '').toLowerCase() === userLower
+                  ) {
+                    srcMain = onChainSpId;
+                  }
+                }
+                if (!srcMain) {
+                  srcMain = resolveAutoSourceInR1Tree(autoId, userLower, prefList);
+                }
                 if (
                   dbNode.confirmedOriginType !== 'AUTO_NEW_MAIN' ||
                   dbNode.autoSourceMainId !== srcMain ||

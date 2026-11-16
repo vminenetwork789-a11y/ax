@@ -1,8 +1,8 @@
 {
   "contractAddress": "0x6d85e1D8F1628eADf0baF25D3ab6C3C7bC16743f",
   "usdtAddress": "0x05f24E1F598DF1aE8d0B424ce978f8ea33bB752b",
-  "lastSyncedBlock": 143001526,
-  "lastSyncedAt": "2026-11-16T04:34:10.040Z",
+  "lastSyncedBlock": 143010929,
+  "lastSyncedAt": "2026-11-16T05:44:54.643Z",
   "systemWallets": {
     "botWallet": "0xB3832D4cc6daE0B24f1e6660d7C85dcc1F005Cd1",
     "rootOwner": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
@@ -11,11 +11,11 @@
     "customBotWallet": "0xB3832D4cc6daE0B24f1e6660d7C85dcc1F005Cd1"
   },
   "rankCounts": {
-    "1": 20,
-    "2": 8,
+    "1": 25,
+    "2": 12,
     "3": 5,
     "4": 5,
-    "5": 4,
+    "5": 5,
     "6": 4,
     "7": 4,
     "8": 4,
@@ -45,9 +45,9 @@
         "originMainId": 1,
         "cloneRound": 0,
         "directSponsorNodeId": 1,
-        "nodeVault": 1.75,
-        "rawNodeVault": 1.75,
-        "reconciledBaseVault": 1.75,
+        "nodeVault": 0,
+        "rawNodeVault": 0,
+        "reconciledBaseVault": 0,
         "originType": "MANUAL_REGISTER",
         "createdAt": "2026-11-15T14:19:10.588Z",
         "cloneSequence": 0
@@ -145,16 +145,16 @@
         "owner": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
         "directSponsor": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
         "parentId": 3,
-        "leftChild": 0,
+        "leftChild": 24,
         "rightChild": 0,
         "isClone": false,
         "isExtraId": false,
         "originMainId": 6,
         "cloneRound": 0,
         "directSponsorNodeId": 3,
-        "nodeVault": 0,
-        "rawNodeVault": 0,
-        "reconciledBaseVault": 0,
+        "nodeVault": 1.75,
+        "rawNodeVault": 1.75,
+        "reconciledBaseVault": 1.75,
         "originType": "MANUAL_REGISTER",
         "createdAt": "2026-11-15T14:19:10.938Z",
         "confirmedOriginType": "MANUAL_REGISTER",
@@ -363,8 +363,8 @@
         "owner": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
         "directSponsor": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
         "parentId": 5,
-        "leftChild": 0,
-        "rightChild": 0,
+        "leftChild": 22,
+        "rightChild": 23,
         "isClone": true,
         "isExtraId": false,
         "originMainId": 1,
@@ -431,7 +431,7 @@
         "directSponsor": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
         "parentId": 5,
         "leftChild": 20,
-        "rightChild": 0,
+        "rightChild": 21,
         "isClone": true,
         "isExtraId": false,
         "originMainId": 3,
@@ -465,6 +465,116 @@
         "createdAt": "2026-11-15T14:19:11.637Z",
         "cloneSequence": 1,
         "isLeft": true
+      },
+      {
+        "id": 21,
+        "rank": 1,
+        "owner": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+        "directSponsor": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+        "parentId": 19,
+        "leftChild": 0,
+        "rightChild": 0,
+        "isClone": false,
+        "isExtraId": false,
+        "originMainId": 21,
+        "cloneRound": 0,
+        "directSponsorNodeId": 3,
+        "nodeVault": 0,
+        "rawNodeVault": 0,
+        "reconciledBaseVault": 0,
+        "originType": "AUTO_NEW_MAIN",
+        "createdAt": "2026-11-16T05:32:09.211Z",
+        "confirmedOriginType": "AUTO_NEW_MAIN",
+        "autoSourceMainId": 3,
+        "cloneSequence": 0,
+        "isLeft": false
+      },
+      {
+        "id": 22,
+        "rank": 1,
+        "owner": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+        "directSponsor": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+        "parentId": 16,
+        "leftChild": 25,
+        "rightChild": 0,
+        "isClone": true,
+        "isExtraId": false,
+        "originMainId": 3,
+        "cloneRound": 1,
+        "directSponsorNodeId": 1,
+        "nodeVault": 0,
+        "rawNodeVault": 0,
+        "reconciledBaseVault": 0,
+        "originType": "CLONE",
+        "createdAt": "2026-11-16T05:32:09.211Z",
+        "cloneSequence": 5,
+        "isLeft": true
+      },
+      {
+        "id": 23,
+        "rank": 1,
+        "owner": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+        "directSponsor": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+        "parentId": 16,
+        "leftChild": 0,
+        "rightChild": 0,
+        "isClone": false,
+        "isExtraId": false,
+        "originMainId": 23,
+        "cloneRound": 0,
+        "directSponsorNodeId": 1,
+        "nodeVault": 0,
+        "rawNodeVault": 0,
+        "reconciledBaseVault": 0,
+        "originType": "AUTO_NEW_MAIN",
+        "createdAt": "2026-11-16T05:32:09.211Z",
+        "confirmedOriginType": "AUTO_NEW_MAIN",
+        "autoSourceMainId": 1,
+        "cloneSequence": 0,
+        "isLeft": false
+      },
+      {
+        "id": 24,
+        "rank": 1,
+        "owner": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+        "directSponsor": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+        "parentId": 6,
+        "leftChild": 0,
+        "rightChild": 0,
+        "isClone": true,
+        "isExtraId": false,
+        "originMainId": 1,
+        "cloneRound": 2,
+        "directSponsorNodeId": 1,
+        "nodeVault": 0,
+        "rawNodeVault": 0,
+        "reconciledBaseVault": 0,
+        "originType": "CLONE",
+        "createdAt": "2026-11-16T05:32:09.211Z",
+        "cloneSequence": 4,
+        "isLeft": true
+      },
+      {
+        "id": 25,
+        "rank": 1,
+        "owner": "0x26e9777555878f1c02bA7D85aC0EA43f0a5f1837",
+        "directSponsor": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+        "parentId": 22,
+        "leftChild": 0,
+        "rightChild": 0,
+        "isClone": false,
+        "isExtraId": false,
+        "originMainId": 25,
+        "cloneRound": 0,
+        "directSponsorNodeId": 3,
+        "nodeVault": 0,
+        "rawNodeVault": 0,
+        "reconciledBaseVault": 0,
+        "originType": "MANUAL_REGISTER",
+        "createdAt": "2026-11-16T05:32:09.211Z",
+        "confirmedOriginType": "MANUAL_REGISTER",
+        "cloneSequence": 0,
+        "isLeft": true
       }
     ],
     "2": [
@@ -481,9 +591,9 @@
         "originMainId": 1,
         "cloneRound": 0,
         "directSponsorNodeId": 1,
-        "nodeVault": 2,
-        "rawNodeVault": 2,
-        "reconciledBaseVault": 2,
+        "nodeVault": 0.5,
+        "rawNodeVault": 0.5,
+        "reconciledBaseVault": 0.5,
         "originType": "MANUAL_REGISTER",
         "createdAt": "2026-11-15T14:19:12.054Z",
         "cloneSequence": 0
@@ -495,7 +605,7 @@
         "directSponsor": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
         "parentId": 1,
         "leftChild": 4,
-        "rightChild": 0,
+        "rightChild": 10,
         "isClone": false,
         "isExtraId": false,
         "originMainId": 2,
@@ -523,9 +633,9 @@
         "originMainId": 3,
         "cloneRound": 0,
         "directSponsorNodeId": 1,
-        "nodeVault": 0.25,
-        "rawNodeVault": 0.25,
-        "reconciledBaseVault": 0.25,
+        "nodeVault": 0.5,
+        "rawNodeVault": 0.5,
+        "reconciledBaseVault": 0.5,
         "originType": "MANUAL_REGISTER",
         "createdAt": "2026-11-15T14:19:12.054Z",
         "isAdminFreeUpgrade": true,
@@ -539,7 +649,7 @@
         "directSponsor": "0x0000000000000000000000000000000000000000",
         "parentId": 2,
         "leftChild": 7,
-        "rightChild": 0,
+        "rightChild": 11,
         "isClone": true,
         "isExtraId": false,
         "originMainId": 1,
@@ -603,7 +713,7 @@
         "directSponsor": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
         "parentId": 4,
         "leftChild": 8,
-        "rightChild": 0,
+        "rightChild": 9,
         "isClone": true,
         "isExtraId": false,
         "originMainId": 3,
@@ -636,6 +746,90 @@
         "originType": "AUTO_EXTRA",
         "createdAt": "2026-11-15T14:19:12.319Z",
         "cloneSequence": 0,
+        "isLeft": true
+      },
+      {
+        "id": 9,
+        "rank": 2,
+        "owner": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+        "directSponsor": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+        "parentId": 7,
+        "leftChild": 0,
+        "rightChild": 0,
+        "isClone": false,
+        "isExtraId": true,
+        "originMainId": 9,
+        "cloneRound": 0,
+        "directSponsorNodeId": 3,
+        "nodeVault": 0,
+        "rawNodeVault": 0,
+        "reconciledBaseVault": 0,
+        "originType": "AUTO_EXTRA",
+        "createdAt": "2026-11-16T05:32:09.904Z",
+        "cloneSequence": 0,
+        "isLeft": false
+      },
+      {
+        "id": 10,
+        "rank": 2,
+        "owner": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+        "directSponsor": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+        "parentId": 2,
+        "leftChild": 12,
+        "rightChild": 0,
+        "isClone": true,
+        "isExtraId": false,
+        "originMainId": 3,
+        "cloneRound": 2,
+        "directSponsorNodeId": 1,
+        "nodeVault": 0,
+        "rawNodeVault": 0,
+        "reconciledBaseVault": 0,
+        "originType": "CLONE",
+        "createdAt": "2026-11-16T05:32:09.904Z",
+        "cloneSequence": 2,
+        "isLeft": false
+      },
+      {
+        "id": 11,
+        "rank": 2,
+        "owner": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+        "directSponsor": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+        "parentId": 4,
+        "leftChild": 0,
+        "rightChild": 0,
+        "isClone": true,
+        "isExtraId": false,
+        "originMainId": 2,
+        "cloneRound": 1,
+        "directSponsorNodeId": 1,
+        "nodeVault": 0,
+        "rawNodeVault": 0,
+        "reconciledBaseVault": 0,
+        "originType": "CLONE",
+        "createdAt": "2026-11-16T05:32:10.136Z",
+        "cloneSequence": 1,
+        "isLeft": false
+      },
+      {
+        "id": 12,
+        "rank": 2,
+        "owner": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+        "directSponsor": "0x0000000000000000000000000000000000000000",
+        "parentId": 10,
+        "leftChild": 0,
+        "rightChild": 0,
+        "isClone": true,
+        "isExtraId": false,
+        "originMainId": 1,
+        "cloneRound": 2,
+        "directSponsorNodeId": 1,
+        "nodeVault": 0,
+        "rawNodeVault": 0,
+        "reconciledBaseVault": 0,
+        "originType": "CLONE",
+        "createdAt": "2026-11-16T05:32:10.136Z",
+        "cloneSequence": 2,
         "isLeft": true
       }
     ],
@@ -804,9 +998,9 @@
         "originMainId": 3,
         "cloneRound": 0,
         "directSponsorNodeId": 1,
-        "nodeVault": 0.5,
-        "rawNodeVault": 0.5,
-        "reconciledBaseVault": 0.5,
+        "nodeVault": 0,
+        "rawNodeVault": 0,
+        "reconciledBaseVault": 0,
         "originType": "MANUAL_REGISTER",
         "createdAt": "2026-11-15T14:19:13.359Z",
         "isAdminFreeUpgrade": true,
@@ -906,16 +1100,16 @@
         "owner": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
         "directSponsor": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
         "parentId": 1,
-        "leftChild": 0,
+        "leftChild": 5,
         "rightChild": 0,
         "isClone": false,
         "isExtraId": false,
         "originMainId": 3,
         "cloneRound": 0,
         "directSponsorNodeId": 1,
-        "nodeVault": 0,
-        "rawNodeVault": 0,
-        "reconciledBaseVault": 0,
+        "nodeVault": 4.5,
+        "rawNodeVault": 4.5,
+        "reconciledBaseVault": 4.5,
         "originType": "MANUAL_REGISTER",
         "createdAt": "2026-11-15T14:19:13.789Z",
         "isAdminFreeUpgrade": true,
@@ -942,6 +1136,27 @@
         "createdAt": "2026-11-15T14:19:13.789Z",
         "isAdminFreeUpgrade": true,
         "cloneSequence": 1,
+        "isLeft": true
+      },
+      {
+        "id": 5,
+        "rank": 5,
+        "owner": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+        "directSponsor": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+        "parentId": 3,
+        "leftChild": 0,
+        "rightChild": 0,
+        "isClone": false,
+        "isExtraId": false,
+        "originMainId": 5,
+        "cloneRound": 0,
+        "directSponsorNodeId": 3,
+        "nodeVault": 0,
+        "rawNodeVault": 0,
+        "reconciledBaseVault": 0,
+        "originType": "MANUAL_REGISTER",
+        "createdAt": "2026-11-16T05:32:11.474Z",
+        "cloneSequence": 0,
         "isLeft": true
       }
     ],
@@ -1814,7 +2029,7 @@
         "isExtraId": false,
         "originMainId": 1,
         "cloneRound": 1,
-        "directSponsorNodeId": 0,
+        "directSponsorNodeId": 1,
         "nodeVault": 0,
         "rawNodeVault": 0,
         "reconciledBaseVault": 0,
@@ -2093,10 +2308,10 @@
   "userRankVaults": {
     "0x5b0779297205606df66239ed0ab58bd62600ad8a": {
       "1": 5.25,
-      "2": 2.25,
+      "2": 1,
       "3": 0.75,
-      "4": 0.5,
-      "5": 0,
+      "4": 0,
+      "5": 4.5,
       "6": 0,
       "7": 0,
       "8": 0,
@@ -2110,9 +2325,516 @@
       "16": 0,
       "17": 0,
       "18": 0
+    },
+    "0x26e9777555878f1c02ba7d85ac0ea43f0a5f1837": {
+      "1": 0
     }
   },
   "rewardLogs": [
+    {
+      "id": "db-chain-r5-5-direct",
+      "fromNodeId": "5",
+      "toNodeId": "3",
+      "recipient": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "rank": 5,
+      "rewardType": "DIRECT",
+      "amount": "12.00",
+      "txHash": "0x050005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
+      "blockNumber": 143010929,
+      "createdAt": "2026-11-16T05:32:11.474Z"
+    },
+    {
+      "id": "db-chain-r5-5-vault",
+      "fromNodeId": "5",
+      "toNodeId": "3",
+      "recipient": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "rank": 5,
+      "rewardType": "UPGRADE_VAULT",
+      "amount": "14.00",
+      "txHash": "0x050005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
+      "blockNumber": 143010929,
+      "createdAt": "2026-11-16T05:32:11.474Z"
+    },
+    {
+      "id": "db-chain-r5-5-level-1-3",
+      "fromNodeId": "5",
+      "toNodeId": "3",
+      "recipient": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "rank": 5,
+      "rewardType": "LEVEL",
+      "amount": "0.80",
+      "txHash": "0x050005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
+      "blockNumber": 143010929,
+      "createdAt": "2026-11-16T05:32:11.474Z"
+    },
+    {
+      "id": "db-chain-r5-5-level-2-1",
+      "fromNodeId": "5",
+      "toNodeId": "1",
+      "recipient": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "rank": 5,
+      "rewardType": "LEVEL",
+      "amount": "0.80",
+      "txHash": "0x050005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
+      "blockNumber": 143010929,
+      "createdAt": "2026-11-16T05:32:11.474Z"
+    },
+    {
+      "id": "db-chain-r5-5-unpaid-family",
+      "fromNodeId": "5",
+      "toNodeId": "0",
+      "recipient": "0x225DF4b5961f757f54728138F289Eaf49D4F275A",
+      "rank": 5,
+      "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
+      "amount": "10.40",
+      "txHash": "0x050005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
+      "blockNumber": 143010929,
+      "createdAt": "2026-11-16T05:32:11.474Z"
+    },
+    {
+      "id": "db-chain-r5-5-allsell",
+      "fromNodeId": "5",
+      "toNodeId": "0",
+      "recipient": "0xBeFEB9871a20656aeF7E8d218f751e9C23FAF710",
+      "rank": 5,
+      "rewardType": "ALLSELL",
+      "amount": "1.60",
+      "txHash": "0x050005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
+      "blockNumber": 143010929,
+      "createdAt": "2026-11-16T05:32:11.474Z"
+    },
+    {
+      "id": "db-chain-r5-5-bot",
+      "fromNodeId": "5",
+      "toNodeId": "0",
+      "recipient": "0xB3832D4cc6daE0B24f1e6660d7C85dcc1F005Cd1",
+      "rank": 5,
+      "rewardType": "BOT",
+      "amount": "0.40",
+      "txHash": "0x050005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
+      "blockNumber": 143010929,
+      "createdAt": "2026-11-16T05:32:11.474Z"
+    },
+    {
+      "id": "db-chain-r2-12-direct",
+      "fromNodeId": "12",
+      "toNodeId": "0",
+      "recipient": "0x225DF4b5961f757f54728138F289Eaf49D4F275A",
+      "rank": 2,
+      "rewardType": "DIRECT_ID1_CLONE_FAMILY_POOL",
+      "amount": "3.00",
+      "txHash": "0x02000cdb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000c",
+      "blockNumber": 143010929,
+      "createdAt": "2026-11-16T05:32:10.136Z"
+    },
+    {
+      "id": "db-chain-r2-12-vault",
+      "fromNodeId": "12",
+      "toNodeId": "3",
+      "recipient": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "rank": 2,
+      "rewardType": "UPGRADE_VAULT",
+      "amount": "3.50",
+      "txHash": "0x02000cdb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000c",
+      "blockNumber": 143010929,
+      "createdAt": "2026-11-16T05:32:10.136Z"
+    },
+    {
+      "id": "db-chain-r2-12-level-1-10",
+      "fromNodeId": "12",
+      "toNodeId": "10",
+      "recipient": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "rank": 2,
+      "rewardType": "LEVEL",
+      "amount": "0.20",
+      "txHash": "0x02000cdb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000c",
+      "blockNumber": 143010929,
+      "createdAt": "2026-11-16T05:32:10.136Z"
+    },
+    {
+      "id": "db-chain-r2-12-level-2-2",
+      "fromNodeId": "12",
+      "toNodeId": "2",
+      "recipient": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "rank": 2,
+      "rewardType": "LEVEL",
+      "amount": "0.20",
+      "txHash": "0x02000cdb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000c",
+      "blockNumber": 143010929,
+      "createdAt": "2026-11-16T05:32:10.136Z"
+    },
+    {
+      "id": "db-chain-r2-12-level-3-1",
+      "fromNodeId": "12",
+      "toNodeId": "1",
+      "recipient": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "rank": 2,
+      "rewardType": "LEVEL",
+      "amount": "0.20",
+      "txHash": "0x02000cdb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000c",
+      "blockNumber": 143010929,
+      "createdAt": "2026-11-16T05:32:10.136Z"
+    },
+    {
+      "id": "db-chain-r2-12-unpaid-family",
+      "fromNodeId": "12",
+      "toNodeId": "0",
+      "recipient": "0x225DF4b5961f757f54728138F289Eaf49D4F275A",
+      "rank": 2,
+      "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
+      "amount": "2.40",
+      "txHash": "0x02000cdb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000c",
+      "blockNumber": 143010929,
+      "createdAt": "2026-11-16T05:32:10.136Z"
+    },
+    {
+      "id": "db-chain-r2-12-allsell",
+      "fromNodeId": "12",
+      "toNodeId": "0",
+      "recipient": "0xBeFEB9871a20656aeF7E8d218f751e9C23FAF710",
+      "rank": 2,
+      "rewardType": "ALLSELL",
+      "amount": "0.40",
+      "txHash": "0x02000cdb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000c",
+      "blockNumber": 143010929,
+      "createdAt": "2026-11-16T05:32:10.136Z"
+    },
+    {
+      "id": "db-chain-r2-12-bot",
+      "fromNodeId": "12",
+      "toNodeId": "0",
+      "recipient": "0xB3832D4cc6daE0B24f1e6660d7C85dcc1F005Cd1",
+      "rank": 2,
+      "rewardType": "BOT",
+      "amount": "0.10",
+      "txHash": "0x02000cdb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000c",
+      "blockNumber": 143010929,
+      "createdAt": "2026-11-16T05:32:10.136Z"
+    },
+    {
+      "id": "db-chain-r1-25-direct",
+      "fromNodeId": "25",
+      "toNodeId": "3",
+      "recipient": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "rank": 1,
+      "rewardType": "DIRECT",
+      "amount": "1.50",
+      "txHash": "0x010019db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000019",
+      "blockNumber": 143010929,
+      "createdAt": "2026-11-16T05:32:09.211Z"
+    },
+    {
+      "id": "db-chain-r1-25-vault",
+      "fromNodeId": "25",
+      "toNodeId": "3",
+      "recipient": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "rank": 1,
+      "rewardType": "UPGRADE_VAULT",
+      "amount": "1.75",
+      "txHash": "0x010019db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000019",
+      "blockNumber": 143010929,
+      "createdAt": "2026-11-16T05:32:09.211Z"
+    },
+    {
+      "id": "db-chain-r1-25-level-1-22",
+      "fromNodeId": "25",
+      "toNodeId": "22",
+      "recipient": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "rank": 1,
+      "rewardType": "LEVEL",
+      "amount": "0.10",
+      "txHash": "0x010019db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000019",
+      "blockNumber": 143010929,
+      "createdAt": "2026-11-16T05:32:09.211Z"
+    },
+    {
+      "id": "db-chain-r1-25-level-2-16",
+      "fromNodeId": "25",
+      "toNodeId": "16",
+      "recipient": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "rank": 1,
+      "rewardType": "LEVEL",
+      "amount": "0.10",
+      "txHash": "0x010019db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000019",
+      "blockNumber": 143010929,
+      "createdAt": "2026-11-16T05:32:09.211Z"
+    },
+    {
+      "id": "db-chain-r1-25-level-3-5",
+      "fromNodeId": "25",
+      "toNodeId": "5",
+      "recipient": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "rank": 1,
+      "rewardType": "LEVEL",
+      "amount": "0.10",
+      "txHash": "0x010019db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000019",
+      "blockNumber": 143010929,
+      "createdAt": "2026-11-16T05:32:09.211Z"
+    },
+    {
+      "id": "db-chain-r1-25-level-4-3",
+      "fromNodeId": "25",
+      "toNodeId": "3",
+      "recipient": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "rank": 1,
+      "rewardType": "LEVEL",
+      "amount": "0.10",
+      "txHash": "0x010019db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000019",
+      "blockNumber": 143010929,
+      "createdAt": "2026-11-16T05:32:09.211Z"
+    },
+    {
+      "id": "db-chain-r1-25-level-5-1",
+      "fromNodeId": "25",
+      "toNodeId": "1",
+      "recipient": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "rank": 1,
+      "rewardType": "LEVEL",
+      "amount": "0.10",
+      "txHash": "0x010019db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000019",
+      "blockNumber": 143010929,
+      "createdAt": "2026-11-16T05:32:09.211Z"
+    },
+    {
+      "id": "db-chain-r1-25-unpaid-family",
+      "fromNodeId": "25",
+      "toNodeId": "0",
+      "recipient": "0x225DF4b5961f757f54728138F289Eaf49D4F275A",
+      "rank": 1,
+      "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
+      "amount": "1.00",
+      "txHash": "0x010019db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000019",
+      "blockNumber": 143010929,
+      "createdAt": "2026-11-16T05:32:09.211Z"
+    },
+    {
+      "id": "db-chain-r1-25-allsell",
+      "fromNodeId": "25",
+      "toNodeId": "0",
+      "recipient": "0xBeFEB9871a20656aeF7E8d218f751e9C23FAF710",
+      "rank": 1,
+      "rewardType": "ALLSELL",
+      "amount": "0.20",
+      "txHash": "0x010019db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000019",
+      "blockNumber": 143010929,
+      "createdAt": "2026-11-16T05:32:09.211Z"
+    },
+    {
+      "id": "db-chain-r1-25-bot",
+      "fromNodeId": "25",
+      "toNodeId": "0",
+      "recipient": "0xB3832D4cc6daE0B24f1e6660d7C85dcc1F005Cd1",
+      "rank": 1,
+      "rewardType": "BOT",
+      "amount": "0.05",
+      "txHash": "0x010019db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000019",
+      "blockNumber": 143010929,
+      "createdAt": "2026-11-16T05:32:09.211Z"
+    },
+    {
+      "id": "db-chain-r1-24-direct",
+      "fromNodeId": "24",
+      "toNodeId": "0",
+      "recipient": "0x225DF4b5961f757f54728138F289Eaf49D4F275A",
+      "rank": 1,
+      "rewardType": "DIRECT_ID1_CLONE_FAMILY_POOL",
+      "amount": "1.50",
+      "txHash": "0x010018db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000018",
+      "blockNumber": 143010928,
+      "createdAt": "2026-11-16T05:32:09.211Z"
+    },
+    {
+      "id": "db-chain-r1-24-vault",
+      "fromNodeId": "24",
+      "toNodeId": "6",
+      "recipient": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "rank": 1,
+      "rewardType": "UPGRADE_VAULT",
+      "amount": "1.75",
+      "txHash": "0x010018db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000018",
+      "blockNumber": 143010928,
+      "createdAt": "2026-11-16T05:32:09.211Z"
+    },
+    {
+      "id": "db-chain-r1-24-level-1-6",
+      "fromNodeId": "24",
+      "toNodeId": "6",
+      "recipient": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "rank": 1,
+      "rewardType": "LEVEL",
+      "amount": "0.10",
+      "txHash": "0x010018db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000018",
+      "blockNumber": 143010928,
+      "createdAt": "2026-11-16T05:32:09.211Z"
+    },
+    {
+      "id": "db-chain-r1-24-level-2-3",
+      "fromNodeId": "24",
+      "toNodeId": "3",
+      "recipient": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "rank": 1,
+      "rewardType": "LEVEL",
+      "amount": "0.10",
+      "txHash": "0x010018db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000018",
+      "blockNumber": 143010928,
+      "createdAt": "2026-11-16T05:32:09.211Z"
+    },
+    {
+      "id": "db-chain-r1-24-level-3-1",
+      "fromNodeId": "24",
+      "toNodeId": "1",
+      "recipient": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "rank": 1,
+      "rewardType": "LEVEL",
+      "amount": "0.10",
+      "txHash": "0x010018db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000018",
+      "blockNumber": 143010928,
+      "createdAt": "2026-11-16T05:32:09.211Z"
+    },
+    {
+      "id": "db-chain-r1-24-unpaid-family",
+      "fromNodeId": "24",
+      "toNodeId": "0",
+      "recipient": "0x225DF4b5961f757f54728138F289Eaf49D4F275A",
+      "rank": 1,
+      "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
+      "amount": "1.20",
+      "txHash": "0x010018db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000018",
+      "blockNumber": 143010928,
+      "createdAt": "2026-11-16T05:32:09.211Z"
+    },
+    {
+      "id": "db-chain-r1-24-allsell",
+      "fromNodeId": "24",
+      "toNodeId": "0",
+      "recipient": "0xBeFEB9871a20656aeF7E8d218f751e9C23FAF710",
+      "rank": 1,
+      "rewardType": "ALLSELL",
+      "amount": "0.20",
+      "txHash": "0x010018db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000018",
+      "blockNumber": 143010928,
+      "createdAt": "2026-11-16T05:32:09.211Z"
+    },
+    {
+      "id": "db-chain-r1-24-bot",
+      "fromNodeId": "24",
+      "toNodeId": "0",
+      "recipient": "0xB3832D4cc6daE0B24f1e6660d7C85dcc1F005Cd1",
+      "rank": 1,
+      "rewardType": "BOT",
+      "amount": "0.05",
+      "txHash": "0x010018db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000018",
+      "blockNumber": 143010928,
+      "createdAt": "2026-11-16T05:32:09.211Z"
+    },
+    {
+      "id": "db-chain-r1-22-direct",
+      "fromNodeId": "22",
+      "toNodeId": "1",
+      "recipient": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "rank": 1,
+      "rewardType": "DIRECT",
+      "amount": "1.50",
+      "txHash": "0x010016db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000016",
+      "blockNumber": 143010926,
+      "createdAt": "2026-11-16T05:32:09.211Z"
+    },
+    {
+      "id": "db-chain-r1-22-vault",
+      "fromNodeId": "22",
+      "toNodeId": "1",
+      "recipient": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "rank": 1,
+      "rewardType": "UPGRADE_VAULT",
+      "amount": "1.75",
+      "txHash": "0x010016db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000016",
+      "blockNumber": 143010926,
+      "createdAt": "2026-11-16T05:32:09.211Z"
+    },
+    {
+      "id": "db-chain-r1-22-level-1-16",
+      "fromNodeId": "22",
+      "toNodeId": "16",
+      "recipient": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "rank": 1,
+      "rewardType": "LEVEL",
+      "amount": "0.10",
+      "txHash": "0x010016db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000016",
+      "blockNumber": 143010926,
+      "createdAt": "2026-11-16T05:32:09.211Z"
+    },
+    {
+      "id": "db-chain-r1-22-level-2-5",
+      "fromNodeId": "22",
+      "toNodeId": "5",
+      "recipient": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "rank": 1,
+      "rewardType": "LEVEL",
+      "amount": "0.10",
+      "txHash": "0x010016db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000016",
+      "blockNumber": 143010926,
+      "createdAt": "2026-11-16T05:32:09.211Z"
+    },
+    {
+      "id": "db-chain-r1-22-level-3-3",
+      "fromNodeId": "22",
+      "toNodeId": "3",
+      "recipient": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "rank": 1,
+      "rewardType": "LEVEL",
+      "amount": "0.10",
+      "txHash": "0x010016db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000016",
+      "blockNumber": 143010926,
+      "createdAt": "2026-11-16T05:32:09.211Z"
+    },
+    {
+      "id": "db-chain-r1-22-level-4-1",
+      "fromNodeId": "22",
+      "toNodeId": "1",
+      "recipient": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "rank": 1,
+      "rewardType": "LEVEL",
+      "amount": "0.10",
+      "txHash": "0x010016db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000016",
+      "blockNumber": 143010926,
+      "createdAt": "2026-11-16T05:32:09.211Z"
+    },
+    {
+      "id": "db-chain-r1-22-unpaid-family",
+      "fromNodeId": "22",
+      "toNodeId": "0",
+      "recipient": "0x225DF4b5961f757f54728138F289Eaf49D4F275A",
+      "rank": 1,
+      "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
+      "amount": "1.10",
+      "txHash": "0x010016db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000016",
+      "blockNumber": 143010926,
+      "createdAt": "2026-11-16T05:32:09.211Z"
+    },
+    {
+      "id": "db-chain-r1-22-allsell",
+      "fromNodeId": "22",
+      "toNodeId": "0",
+      "recipient": "0xBeFEB9871a20656aeF7E8d218f751e9C23FAF710",
+      "rank": 1,
+      "rewardType": "ALLSELL",
+      "amount": "0.20",
+      "txHash": "0x010016db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000016",
+      "blockNumber": 143010926,
+      "createdAt": "2026-11-16T05:32:09.211Z"
+    },
+    {
+      "id": "db-chain-r1-22-bot",
+      "fromNodeId": "22",
+      "toNodeId": "0",
+      "recipient": "0xB3832D4cc6daE0B24f1e6660d7C85dcc1F005Cd1",
+      "rank": 1,
+      "rewardType": "BOT",
+      "amount": "0.05",
+      "txHash": "0x010016db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000016",
+      "blockNumber": 143010926,
+      "createdAt": "2026-11-16T05:32:09.211Z"
+    },
     {
       "id": "db-chain-r4-5-direct",
       "fromNodeId": "5",
@@ -2122,7 +2844,7 @@
       "rewardType": "DIRECT",
       "amount": "9.00",
       "txHash": "0x040005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 143001526,
+      "blockNumber": 143010929,
       "createdAt": "2026-11-15T14:19:13.359Z"
     },
     {
@@ -2134,7 +2856,7 @@
       "rewardType": "UPGRADE_VAULT",
       "amount": "10.50",
       "txHash": "0x040005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 143001526,
+      "blockNumber": 143010929,
       "createdAt": "2026-11-15T14:19:13.359Z"
     },
     {
@@ -2146,7 +2868,7 @@
       "rewardType": "LEVEL",
       "amount": "0.60",
       "txHash": "0x040005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 143001526,
+      "blockNumber": 143010929,
       "createdAt": "2026-11-15T14:19:13.359Z"
     },
     {
@@ -2158,7 +2880,7 @@
       "rewardType": "LEVEL",
       "amount": "0.60",
       "txHash": "0x040005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 143001526,
+      "blockNumber": 143010929,
       "createdAt": "2026-11-15T14:19:13.359Z"
     },
     {
@@ -2170,7 +2892,7 @@
       "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
       "amount": "7.80",
       "txHash": "0x040005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 143001526,
+      "blockNumber": 143010929,
       "createdAt": "2026-11-15T14:19:13.359Z"
     },
     {
@@ -2182,7 +2904,7 @@
       "rewardType": "ALLSELL",
       "amount": "1.20",
       "txHash": "0x040005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 143001526,
+      "blockNumber": 143010929,
       "createdAt": "2026-11-15T14:19:13.359Z"
     },
     {
@@ -2194,7 +2916,7 @@
       "rewardType": "BOT",
       "amount": "0.30",
       "txHash": "0x040005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 143001526,
+      "blockNumber": 143010929,
       "createdAt": "2026-11-15T14:19:13.359Z"
     },
     {
@@ -2206,7 +2928,7 @@
       "rewardType": "DIRECT",
       "amount": "6.00",
       "txHash": "0x030005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 143001526,
+      "blockNumber": 143010929,
       "createdAt": "2026-11-15T14:19:12.803Z"
     },
     {
@@ -2218,7 +2940,7 @@
       "rewardType": "UPGRADE_VAULT",
       "amount": "7.00",
       "txHash": "0x030005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 143001526,
+      "blockNumber": 143010929,
       "createdAt": "2026-11-15T14:19:12.803Z"
     },
     {
@@ -2230,7 +2952,7 @@
       "rewardType": "LEVEL",
       "amount": "0.40",
       "txHash": "0x030005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 143001526,
+      "blockNumber": 143010929,
       "createdAt": "2026-11-15T14:19:12.803Z"
     },
     {
@@ -2242,7 +2964,7 @@
       "rewardType": "LEVEL",
       "amount": "0.40",
       "txHash": "0x030005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 143001526,
+      "blockNumber": 143010929,
       "createdAt": "2026-11-15T14:19:12.803Z"
     },
     {
@@ -2254,7 +2976,7 @@
       "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
       "amount": "5.20",
       "txHash": "0x030005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 143001526,
+      "blockNumber": 143010929,
       "createdAt": "2026-11-15T14:19:12.803Z"
     },
     {
@@ -2266,7 +2988,7 @@
       "rewardType": "ALLSELL",
       "amount": "0.80",
       "txHash": "0x030005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 143001526,
+      "blockNumber": 143010929,
       "createdAt": "2026-11-15T14:19:12.803Z"
     },
     {
@@ -2278,7 +3000,7 @@
       "rewardType": "BOT",
       "amount": "0.20",
       "txHash": "0x030005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 143001526,
+      "blockNumber": 143010929,
       "createdAt": "2026-11-15T14:19:12.803Z"
     },
     {
@@ -2290,7 +3012,7 @@
       "rewardType": "DIRECT",
       "amount": "3.00",
       "txHash": "0x020008db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000008",
-      "blockNumber": 143001526,
+      "blockNumber": 143010925,
       "createdAt": "2026-11-15T14:19:12.319Z"
     },
     {
@@ -2302,7 +3024,7 @@
       "rewardType": "UPGRADE_VAULT",
       "amount": "3.50",
       "txHash": "0x020008db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000008",
-      "blockNumber": 143001526,
+      "blockNumber": 143010925,
       "createdAt": "2026-11-15T14:19:12.319Z"
     },
     {
@@ -2314,7 +3036,7 @@
       "rewardType": "LEVEL",
       "amount": "0.20",
       "txHash": "0x020008db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000008",
-      "blockNumber": 143001526,
+      "blockNumber": 143010925,
       "createdAt": "2026-11-15T14:19:12.319Z"
     },
     {
@@ -2326,7 +3048,7 @@
       "rewardType": "LEVEL",
       "amount": "0.20",
       "txHash": "0x020008db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000008",
-      "blockNumber": 143001526,
+      "blockNumber": 143010925,
       "createdAt": "2026-11-15T14:19:12.319Z"
     },
     {
@@ -2338,7 +3060,7 @@
       "rewardType": "LEVEL",
       "amount": "0.20",
       "txHash": "0x020008db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000008",
-      "blockNumber": 143001526,
+      "blockNumber": 143010925,
       "createdAt": "2026-11-15T14:19:12.319Z"
     },
     {
@@ -2350,7 +3072,7 @@
       "rewardType": "LEVEL",
       "amount": "0.20",
       "txHash": "0x020008db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000008",
-      "blockNumber": 143001526,
+      "blockNumber": 143010925,
       "createdAt": "2026-11-15T14:19:12.319Z"
     },
     {
@@ -2362,7 +3084,7 @@
       "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
       "amount": "2.20",
       "txHash": "0x020008db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000008",
-      "blockNumber": 143001526,
+      "blockNumber": 143010925,
       "createdAt": "2026-11-15T14:19:12.319Z"
     },
     {
@@ -2374,7 +3096,7 @@
       "rewardType": "ALLSELL",
       "amount": "0.40",
       "txHash": "0x020008db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000008",
-      "blockNumber": 143001526,
+      "blockNumber": 143010925,
       "createdAt": "2026-11-15T14:19:12.319Z"
     },
     {
@@ -2386,7 +3108,7 @@
       "rewardType": "BOT",
       "amount": "0.10",
       "txHash": "0x020008db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000008",
-      "blockNumber": 143001526,
+      "blockNumber": 143010925,
       "createdAt": "2026-11-15T14:19:12.319Z"
     },
     {
@@ -2398,7 +3120,7 @@
       "rewardType": "DIRECT",
       "amount": "3.00",
       "txHash": "0x020007db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000007",
-      "blockNumber": 143001525,
+      "blockNumber": 143010924,
       "createdAt": "2026-11-15T14:19:12.319Z"
     },
     {
@@ -2410,7 +3132,7 @@
       "rewardType": "UPGRADE_VAULT",
       "amount": "3.50",
       "txHash": "0x020007db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000007",
-      "blockNumber": 143001525,
+      "blockNumber": 143010924,
       "createdAt": "2026-11-15T14:19:12.319Z"
     },
     {
@@ -2422,7 +3144,7 @@
       "rewardType": "LEVEL",
       "amount": "0.20",
       "txHash": "0x020007db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000007",
-      "blockNumber": 143001525,
+      "blockNumber": 143010924,
       "createdAt": "2026-11-15T14:19:12.319Z"
     },
     {
@@ -2434,7 +3156,7 @@
       "rewardType": "LEVEL",
       "amount": "0.20",
       "txHash": "0x020007db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000007",
-      "blockNumber": 143001525,
+      "blockNumber": 143010924,
       "createdAt": "2026-11-15T14:19:12.319Z"
     },
     {
@@ -2446,7 +3168,7 @@
       "rewardType": "LEVEL",
       "amount": "0.20",
       "txHash": "0x020007db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000007",
-      "blockNumber": 143001525,
+      "blockNumber": 143010924,
       "createdAt": "2026-11-15T14:19:12.319Z"
     },
     {
@@ -2458,7 +3180,7 @@
       "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
       "amount": "2.40",
       "txHash": "0x020007db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000007",
-      "blockNumber": 143001525,
+      "blockNumber": 143010924,
       "createdAt": "2026-11-15T14:19:12.319Z"
     },
     {
@@ -2470,7 +3192,7 @@
       "rewardType": "ALLSELL",
       "amount": "0.40",
       "txHash": "0x020007db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000007",
-      "blockNumber": 143001525,
+      "blockNumber": 143010924,
       "createdAt": "2026-11-15T14:19:12.319Z"
     },
     {
@@ -2482,7 +3204,7 @@
       "rewardType": "BOT",
       "amount": "0.10",
       "txHash": "0x020007db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000007",
-      "blockNumber": 143001525,
+      "blockNumber": 143010924,
       "createdAt": "2026-11-15T14:19:12.319Z"
     },
     {
@@ -2494,7 +3216,7 @@
       "rewardType": "DIRECT",
       "amount": "3.00",
       "txHash": "0x020005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 143001523,
+      "blockNumber": 143010922,
       "createdAt": "2026-11-15T14:19:12.054Z"
     },
     {
@@ -2506,7 +3228,7 @@
       "rewardType": "UPGRADE_VAULT",
       "amount": "3.50",
       "txHash": "0x020005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 143001523,
+      "blockNumber": 143010922,
       "createdAt": "2026-11-15T14:19:12.054Z"
     },
     {
@@ -2518,7 +3240,7 @@
       "rewardType": "LEVEL",
       "amount": "0.20",
       "txHash": "0x020005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 143001523,
+      "blockNumber": 143010922,
       "createdAt": "2026-11-15T14:19:12.054Z"
     },
     {
@@ -2530,7 +3252,7 @@
       "rewardType": "LEVEL",
       "amount": "0.20",
       "txHash": "0x020005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 143001523,
+      "blockNumber": 143010922,
       "createdAt": "2026-11-15T14:19:12.054Z"
     },
     {
@@ -2542,7 +3264,7 @@
       "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
       "amount": "2.60",
       "txHash": "0x020005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 143001523,
+      "blockNumber": 143010922,
       "createdAt": "2026-11-15T14:19:12.054Z"
     },
     {
@@ -2554,7 +3276,7 @@
       "rewardType": "ALLSELL",
       "amount": "0.40",
       "txHash": "0x020005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 143001523,
+      "blockNumber": 143010922,
       "createdAt": "2026-11-15T14:19:12.054Z"
     },
     {
@@ -2566,7 +3288,7 @@
       "rewardType": "BOT",
       "amount": "0.10",
       "txHash": "0x020005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 143001523,
+      "blockNumber": 143010922,
       "createdAt": "2026-11-15T14:19:12.054Z"
     },
     {
@@ -2578,7 +3300,7 @@
       "rewardType": "DIRECT",
       "amount": "1.50",
       "txHash": "0x010014db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000014",
-      "blockNumber": 143001526,
+      "blockNumber": 143010924,
       "createdAt": "2026-11-15T14:19:11.637Z"
     },
     {
@@ -2590,7 +3312,7 @@
       "rewardType": "UPGRADE_VAULT",
       "amount": "1.75",
       "txHash": "0x010014db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000014",
-      "blockNumber": 143001526,
+      "blockNumber": 143010924,
       "createdAt": "2026-11-15T14:19:11.637Z"
     },
     {
@@ -2602,7 +3324,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010014db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000014",
-      "blockNumber": 143001526,
+      "blockNumber": 143010924,
       "createdAt": "2026-11-15T14:19:11.637Z"
     },
     {
@@ -2614,7 +3336,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010014db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000014",
-      "blockNumber": 143001526,
+      "blockNumber": 143010924,
       "createdAt": "2026-11-15T14:19:11.637Z"
     },
     {
@@ -2626,7 +3348,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010014db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000014",
-      "blockNumber": 143001526,
+      "blockNumber": 143010924,
       "createdAt": "2026-11-15T14:19:11.637Z"
     },
     {
@@ -2638,7 +3360,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010014db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000014",
-      "blockNumber": 143001526,
+      "blockNumber": 143010924,
       "createdAt": "2026-11-15T14:19:11.637Z"
     },
     {
@@ -2650,7 +3372,7 @@
       "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
       "amount": "1.10",
       "txHash": "0x010014db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000014",
-      "blockNumber": 143001526,
+      "blockNumber": 143010924,
       "createdAt": "2026-11-15T14:19:11.637Z"
     },
     {
@@ -2662,7 +3384,7 @@
       "rewardType": "ALLSELL",
       "amount": "0.20",
       "txHash": "0x010014db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000014",
-      "blockNumber": 143001526,
+      "blockNumber": 143010924,
       "createdAt": "2026-11-15T14:19:11.637Z"
     },
     {
@@ -2674,7 +3396,7 @@
       "rewardType": "BOT",
       "amount": "0.05",
       "txHash": "0x010014db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000014",
-      "blockNumber": 143001526,
+      "blockNumber": 143010924,
       "createdAt": "2026-11-15T14:19:11.637Z"
     },
     {
@@ -2686,7 +3408,7 @@
       "rewardType": "DIRECT",
       "amount": "1.50",
       "txHash": "0x010011db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000011",
-      "blockNumber": 143001523,
+      "blockNumber": 143010921,
       "createdAt": "2026-11-15T14:19:11.637Z"
     },
     {
@@ -2698,7 +3420,7 @@
       "rewardType": "UPGRADE_VAULT",
       "amount": "1.75",
       "txHash": "0x010011db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000011",
-      "blockNumber": 143001523,
+      "blockNumber": 143010921,
       "createdAt": "2026-11-15T14:19:11.637Z"
     },
     {
@@ -2710,7 +3432,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010011db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000011",
-      "blockNumber": 143001523,
+      "blockNumber": 143010921,
       "createdAt": "2026-11-15T14:19:11.637Z"
     },
     {
@@ -2722,7 +3444,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010011db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000011",
-      "blockNumber": 143001523,
+      "blockNumber": 143010921,
       "createdAt": "2026-11-15T14:19:11.637Z"
     },
     {
@@ -2734,7 +3456,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010011db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000011",
-      "blockNumber": 143001523,
+      "blockNumber": 143010921,
       "createdAt": "2026-11-15T14:19:11.637Z"
     },
     {
@@ -2746,7 +3468,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010011db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000011",
-      "blockNumber": 143001523,
+      "blockNumber": 143010921,
       "createdAt": "2026-11-15T14:19:11.637Z"
     },
     {
@@ -2758,7 +3480,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010011db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000011",
-      "blockNumber": 143001523,
+      "blockNumber": 143010921,
       "createdAt": "2026-11-15T14:19:11.637Z"
     },
     {
@@ -2770,7 +3492,7 @@
       "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
       "amount": "1.00",
       "txHash": "0x010011db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000011",
-      "blockNumber": 143001523,
+      "blockNumber": 143010921,
       "createdAt": "2026-11-15T14:19:11.637Z"
     },
     {
@@ -2782,7 +3504,7 @@
       "rewardType": "ALLSELL",
       "amount": "0.20",
       "txHash": "0x010011db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000011",
-      "blockNumber": 143001523,
+      "blockNumber": 143010921,
       "createdAt": "2026-11-15T14:19:11.637Z"
     },
     {
@@ -2794,7 +3516,7 @@
       "rewardType": "BOT",
       "amount": "0.05",
       "txHash": "0x010011db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000011",
-      "blockNumber": 143001523,
+      "blockNumber": 143010921,
       "createdAt": "2026-11-15T14:19:11.637Z"
     },
     {
@@ -2806,7 +3528,7 @@
       "rewardType": "DIRECT_ID1_CLONE_FAMILY_POOL",
       "amount": "1.50",
       "txHash": "0x010010db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000010",
-      "blockNumber": 143001522,
+      "blockNumber": 143010920,
       "createdAt": "2026-11-15T14:19:11.637Z"
     },
     {
@@ -2818,7 +3540,7 @@
       "rewardType": "UPGRADE_VAULT",
       "amount": "1.75",
       "txHash": "0x010010db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000010",
-      "blockNumber": 143001522,
+      "blockNumber": 143010920,
       "createdAt": "2026-11-15T14:19:11.637Z"
     },
     {
@@ -2830,7 +3552,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010010db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000010",
-      "blockNumber": 143001522,
+      "blockNumber": 143010920,
       "createdAt": "2026-11-15T14:19:11.637Z"
     },
     {
@@ -2842,7 +3564,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010010db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000010",
-      "blockNumber": 143001522,
+      "blockNumber": 143010920,
       "createdAt": "2026-11-15T14:19:11.637Z"
     },
     {
@@ -2854,7 +3576,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010010db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000010",
-      "blockNumber": 143001522,
+      "blockNumber": 143010920,
       "createdAt": "2026-11-15T14:19:11.637Z"
     },
     {
@@ -2866,7 +3588,7 @@
       "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
       "amount": "1.20",
       "txHash": "0x010010db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000010",
-      "blockNumber": 143001522,
+      "blockNumber": 143010920,
       "createdAt": "2026-11-15T14:19:11.637Z"
     },
     {
@@ -2878,7 +3600,7 @@
       "rewardType": "ALLSELL",
       "amount": "0.20",
       "txHash": "0x010010db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000010",
-      "blockNumber": 143001522,
+      "blockNumber": 143010920,
       "createdAt": "2026-11-15T14:19:11.637Z"
     },
     {
@@ -2890,7 +3612,7 @@
       "rewardType": "BOT",
       "amount": "0.05",
       "txHash": "0x010010db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000010",
-      "blockNumber": 143001522,
+      "blockNumber": 143010920,
       "createdAt": "2026-11-15T14:19:11.637Z"
     },
     {
@@ -2902,7 +3624,7 @@
       "rewardType": "DIRECT",
       "amount": "1.50",
       "txHash": "0x01000ddb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000d",
-      "blockNumber": 143001519,
+      "blockNumber": 143010917,
       "createdAt": "2026-11-15T14:19:11.210Z"
     },
     {
@@ -2914,7 +3636,7 @@
       "rewardType": "UPGRADE_VAULT",
       "amount": "1.75",
       "txHash": "0x01000ddb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000d",
-      "blockNumber": 143001519,
+      "blockNumber": 143010917,
       "createdAt": "2026-11-15T14:19:11.210Z"
     },
     {
@@ -2926,7 +3648,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x01000ddb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000d",
-      "blockNumber": 143001519,
+      "blockNumber": 143010917,
       "createdAt": "2026-11-15T14:19:11.210Z"
     },
     {
@@ -2938,7 +3660,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x01000ddb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000d",
-      "blockNumber": 143001519,
+      "blockNumber": 143010917,
       "createdAt": "2026-11-15T14:19:11.210Z"
     },
     {
@@ -2950,7 +3672,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x01000ddb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000d",
-      "blockNumber": 143001519,
+      "blockNumber": 143010917,
       "createdAt": "2026-11-15T14:19:11.210Z"
     },
     {
@@ -2962,7 +3684,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x01000ddb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000d",
-      "blockNumber": 143001519,
+      "blockNumber": 143010917,
       "createdAt": "2026-11-15T14:19:11.210Z"
     },
     {
@@ -2974,7 +3696,7 @@
       "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
       "amount": "1.10",
       "txHash": "0x01000ddb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000d",
-      "blockNumber": 143001519,
+      "blockNumber": 143010917,
       "createdAt": "2026-11-15T14:19:11.210Z"
     },
     {
@@ -2986,7 +3708,7 @@
       "rewardType": "ALLSELL",
       "amount": "0.20",
       "txHash": "0x01000ddb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000d",
-      "blockNumber": 143001519,
+      "blockNumber": 143010917,
       "createdAt": "2026-11-15T14:19:11.210Z"
     },
     {
@@ -2998,7 +3720,7 @@
       "rewardType": "BOT",
       "amount": "0.05",
       "txHash": "0x01000ddb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000d",
-      "blockNumber": 143001519,
+      "blockNumber": 143010917,
       "createdAt": "2026-11-15T14:19:11.210Z"
     },
     {
@@ -3010,7 +3732,7 @@
       "rewardType": "DIRECT_ID1_CLONE_FAMILY_POOL",
       "amount": "1.50",
       "txHash": "0x01000cdb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000c",
-      "blockNumber": 143001518,
+      "blockNumber": 143010916,
       "createdAt": "2026-11-15T14:19:11.210Z"
     },
     {
@@ -3022,7 +3744,7 @@
       "rewardType": "UPGRADE_VAULT",
       "amount": "1.75",
       "txHash": "0x01000cdb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000c",
-      "blockNumber": 143001518,
+      "blockNumber": 143010916,
       "createdAt": "2026-11-15T14:19:11.210Z"
     },
     {
@@ -3034,7 +3756,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x01000cdb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000c",
-      "blockNumber": 143001518,
+      "blockNumber": 143010916,
       "createdAt": "2026-11-15T14:19:11.210Z"
     },
     {
@@ -3046,7 +3768,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x01000cdb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000c",
-      "blockNumber": 143001518,
+      "blockNumber": 143010916,
       "createdAt": "2026-11-15T14:19:11.210Z"
     },
     {
@@ -3058,7 +3780,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x01000cdb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000c",
-      "blockNumber": 143001518,
+      "blockNumber": 143010916,
       "createdAt": "2026-11-15T14:19:11.210Z"
     },
     {
@@ -3070,7 +3792,7 @@
       "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
       "amount": "1.20",
       "txHash": "0x01000cdb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000c",
-      "blockNumber": 143001518,
+      "blockNumber": 143010916,
       "createdAt": "2026-11-15T14:19:11.210Z"
     },
     {
@@ -3082,7 +3804,7 @@
       "rewardType": "ALLSELL",
       "amount": "0.20",
       "txHash": "0x01000cdb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000c",
-      "blockNumber": 143001518,
+      "blockNumber": 143010916,
       "createdAt": "2026-11-15T14:19:11.210Z"
     },
     {
@@ -3094,7 +3816,7 @@
       "rewardType": "BOT",
       "amount": "0.05",
       "txHash": "0x01000cdb48acb86c42a389efda47cc1b16938eea73f1f892000000000000000c",
-      "blockNumber": 143001518,
+      "blockNumber": 143010916,
       "createdAt": "2026-11-15T14:19:11.210Z"
     },
     {
@@ -3106,7 +3828,7 @@
       "rewardType": "DIRECT",
       "amount": "1.50",
       "txHash": "0x010008db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000008",
-      "blockNumber": 143001514,
+      "blockNumber": 143010912,
       "createdAt": "2026-11-15T14:19:10.938Z"
     },
     {
@@ -3118,7 +3840,7 @@
       "rewardType": "UPGRADE_VAULT",
       "amount": "1.75",
       "txHash": "0x010008db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000008",
-      "blockNumber": 143001514,
+      "blockNumber": 143010912,
       "createdAt": "2026-11-15T14:19:10.938Z"
     },
     {
@@ -3130,7 +3852,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010008db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000008",
-      "blockNumber": 143001514,
+      "blockNumber": 143010912,
       "createdAt": "2026-11-15T14:19:10.938Z"
     },
     {
@@ -3142,7 +3864,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010008db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000008",
-      "blockNumber": 143001514,
+      "blockNumber": 143010912,
       "createdAt": "2026-11-15T14:19:10.938Z"
     },
     {
@@ -3154,7 +3876,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010008db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000008",
-      "blockNumber": 143001514,
+      "blockNumber": 143010912,
       "createdAt": "2026-11-15T14:19:10.938Z"
     },
     {
@@ -3166,7 +3888,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010008db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000008",
-      "blockNumber": 143001514,
+      "blockNumber": 143010912,
       "createdAt": "2026-11-15T14:19:10.938Z"
     },
     {
@@ -3178,7 +3900,7 @@
       "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
       "amount": "1.10",
       "txHash": "0x010008db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000008",
-      "blockNumber": 143001514,
+      "blockNumber": 143010912,
       "createdAt": "2026-11-15T14:19:10.938Z"
     },
     {
@@ -3190,7 +3912,7 @@
       "rewardType": "ALLSELL",
       "amount": "0.20",
       "txHash": "0x010008db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000008",
-      "blockNumber": 143001514,
+      "blockNumber": 143010912,
       "createdAt": "2026-11-15T14:19:10.938Z"
     },
     {
@@ -3202,7 +3924,7 @@
       "rewardType": "BOT",
       "amount": "0.05",
       "txHash": "0x010008db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000008",
-      "blockNumber": 143001514,
+      "blockNumber": 143010912,
       "createdAt": "2026-11-15T14:19:10.938Z"
     },
     {
@@ -3214,7 +3936,7 @@
       "rewardType": "DIRECT",
       "amount": "1.50",
       "txHash": "0x010007db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000007",
-      "blockNumber": 143001513,
+      "blockNumber": 143010911,
       "createdAt": "2026-11-15T14:19:10.938Z"
     },
     {
@@ -3226,7 +3948,7 @@
       "rewardType": "UPGRADE_VAULT",
       "amount": "1.75",
       "txHash": "0x010007db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000007",
-      "blockNumber": 143001513,
+      "blockNumber": 143010911,
       "createdAt": "2026-11-15T14:19:10.938Z"
     },
     {
@@ -3238,7 +3960,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010007db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000007",
-      "blockNumber": 143001513,
+      "blockNumber": 143010911,
       "createdAt": "2026-11-15T14:19:10.938Z"
     },
     {
@@ -3250,7 +3972,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010007db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000007",
-      "blockNumber": 143001513,
+      "blockNumber": 143010911,
       "createdAt": "2026-11-15T14:19:10.938Z"
     },
     {
@@ -3262,7 +3984,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010007db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000007",
-      "blockNumber": 143001513,
+      "blockNumber": 143010911,
       "createdAt": "2026-11-15T14:19:10.938Z"
     },
     {
@@ -3274,7 +3996,7 @@
       "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
       "amount": "1.20",
       "txHash": "0x010007db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000007",
-      "blockNumber": 143001513,
+      "blockNumber": 143010911,
       "createdAt": "2026-11-15T14:19:10.938Z"
     },
     {
@@ -3286,7 +4008,7 @@
       "rewardType": "ALLSELL",
       "amount": "0.20",
       "txHash": "0x010007db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000007",
-      "blockNumber": 143001513,
+      "blockNumber": 143010911,
       "createdAt": "2026-11-15T14:19:10.938Z"
     },
     {
@@ -3298,7 +4020,7 @@
       "rewardType": "BOT",
       "amount": "0.05",
       "txHash": "0x010007db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000007",
-      "blockNumber": 143001513,
+      "blockNumber": 143010911,
       "createdAt": "2026-11-15T14:19:10.938Z"
     },
     {
@@ -3310,7 +4032,7 @@
       "rewardType": "DIRECT",
       "amount": "1.50",
       "txHash": "0x010005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 143001511,
+      "blockNumber": 143010909,
       "createdAt": "2026-11-15T14:19:10.588Z"
     },
     {
@@ -3322,7 +4044,7 @@
       "rewardType": "UPGRADE_VAULT",
       "amount": "1.75",
       "txHash": "0x010005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 143001511,
+      "blockNumber": 143010909,
       "createdAt": "2026-11-15T14:19:10.588Z"
     },
     {
@@ -3334,7 +4056,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 143001511,
+      "blockNumber": 143010909,
       "createdAt": "2026-11-15T14:19:10.588Z"
     },
     {
@@ -3346,7 +4068,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 143001511,
+      "blockNumber": 143010909,
       "createdAt": "2026-11-15T14:19:10.588Z"
     },
     {
@@ -3358,7 +4080,7 @@
       "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
       "amount": "1.30",
       "txHash": "0x010005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 143001511,
+      "blockNumber": 143010909,
       "createdAt": "2026-11-15T14:19:10.588Z"
     },
     {
@@ -3370,7 +4092,7 @@
       "rewardType": "ALLSELL",
       "amount": "0.20",
       "txHash": "0x010005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 143001511,
+      "blockNumber": 143010909,
       "createdAt": "2026-11-15T14:19:10.588Z"
     },
     {
@@ -3382,7 +4104,7 @@
       "rewardType": "BOT",
       "amount": "0.05",
       "txHash": "0x010005db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 143001511,
+      "blockNumber": 143010909,
       "createdAt": "2026-11-15T14:19:10.588Z"
     },
     {
@@ -3394,7 +4116,7 @@
       "rewardType": "DIRECT_ID1_CLONE_FAMILY_POOL",
       "amount": "1.50",
       "txHash": "0x010004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 143001510,
+      "blockNumber": 143010908,
       "createdAt": "2026-11-15T14:19:10.588Z"
     },
     {
@@ -3406,7 +4128,7 @@
       "rewardType": "UPGRADE_VAULT",
       "amount": "1.75",
       "txHash": "0x010004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 143001510,
+      "blockNumber": 143010908,
       "createdAt": "2026-11-15T14:19:10.588Z"
     },
     {
@@ -3418,7 +4140,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 143001510,
+      "blockNumber": 143010908,
       "createdAt": "2026-11-15T14:19:10.588Z"
     },
     {
@@ -3430,7 +4152,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 143001510,
+      "blockNumber": 143010908,
       "createdAt": "2026-11-15T14:19:10.588Z"
     },
     {
@@ -3442,7 +4164,7 @@
       "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
       "amount": "1.30",
       "txHash": "0x010004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 143001510,
+      "blockNumber": 143010908,
       "createdAt": "2026-11-15T14:19:10.588Z"
     },
     {
@@ -3454,7 +4176,7 @@
       "rewardType": "ALLSELL",
       "amount": "0.20",
       "txHash": "0x010004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 143001510,
+      "blockNumber": 143010908,
       "createdAt": "2026-11-15T14:19:10.588Z"
     },
     {
@@ -3466,7 +4188,7 @@
       "rewardType": "BOT",
       "amount": "0.05",
       "txHash": "0x010004db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000004",
-      "blockNumber": 143001510,
+      "blockNumber": 143010908,
       "createdAt": "2026-11-15T14:19:10.588Z"
     },
     {
@@ -3478,7 +4200,7 @@
       "rewardType": "DIRECT",
       "amount": "1.50",
       "txHash": "0x010002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 143001508,
+      "blockNumber": 143010906,
       "createdAt": "2026-11-15T14:19:10.588Z"
     },
     {
@@ -3490,7 +4212,7 @@
       "rewardType": "UPGRADE_VAULT",
       "amount": "1.75",
       "txHash": "0x010002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 143001508,
+      "blockNumber": 143010906,
       "createdAt": "2026-11-15T14:19:10.588Z"
     },
     {
@@ -3502,7 +4224,7 @@
       "rewardType": "LEVEL",
       "amount": "0.10",
       "txHash": "0x010002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 143001508,
+      "blockNumber": 143010906,
       "createdAt": "2026-11-15T14:19:10.588Z"
     },
     {
@@ -3514,7 +4236,7 @@
       "rewardType": "UNPAID_LEVEL_FAMILY_POOL",
       "amount": "1.40",
       "txHash": "0x010002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 143001508,
+      "blockNumber": 143010906,
       "createdAt": "2026-11-15T14:19:10.588Z"
     },
     {
@@ -3526,7 +4248,7 @@
       "rewardType": "ALLSELL",
       "amount": "0.20",
       "txHash": "0x010002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 143001508,
+      "blockNumber": 143010906,
       "createdAt": "2026-11-15T14:19:10.588Z"
     },
     {
@@ -3538,11 +4260,121 @@
       "rewardType": "BOT",
       "amount": "0.05",
       "txHash": "0x010002db48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 143001508,
+      "blockNumber": 143010906,
       "createdAt": "2026-11-15T14:19:10.588Z"
     }
   ],
   "upgradeLogs": [
+    {
+      "id": "db-upgrade-r5-n5",
+      "mainNodeId": "5",
+      "owner": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "fromRank": 4,
+      "toRank": 5,
+      "newNodeId": "5",
+      "parentId": "3",
+      "side": "LEFT",
+      "directSponsor": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "directSponsorNodeId": "3",
+      "rankPriceUsdt": "40.00",
+      "vaultDeductedUsdt": "0.00",
+      "walletPaidUsdt": "40.00",
+      "upgradeMode": "MANUAL_WALLET",
+      "isClone": false,
+      "isExtraId": false,
+      "isAdminFreeUpgrade": false,
+      "txHash": "0xup05000548acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
+      "blockNumber": 143010929,
+      "createdAt": "2026-11-16T05:32:11.474Z"
+    },
+    {
+      "id": "db-upgrade-r2-n12",
+      "mainNodeId": "1",
+      "owner": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "fromRank": 1,
+      "toRank": 2,
+      "newNodeId": "12",
+      "parentId": "10",
+      "side": "LEFT",
+      "directSponsor": "0x0000000000000000000000000000000000000000",
+      "directSponsorNodeId": "1",
+      "rankPriceUsdt": "10.00",
+      "vaultDeductedUsdt": "0.00",
+      "walletPaidUsdt": "0.00",
+      "upgradeMode": "CLONE_IN_RANK",
+      "isClone": true,
+      "isExtraId": false,
+      "isAdminFreeUpgrade": false,
+      "txHash": "0xup02000c48acb86c42a389efda47cc1b16938eea73f1f8920000000000000001",
+      "blockNumber": 143010929,
+      "createdAt": "2026-11-16T05:32:10.136Z"
+    },
+    {
+      "id": "db-upgrade-r2-n11",
+      "mainNodeId": "2",
+      "owner": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "fromRank": 1,
+      "toRank": 2,
+      "newNodeId": "11",
+      "parentId": "4",
+      "side": "RIGHT",
+      "directSponsor": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "directSponsorNodeId": "1",
+      "rankPriceUsdt": "10.00",
+      "vaultDeductedUsdt": "0.00",
+      "walletPaidUsdt": "0.00",
+      "upgradeMode": "CLONE_IN_RANK",
+      "isClone": true,
+      "isExtraId": false,
+      "isAdminFreeUpgrade": false,
+      "txHash": "0xup02000b48acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
+      "blockNumber": 143010928,
+      "createdAt": "2026-11-16T05:32:10.136Z"
+    },
+    {
+      "id": "db-upgrade-r2-n10",
+      "mainNodeId": "3",
+      "owner": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "fromRank": 1,
+      "toRank": 2,
+      "newNodeId": "10",
+      "parentId": "2",
+      "side": "RIGHT",
+      "directSponsor": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "directSponsorNodeId": "1",
+      "rankPriceUsdt": "10.00",
+      "vaultDeductedUsdt": "0.00",
+      "walletPaidUsdt": "0.00",
+      "upgradeMode": "CLONE_IN_RANK",
+      "isClone": true,
+      "isExtraId": false,
+      "isAdminFreeUpgrade": false,
+      "txHash": "0xup02000a48acb86c42a389efda47cc1b16938eea73f1f8920000000000000003",
+      "blockNumber": 143010927,
+      "createdAt": "2026-11-16T05:32:09.904Z"
+    },
+    {
+      "id": "db-upgrade-r2-n9",
+      "mainNodeId": "Extra-R2-#9",
+      "owner": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "fromRank": 1,
+      "toRank": 2,
+      "newNodeId": "9",
+      "parentId": "7",
+      "side": "RIGHT",
+      "directSponsor": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "directSponsorNodeId": "3",
+      "rankPriceUsdt": "10.00",
+      "vaultDeductedUsdt": "10.00",
+      "walletPaidUsdt": "0.00",
+      "upgradeMode": "AUTO_VAULT",
+      "isClone": false,
+      "isExtraId": true,
+      "isAdminFreeUpgrade": false,
+      "txHash": "0xup02000948acb86c42a389efda47cc1b16938eea73f1f8920000000000000009",
+      "blockNumber": 143010926,
+      "createdAt": "2026-11-16T05:32:09.904Z"
+    },
     {
       "id": "db-upgrade-r18-n4",
       "mainNodeId": "1",
@@ -3562,7 +4394,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup12000448acb86c42a389efda47cc1b16938eea73f1f8920000000000000001",
-      "blockNumber": 143001526,
+      "blockNumber": 143010929,
       "createdAt": "2026-11-15T14:19:20.767Z"
     },
     {
@@ -3584,7 +4416,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup12000348acb86c42a389efda47cc1b16938eea73f1f8920000000000000003",
-      "blockNumber": 143001525,
+      "blockNumber": 143010928,
       "createdAt": "2026-11-15T14:19:20.767Z"
     },
     {
@@ -3606,7 +4438,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup12000248acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 143001524,
+      "blockNumber": 143010927,
       "createdAt": "2026-11-15T14:19:20.767Z"
     },
     {
@@ -3628,7 +4460,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup11000448acb86c42a389efda47cc1b16938eea73f1f8920000000000000001",
-      "blockNumber": 143001526,
+      "blockNumber": 143010929,
       "createdAt": "2026-11-15T14:19:20.181Z"
     },
     {
@@ -3650,7 +4482,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup11000348acb86c42a389efda47cc1b16938eea73f1f8920000000000000003",
-      "blockNumber": 143001525,
+      "blockNumber": 143010928,
       "createdAt": "2026-11-15T14:19:20.181Z"
     },
     {
@@ -3672,7 +4504,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup11000248acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 143001524,
+      "blockNumber": 143010927,
       "createdAt": "2026-11-15T14:19:20.181Z"
     },
     {
@@ -3694,7 +4526,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup10000448acb86c42a389efda47cc1b16938eea73f1f8920000000000000001",
-      "blockNumber": 143001526,
+      "blockNumber": 143010929,
       "createdAt": "2026-11-15T14:19:19.757Z"
     },
     {
@@ -3716,7 +4548,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup10000348acb86c42a389efda47cc1b16938eea73f1f8920000000000000003",
-      "blockNumber": 143001525,
+      "blockNumber": 143010928,
       "createdAt": "2026-11-15T14:19:19.757Z"
     },
     {
@@ -3738,7 +4570,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup10000248acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 143001524,
+      "blockNumber": 143010927,
       "createdAt": "2026-11-15T14:19:19.757Z"
     },
     {
@@ -3760,7 +4592,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup0f000448acb86c42a389efda47cc1b16938eea73f1f8920000000000000001",
-      "blockNumber": 143001526,
+      "blockNumber": 143010929,
       "createdAt": "2026-11-15T14:19:19.197Z"
     },
     {
@@ -3782,7 +4614,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup0f000348acb86c42a389efda47cc1b16938eea73f1f8920000000000000003",
-      "blockNumber": 143001525,
+      "blockNumber": 143010928,
       "createdAt": "2026-11-15T14:19:19.197Z"
     },
     {
@@ -3804,7 +4636,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup0f000248acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 143001524,
+      "blockNumber": 143010927,
       "createdAt": "2026-11-15T14:19:19.197Z"
     },
     {
@@ -3826,7 +4658,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup0e000448acb86c42a389efda47cc1b16938eea73f1f8920000000000000001",
-      "blockNumber": 143001526,
+      "blockNumber": 143010929,
       "createdAt": "2026-11-15T14:19:18.692Z"
     },
     {
@@ -3848,7 +4680,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup0e000348acb86c42a389efda47cc1b16938eea73f1f8920000000000000003",
-      "blockNumber": 143001525,
+      "blockNumber": 143010928,
       "createdAt": "2026-11-15T14:19:18.692Z"
     },
     {
@@ -3870,7 +4702,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup0e000248acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 143001524,
+      "blockNumber": 143010927,
       "createdAt": "2026-11-15T14:19:18.692Z"
     },
     {
@@ -3892,7 +4724,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup0d000448acb86c42a389efda47cc1b16938eea73f1f8920000000000000001",
-      "blockNumber": 143001526,
+      "blockNumber": 143010929,
       "createdAt": "2026-11-15T14:19:18.057Z"
     },
     {
@@ -3914,7 +4746,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup0d000348acb86c42a389efda47cc1b16938eea73f1f8920000000000000003",
-      "blockNumber": 143001525,
+      "blockNumber": 143010928,
       "createdAt": "2026-11-15T14:19:18.057Z"
     },
     {
@@ -3936,7 +4768,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup0d000248acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 143001524,
+      "blockNumber": 143010927,
       "createdAt": "2026-11-15T14:19:18.057Z"
     },
     {
@@ -3958,7 +4790,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup0c000448acb86c42a389efda47cc1b16938eea73f1f8920000000000000001",
-      "blockNumber": 143001526,
+      "blockNumber": 143010929,
       "createdAt": "2026-11-15T14:19:17.572Z"
     },
     {
@@ -3980,7 +4812,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup0c000348acb86c42a389efda47cc1b16938eea73f1f8920000000000000003",
-      "blockNumber": 143001525,
+      "blockNumber": 143010928,
       "createdAt": "2026-11-15T14:19:17.572Z"
     },
     {
@@ -4002,7 +4834,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup0c000248acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 143001524,
+      "blockNumber": 143010927,
       "createdAt": "2026-11-15T14:19:17.572Z"
     },
     {
@@ -4024,7 +4856,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup0b000448acb86c42a389efda47cc1b16938eea73f1f8920000000000000001",
-      "blockNumber": 143001526,
+      "blockNumber": 143010929,
       "createdAt": "2026-11-15T14:19:17.164Z"
     },
     {
@@ -4046,7 +4878,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup0b000348acb86c42a389efda47cc1b16938eea73f1f8920000000000000003",
-      "blockNumber": 143001525,
+      "blockNumber": 143010928,
       "createdAt": "2026-11-15T14:19:17.164Z"
     },
     {
@@ -4068,7 +4900,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup0b000248acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 143001524,
+      "blockNumber": 143010927,
       "createdAt": "2026-11-15T14:19:17.164Z"
     },
     {
@@ -4090,7 +4922,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup0a000448acb86c42a389efda47cc1b16938eea73f1f8920000000000000001",
-      "blockNumber": 143001526,
+      "blockNumber": 143010929,
       "createdAt": "2026-11-15T14:19:16.624Z"
     },
     {
@@ -4112,7 +4944,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup0a000348acb86c42a389efda47cc1b16938eea73f1f8920000000000000003",
-      "blockNumber": 143001525,
+      "blockNumber": 143010928,
       "createdAt": "2026-11-15T14:19:16.624Z"
     },
     {
@@ -4134,7 +4966,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup0a000248acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 143001524,
+      "blockNumber": 143010927,
       "createdAt": "2026-11-15T14:19:16.624Z"
     },
     {
@@ -4156,7 +4988,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup09000448acb86c42a389efda47cc1b16938eea73f1f8920000000000000001",
-      "blockNumber": 143001526,
+      "blockNumber": 143010929,
       "createdAt": "2026-11-15T14:19:15.712Z"
     },
     {
@@ -4178,7 +5010,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup09000348acb86c42a389efda47cc1b16938eea73f1f8920000000000000003",
-      "blockNumber": 143001525,
+      "blockNumber": 143010928,
       "createdAt": "2026-11-15T14:19:15.712Z"
     },
     {
@@ -4200,7 +5032,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup09000248acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 143001524,
+      "blockNumber": 143010927,
       "createdAt": "2026-11-15T14:19:15.712Z"
     },
     {
@@ -4222,7 +5054,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup08000448acb86c42a389efda47cc1b16938eea73f1f8920000000000000001",
-      "blockNumber": 143001526,
+      "blockNumber": 143010929,
       "createdAt": "2026-11-15T14:19:15.139Z"
     },
     {
@@ -4244,7 +5076,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup08000348acb86c42a389efda47cc1b16938eea73f1f8920000000000000003",
-      "blockNumber": 143001525,
+      "blockNumber": 143010928,
       "createdAt": "2026-11-15T14:19:15.139Z"
     },
     {
@@ -4266,7 +5098,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup08000248acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 143001524,
+      "blockNumber": 143010927,
       "createdAt": "2026-11-15T14:19:15.139Z"
     },
     {
@@ -4288,7 +5120,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup07000448acb86c42a389efda47cc1b16938eea73f1f8920000000000000001",
-      "blockNumber": 143001526,
+      "blockNumber": 143010929,
       "createdAt": "2026-11-15T14:19:14.641Z"
     },
     {
@@ -4310,7 +5142,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup07000348acb86c42a389efda47cc1b16938eea73f1f8920000000000000003",
-      "blockNumber": 143001525,
+      "blockNumber": 143010928,
       "createdAt": "2026-11-15T14:19:14.641Z"
     },
     {
@@ -4332,7 +5164,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup07000248acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 143001524,
+      "blockNumber": 143010927,
       "createdAt": "2026-11-15T14:19:14.641Z"
     },
     {
@@ -4354,7 +5186,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup06000448acb86c42a389efda47cc1b16938eea73f1f8920000000000000001",
-      "blockNumber": 143001526,
+      "blockNumber": 143010929,
       "createdAt": "2026-11-15T14:19:14.237Z"
     },
     {
@@ -4376,7 +5208,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup06000348acb86c42a389efda47cc1b16938eea73f1f8920000000000000003",
-      "blockNumber": 143001525,
+      "blockNumber": 143010928,
       "createdAt": "2026-11-15T14:19:14.237Z"
     },
     {
@@ -4398,7 +5230,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup06000248acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 143001524,
+      "blockNumber": 143010927,
       "createdAt": "2026-11-15T14:19:14.237Z"
     },
     {
@@ -4420,7 +5252,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup05000448acb86c42a389efda47cc1b16938eea73f1f8920000000000000001",
-      "blockNumber": 143001526,
+      "blockNumber": 143010928,
       "createdAt": "2026-11-15T14:19:13.789Z"
     },
     {
@@ -4442,7 +5274,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup05000348acb86c42a389efda47cc1b16938eea73f1f8920000000000000003",
-      "blockNumber": 143001525,
+      "blockNumber": 143010927,
       "createdAt": "2026-11-15T14:19:13.789Z"
     },
     {
@@ -4464,7 +5296,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup05000248acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 143001524,
+      "blockNumber": 143010926,
       "createdAt": "2026-11-15T14:19:13.789Z"
     },
     {
@@ -4486,7 +5318,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": false,
       "txHash": "0xup04000548acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 143001526,
+      "blockNumber": 143010929,
       "createdAt": "2026-11-15T14:19:13.359Z"
     },
     {
@@ -4508,7 +5340,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup04000448acb86c42a389efda47cc1b16938eea73f1f8920000000000000001",
-      "blockNumber": 143001525,
+      "blockNumber": 143010928,
       "createdAt": "2026-11-15T14:19:13.359Z"
     },
     {
@@ -4530,7 +5362,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup04000348acb86c42a389efda47cc1b16938eea73f1f8920000000000000003",
-      "blockNumber": 143001524,
+      "blockNumber": 143010927,
       "createdAt": "2026-11-15T14:19:13.359Z"
     },
     {
@@ -4552,7 +5384,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup04000248acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 143001523,
+      "blockNumber": 143010926,
       "createdAt": "2026-11-15T14:19:13.359Z"
     },
     {
@@ -4574,7 +5406,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": false,
       "txHash": "0xup03000548acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 143001526,
+      "blockNumber": 143010929,
       "createdAt": "2026-11-15T14:19:12.803Z"
     },
     {
@@ -4596,7 +5428,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup03000448acb86c42a389efda47cc1b16938eea73f1f8920000000000000001",
-      "blockNumber": 143001525,
+      "blockNumber": 143010928,
       "createdAt": "2026-11-15T14:19:12.803Z"
     },
     {
@@ -4618,7 +5450,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup03000348acb86c42a389efda47cc1b16938eea73f1f8920000000000000003",
-      "blockNumber": 143001524,
+      "blockNumber": 143010927,
       "createdAt": "2026-11-15T14:19:12.803Z"
     },
     {
@@ -4640,7 +5472,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup03000248acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 143001523,
+      "blockNumber": 143010926,
       "createdAt": "2026-11-15T14:19:12.803Z"
     },
     {
@@ -4662,7 +5494,7 @@
       "isExtraId": true,
       "isAdminFreeUpgrade": false,
       "txHash": "0xup02000848acb86c42a389efda47cc1b16938eea73f1f8920000000000000008",
-      "blockNumber": 143001526,
+      "blockNumber": 143010925,
       "createdAt": "2026-11-15T14:19:12.319Z"
     },
     {
@@ -4684,7 +5516,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": false,
       "txHash": "0xup02000748acb86c42a389efda47cc1b16938eea73f1f8920000000000000003",
-      "blockNumber": 143001525,
+      "blockNumber": 143010924,
       "createdAt": "2026-11-15T14:19:12.319Z"
     },
     {
@@ -4706,7 +5538,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": false,
       "txHash": "0xup02000648acb86c42a389efda47cc1b16938eea73f1f8920000000000000006",
-      "blockNumber": 143001524,
+      "blockNumber": 143010923,
       "createdAt": "2026-11-15T14:19:12.319Z"
     },
     {
@@ -4728,7 +5560,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": false,
       "txHash": "0xup02000548acb86c42a389efda47cc1b16938eea73f1f8920000000000000005",
-      "blockNumber": 143001523,
+      "blockNumber": 143010922,
       "createdAt": "2026-11-15T14:19:12.054Z"
     },
     {
@@ -4750,7 +5582,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup02000448acb86c42a389efda47cc1b16938eea73f1f8920000000000000001",
-      "blockNumber": 143001522,
+      "blockNumber": 143010921,
       "createdAt": "2026-11-15T14:19:12.054Z"
     },
     {
@@ -4772,7 +5604,7 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup02000348acb86c42a389efda47cc1b16938eea73f1f8920000000000000003",
-      "blockNumber": 143001521,
+      "blockNumber": 143010920,
       "createdAt": "2026-11-15T14:19:12.054Z"
     },
     {
@@ -4794,11 +5626,176 @@
       "isExtraId": false,
       "isAdminFreeUpgrade": true,
       "txHash": "0xup02000248acb86c42a389efda47cc1b16938eea73f1f8920000000000000002",
-      "blockNumber": 143001520,
+      "blockNumber": 143010919,
       "createdAt": "2026-11-15T14:19:12.054Z"
     }
   ],
   "transactionLogs": [
+    {
+      "id": "tx-a592c7bf9e-REGISTER-1-25",
+      "txHash": "0xa592c7bf9e1d5f23f5c2b4ca032aab17d0361f5189a03c86ee5a125b8ea4bab2",
+      "actionType": "REGISTER",
+      "title": "สร้างโหนด R1-#25",
+      "userAddress": "0x26e9777555878f1c02bA7D85aC0EA43f0a5f1837",
+      "nodeId": 25,
+      "rank": 1,
+      "amountUsdt": 5,
+      "blockNumber": 143007211,
+      "source": "ONCHAIN_EVENT",
+      "explorerUrl": "https://testnet.bscscan.com/tx/0xa592c7bf9e1d5f23f5c2b4ca032aab17d0361f5189a03c86ee5a125b8ea4bab2",
+      "details": "Parent #22 [LEFT]",
+      "timestamp": "2026-11-16T05:16:50.000Z"
+    },
+    {
+      "id": "tx-1552ab7594-AUTO_ID-1-0",
+      "txHash": "0x1552ab759458ccfe290305e6fb2f88adca0d60ebfb67e3752b9f46deb152276c",
+      "actionType": "AUTO_ID",
+      "title": "แตก Auto New Main ID (+1 รหัส)",
+      "userAddress": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "rank": 1,
+      "amountUsdt": 5,
+      "blockNumber": 143007129,
+      "source": "ONCHAIN_EVENT",
+      "explorerUrl": "https://testnet.bscscan.com/tx/0x1552ab759458ccfe290305e6fb2f88adca0d60ebfb67e3752b9f46deb152276c",
+      "timestamp": "2026-11-16T05:16:13.000Z"
+    },
+    {
+      "id": "tx-1552ab7594-UPGRADE-5-5",
+      "txHash": "0x1552ab759458ccfe290305e6fb2f88adca0d60ebfb67e3752b9f46deb152276c",
+      "actionType": "UPGRADE",
+      "title": "สร้างโหนด R5-#5",
+      "userAddress": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "nodeId": 5,
+      "rank": 5,
+      "amountUsdt": 40,
+      "blockNumber": 143007129,
+      "source": "ONCHAIN_EVENT",
+      "explorerUrl": "https://testnet.bscscan.com/tx/0x1552ab759458ccfe290305e6fb2f88adca0d60ebfb67e3752b9f46deb152276c",
+      "details": "Parent #3 [LEFT]",
+      "timestamp": "2026-11-16T05:16:13.000Z"
+    },
+    {
+      "id": "tx-1552ab7594-EXTRA_ID-2-9",
+      "txHash": "0x1552ab759458ccfe290305e6fb2f88adca0d60ebfb67e3752b9f46deb152276c",
+      "actionType": "EXTRA_ID",
+      "title": "สร้าง Extra ID R2-#9",
+      "userAddress": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "nodeId": 9,
+      "rank": 2,
+      "amountUsdt": 10,
+      "blockNumber": 143007129,
+      "source": "ONCHAIN_EVENT",
+      "explorerUrl": "https://testnet.bscscan.com/tx/0x1552ab759458ccfe290305e6fb2f88adca0d60ebfb67e3752b9f46deb152276c",
+      "details": "Parent #7 [RIGHT]",
+      "timestamp": "2026-11-16T05:16:13.000Z"
+    },
+    {
+      "id": "tx-1552ab7594-CLONE_BOT-2-10",
+      "txHash": "0x1552ab759458ccfe290305e6fb2f88adca0d60ebfb67e3752b9f46deb152276c",
+      "actionType": "CLONE_BOT",
+      "title": "สร้างโคลนนิ่ง R2-#10",
+      "userAddress": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "nodeId": 10,
+      "rank": 2,
+      "amountUsdt": 10,
+      "blockNumber": 143007129,
+      "source": "ONCHAIN_EVENT",
+      "explorerUrl": "https://testnet.bscscan.com/tx/0x1552ab759458ccfe290305e6fb2f88adca0d60ebfb67e3752b9f46deb152276c",
+      "details": "Parent #2 [RIGHT]",
+      "timestamp": "2026-11-16T05:16:13.000Z"
+    },
+    {
+      "id": "tx-1552ab7594-CLONE_BOT-2-11",
+      "txHash": "0x1552ab759458ccfe290305e6fb2f88adca0d60ebfb67e3752b9f46deb152276c",
+      "actionType": "CLONE_BOT",
+      "title": "สร้างโคลนนิ่ง R2-#11",
+      "userAddress": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "nodeId": 11,
+      "rank": 2,
+      "amountUsdt": 10,
+      "blockNumber": 143007129,
+      "source": "ONCHAIN_EVENT",
+      "explorerUrl": "https://testnet.bscscan.com/tx/0x1552ab759458ccfe290305e6fb2f88adca0d60ebfb67e3752b9f46deb152276c",
+      "details": "Parent #4 [RIGHT]",
+      "timestamp": "2026-11-16T05:16:13.000Z"
+    },
+    {
+      "id": "tx-1552ab7594-CLONE_BOT-2-12",
+      "txHash": "0x1552ab759458ccfe290305e6fb2f88adca0d60ebfb67e3752b9f46deb152276c",
+      "actionType": "CLONE_BOT",
+      "title": "สร้างโคลนนิ่ง R2-#12",
+      "userAddress": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "nodeId": 12,
+      "rank": 2,
+      "amountUsdt": 10,
+      "blockNumber": 143007129,
+      "source": "ONCHAIN_EVENT",
+      "explorerUrl": "https://testnet.bscscan.com/tx/0x1552ab759458ccfe290305e6fb2f88adca0d60ebfb67e3752b9f46deb152276c",
+      "details": "Parent #10 [LEFT]",
+      "timestamp": "2026-11-16T05:16:13.000Z"
+    },
+    {
+      "id": "tx-1552ab7594-AUTO_ID-1-21",
+      "txHash": "0x1552ab759458ccfe290305e6fb2f88adca0d60ebfb67e3752b9f46deb152276c",
+      "actionType": "AUTO_ID",
+      "title": "แตก Auto ID #21 (จาก Main #3)",
+      "userAddress": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "mainNodeId": 3,
+      "nodeId": 21,
+      "rank": 1,
+      "amountUsdt": 5,
+      "blockNumber": 143007129,
+      "source": "ONCHAIN_EVENT",
+      "explorerUrl": "https://testnet.bscscan.com/tx/0x1552ab759458ccfe290305e6fb2f88adca0d60ebfb67e3752b9f46deb152276c",
+      "details": "Parent #19 [RIGHT] • Spawned by Main #3",
+      "timestamp": "2026-11-16T05:16:13.000Z"
+    },
+    {
+      "id": "tx-1552ab7594-CLONE_BOT-1-22",
+      "txHash": "0x1552ab759458ccfe290305e6fb2f88adca0d60ebfb67e3752b9f46deb152276c",
+      "actionType": "CLONE_BOT",
+      "title": "สร้างโคลนนิ่ง R1-#22",
+      "userAddress": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "nodeId": 22,
+      "rank": 1,
+      "amountUsdt": 5,
+      "blockNumber": 143007129,
+      "source": "ONCHAIN_EVENT",
+      "explorerUrl": "https://testnet.bscscan.com/tx/0x1552ab759458ccfe290305e6fb2f88adca0d60ebfb67e3752b9f46deb152276c",
+      "details": "Parent #16 [LEFT]",
+      "timestamp": "2026-11-16T05:16:13.000Z"
+    },
+    {
+      "id": "tx-1552ab7594-AUTO_ID-1-23",
+      "txHash": "0x1552ab759458ccfe290305e6fb2f88adca0d60ebfb67e3752b9f46deb152276c",
+      "actionType": "AUTO_ID",
+      "title": "แตก Auto ID #23 (จาก Main #1)",
+      "userAddress": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "mainNodeId": 1,
+      "nodeId": 23,
+      "rank": 1,
+      "amountUsdt": 5,
+      "blockNumber": 143007129,
+      "source": "ONCHAIN_EVENT",
+      "explorerUrl": "https://testnet.bscscan.com/tx/0x1552ab759458ccfe290305e6fb2f88adca0d60ebfb67e3752b9f46deb152276c",
+      "details": "Parent #16 [RIGHT] • Spawned by Main #1",
+      "timestamp": "2026-11-16T05:16:13.000Z"
+    },
+    {
+      "id": "tx-1552ab7594-CLONE_BOT-1-24",
+      "txHash": "0x1552ab759458ccfe290305e6fb2f88adca0d60ebfb67e3752b9f46deb152276c",
+      "actionType": "CLONE_BOT",
+      "title": "สร้างโคลนนิ่ง R1-#24",
+      "userAddress": "0x5b0779297205606df66239Ed0aB58bd62600Ad8a",
+      "nodeId": 24,
+      "rank": 1,
+      "amountUsdt": 5,
+      "blockNumber": 143007129,
+      "source": "ONCHAIN_EVENT",
+      "explorerUrl": "https://testnet.bscscan.com/tx/0x1552ab759458ccfe290305e6fb2f88adca0d60ebfb67e3752b9f46deb152276c",
+      "details": "Parent #6 [LEFT]",
+      "timestamp": "2026-11-16T05:16:13.000Z"
+    },
     {
       "id": "tx-d4d8ff95b5-AUTO_ID-1-0",
       "rank": 1,
