@@ -23,8 +23,14 @@ import {
   Search,
   Calendar,
   Clock,
+  Trash2,
+  Shield,
+  Zap,
+  LogOut,
+  LayoutGrid,
 } from 'lucide-react';
 import { Dashboard2MatrixPanel } from './Dashboard2MatrixPanel';
+import { WalletIncomeNotifier } from './WalletIncomeNotifier';
 
 interface Dashboard2ViewProps {
   language: 'th' | 'en';
@@ -45,9 +51,14 @@ interface Dashboard2ViewProps {
   onOpenRegisterModal: () => void;
   onOpenContractSwitcher: () => void;
   onConnectWallet: () => void;
+  onDisconnect?: () => void;
   onSwitchNetwork: () => void;
+  onRefreshOnChainData?: () => void;
   onApproveUsdt: (amountUsdt?: number) => Promise<any>;
   onUpgradeToRank: (targetRank: number, targetMainId?: number | string) => Promise<any>;
+  isAdminUser?: boolean;
+  onOpenDeployModal?: () => void;
+  onToggleAdminView?: () => void;
   isLoadingTx?: boolean;
   refreshTrigger?: any;
 }
@@ -173,15 +184,22 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
   onOpenRegisterModal,
   onOpenContractSwitcher,
   onConnectWallet,
+  onDisconnect,
   onSwitchNetwork,
+  onRefreshOnChainData,
   onApproveUsdt,
   onUpgradeToRank,
+  isAdminUser = false,
+  onOpenDeployModal,
+  onToggleAdminView,
   isLoadingTx = false,
   refreshTrigger,
 }) => {
   const [bottomTab, setBottomTab] = useState<BottomTabKey>('home');
   const [activeModal, setActiveModal] = useState<DetailModalKey>(null);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [isClearingCache, setIsClearingCache] = useState<boolean>(false);
+  const [clearCacheNotice, setClearCacheNotice] = useState<string>('');
   const [reports, setReports] = useState<any[]>([]);
   const [systemPools, setSystemPools] = useState<any>(null);
   const [rankCounts, setRankCounts] = useState<Record<number, number>>({});
@@ -268,6 +286,49 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
       setIsSyncing(false);
     }
   }, []);
+
+  const handleRefreshAll = useCallback(() => {
+    fetchDashboardData();
+    onRefreshOnChainData?.();
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('matrix:tree:refresh'));
+    }
+  }, [fetchDashboardData, onRefreshOnChainData]);
+
+  const handleClearCache = useCallback(async () => {
+    if (isClearingCache) return;
+    setIsClearingCache(true);
+    setClearCacheNotice('');
+    try {
+      if (typeof window !== 'undefined') {
+        try {
+          const keysToRemove: string[] = [];
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (
+              k &&
+              (k.toLowerCase().includes('matrix') ||
+                k.toLowerCase().includes('tree') ||
+                k.toLowerCase().includes('cache') ||
+                k.toLowerCase().includes('f27_build'))
+            ) {
+              keysToRemove.push(k);
+            }
+          }
+          keysToRemove.forEach((k) => localStorage.removeItem(k));
+          sessionStorage.clear();
+        } catch {
+          // ignore
+        }
+      }
+      await fetch('/api/matrix/clear-cache', { method: 'POST' }).catch(() => {});
+      handleRefreshAll();
+      setClearCacheNotice(language === 'th' ? 'ล้างแคชสำเร็จ!' : 'Cache cleared!');
+      setTimeout(() => setClearCacheNotice(''), 2500);
+    } finally {
+      setTimeout(() => setIsClearingCache(false), 500);
+    }
+  }, [isClearingCache, handleRefreshAll, language]);
 
   useEffect(() => {
     fetchDashboardData();
@@ -991,47 +1052,42 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
         {bottomTab !== 'matrix' && (
           <>
             {/* 1. SAPPHIRE HERO HEADER */}
-        <header className="relative h-[160px] md:h-[186px] text-white px-4 sm:px-6 pt-5 pb-3 overflow-hidden bg-[radial-gradient(ellipse_at_80%_72%,rgba(64,217,255,0.53),transparent_35%),linear-gradient(125deg,#05256d,#0066d7_58%,#031e68)] rounded-b-[28px] shadow-[0_8px_28px_rgba(0,62,155,0.53)]">
+        <header className="relative min-h-[170px] text-white px-4 sm:px-6 pt-4 pb-9 overflow-hidden bg-[radial-gradient(ellipse_at_80%_72%,rgba(64,217,255,0.53),transparent_35%),linear-gradient(125deg,#05256d,#0066d7_58%,#031e68)] rounded-b-[28px] shadow-[0_8px_28px_rgba(0,62,155,0.53)] space-y-3">
           {/* Glowing Orbital Arc */}
           <div className="pointer-events-none absolute w-[310px] h-[190px] -right-14 -bottom-20 border-2 border-[#69eaff]/60 rounded-[50%] shadow-[0_0_0_13px_rgba(70,207,255,0.13),0_0_0_28px_rgba(70,207,255,0.09),0_0_30px_#5ceaff] -rotate-24" />
 
           <div className="relative z-10 flex items-center justify-between gap-3">
             <div className="flex items-center gap-3 sm:gap-4">
-              <div className="text-[54px] sm:text-[66px] leading-[0.8] text-[#7af1ff] font-black drop-shadow-[0_0_16px_rgba(0,186,255,0.95)] select-none">
+              <div className="text-[48px] sm:text-[62px] leading-[0.8] text-[#7af1ff] font-black drop-shadow-[0_0_16px_rgba(0,186,255,0.95)] select-none">
                 ∞
               </div>
               <div>
-                <h1 className="text-[20px] sm:text-[27px] font-black leading-[1.06] tracking-wide m-0">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="px-1.5 py-0.5 rounded-md bg-white/15 border border-cyan-300/40 font-mono text-[10px] font-black text-[#8df4ff]">
+                    F27
+                  </span>
+                  <span className="text-[11px] font-bold text-[#aef7ff]">Fractal Flow</span>
+                </div>
+                <h1 className="text-[19px] sm:text-[26px] font-black leading-[1.06] tracking-wide m-0 mt-0.5">
                   FRACTAL FLOW
                   <br />
                   MATRIX 18
                 </h1>
-                <small className="block text-[10px] sm:text-[11px] tracking-[1.2px] mt-1.5 text-[#d8f8ff] font-semibold">
+                <small className="block text-[10px] sm:text-[11px] tracking-[1.2px] mt-1 text-[#d8f8ff] font-semibold">
                   Smart · Secure · Sustainable
                 </small>
               </div>
             </div>
 
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={() => {
-                  fetchDashboardData();
-                  fetchIdMembers(displayId);
-                }}
-                className="p-2 rounded-xl bg-white/15 hover:bg-white/25 border border-cyan-300/40 text-white transition cursor-pointer"
-                title={language === 'th' ? 'รีเฟรชข้อมูลจริง' : 'Refresh Live Data'}
-              >
-                <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
-              </button>
+            <div className="flex items-center gap-1.5 shrink-0">
               <button
                 type="button"
                 onClick={() => openDashboard2Matrix(currentRank)}
-                className="px-3 py-2 rounded-xl bg-white/15 hover:bg-white/25 border border-cyan-300/40 text-white font-bold text-xs flex items-center gap-1.5 transition cursor-pointer"
+                className="px-2.5 py-2 rounded-xl bg-white/15 hover:bg-white/25 border border-cyan-300/40 text-white font-bold text-xs flex items-center gap-1.5 transition cursor-pointer"
                 title={language === 'th' ? 'เปิดหน้าผัง Matrix 15 ชั้น' : 'Open Matrix 15 Layers'}
               >
                 <span className="text-base leading-none">♟</span>
-                <span className="hidden sm:inline">Matrix</span>
+                <span className="hidden sm:inline">Matrix 15 ชั้น</span>
               </button>
               <button
                 type="button"
@@ -1041,6 +1097,126 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
               >
                 ☰
               </button>
+            </div>
+          </div>
+
+          {/* F27 ACTION & WALLET BAR (MATCHING TOP BAR IN SCREENSHOT) */}
+          <div className="relative z-10 flex items-center justify-between gap-1.5 flex-wrap pt-2 border-t border-white/15">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <button
+                type="button"
+                onClick={onToggleTheme}
+                className="px-2.5 py-1 rounded-xl bg-slate-900/45 hover:bg-slate-900/65 border border-cyan-300/35 text-[11px] font-bold text-white inline-flex items-center gap-1 cursor-pointer transition"
+                title={theme === 'light' ? 'สลับเป็นโหมดมืด' : 'สลับเป็นโหมดสว่าง'}
+              >
+                {theme === 'light' ? (
+                  <Sun className="w-3.5 h-3.5 text-amber-300" />
+                ) : (
+                  <Moon className="w-3.5 h-3.5 text-cyan-200" />
+                )}
+                <span>{theme === 'light' ? (language === 'th' ? 'สว่าง' : 'Light') : (language === 'th' ? 'มืด' : 'Dark')}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleClearCache}
+                disabled={isClearingCache}
+                className="px-2 py-1 rounded-xl bg-rose-500/25 hover:bg-rose-500/40 border border-rose-300/45 text-rose-100 text-[11px] font-bold inline-flex items-center gap-1 cursor-pointer disabled:opacity-50 transition"
+                title={clearCacheNotice || (language === 'th' ? 'ล้างแคช' : 'Clear Cache')}
+              >
+                <Trash2 className={`w-3.5 h-3.5 ${isClearingCache ? 'animate-spin' : ''}`} />
+                {clearCacheNotice && <span className="text-[10px]">{clearCacheNotice}</span>}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  handleRefreshAll();
+                  fetchIdMembers(displayId);
+                }}
+                className="p-1.5 rounded-xl bg-white/15 hover:bg-white/25 border border-cyan-300/40 text-white transition cursor-pointer"
+                title={language === 'th' ? 'รีเฟรชข้อมูลจริง' : 'Refresh Live Data'}
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => onOpenMatrixTree(currentRank)}
+                className="px-2.5 py-1 rounded-xl bg-[#0ea5e9] hover:bg-[#0284c7] border border-cyan-200/50 text-white text-[11px] font-bold inline-flex items-center gap-1 cursor-pointer shadow-xs transition"
+                title={language === 'th' ? 'เปิดหน้าผัง Matrix เต็มจอ' : 'Open Matrix Tree'}
+              >
+                <LayoutGrid className="w-3.5 h-3.5" />
+                <span>{language === 'th' ? 'ผัง Matrix' : 'Matrix'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={onToggleLanguage}
+                className="px-2.5 py-1 rounded-xl bg-white/15 hover:bg-white/25 border border-cyan-300/35 text-[11px] font-mono font-bold text-white cursor-pointer transition"
+              >
+                {language === 'th' ? '🇬🇧 EN' : '🇹🇭 TH'}
+              </button>
+
+              {isAdminUser && onOpenDeployModal && (
+                <button
+                  type="button"
+                  onClick={onOpenDeployModal}
+                  className="px-2.5 py-1 rounded-xl bg-emerald-500/30 hover:bg-emerald-500/45 border border-emerald-300/50 text-emerald-50 text-[11px] font-bold inline-flex items-center gap-1 cursor-pointer transition"
+                >
+                  <Zap className="w-3 h-3" />
+                  <span>{language === 'th' ? 'Deploy สัญญา' : 'Deploy'}</span>
+                </button>
+              )}
+
+              {isAdminUser && onToggleAdminView && (
+                <button
+                  type="button"
+                  onClick={onToggleAdminView}
+                  className="px-2.5 py-1 rounded-xl bg-amber-400/25 hover:bg-amber-400/40 border border-amber-300/50 text-amber-100 text-[11px] font-bold inline-flex items-center gap-1 cursor-pointer transition"
+                >
+                  <Shield className="w-3 h-3" />
+                  <span>Admin</span>
+                </button>
+              )}
+            </div>
+
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <WalletIncomeNotifier
+                account={account}
+                language={language}
+                theme={theme}
+                onRefresh={handleRefreshAll}
+              />
+
+              {account ? (
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-950/60 border border-cyan-300/35 text-[11px] font-mono">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
+                  <span className="font-bold text-white">
+                    {account.slice(0, 6)}...{account.slice(-4)}
+                  </span>
+                  {onDisconnect && (
+                    <button
+                      type="button"
+                      onClick={onDisconnect}
+                      className="pl-1.5 border-l border-white/20 text-rose-300 hover:text-rose-200 font-sans font-bold inline-flex items-center gap-0.5 cursor-pointer"
+                      title={language === 'th' ? 'ตัดการเชื่อมต่อกระเป๋า' : 'Disconnect'}
+                    >
+                      <LogOut className="w-3 h-3" />
+                      <span>{language === 'th' ? 'ออก' : 'Exit'}</span>
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onConnectWallet}
+                  className="px-2.5 py-1 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-[11px] inline-flex items-center gap-1 cursor-pointer"
+                >
+                  <Wallet className="w-3 h-3" />
+                  <span>{language === 'th' ? 'เชื่อมต่อกระเป๋า' : 'Connect'}</span>
+                </button>
+              )}
             </div>
           </div>
         </header>
@@ -2191,13 +2367,23 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
                   >
                     + สมัครรหัสใหม่
                   </button>
+                  {account && onDisconnect && (
+                    <button
+                      type="button"
+                      onClick={onDisconnect}
+                      className="px-3 py-1.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 font-bold cursor-pointer inline-flex items-center gap-1"
+                    >
+                      <LogOut className="w-3.5 h-3.5" />
+                      <span>{language === 'th' ? 'ออก' : 'Exit'}</span>
+                    </button>
+                  )}
                 </div>
               </div>
 
               <div className="p-3.5 rounded-2xl bg-white/90 border border-[#b8e5ff] space-y-2">
                 <div className="font-bold text-[#0754b9] flex items-center gap-1.5">
                   <SlidersHorizontal className="w-4 h-4" />
-                  <span>สัญญา Smart Contract & การแสดงผล</span>
+                  <span>สัญญา Smart Contract & เครื่องมือระบบ</span>
                 </div>
                 <div className="font-mono text-[11px] text-[#45668f] break-all">
                   Contract: {contractAddress || CONTRACT_ADDRESS}
@@ -2213,11 +2399,28 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
                   </button>
                   <button
                     type="button"
+                    onClick={() => onOpenMatrixTree(currentRank)}
+                    className="px-3 py-1.5 rounded-xl bg-[#087cf4] text-white font-bold cursor-pointer inline-flex items-center gap-1"
+                  >
+                    <LayoutGrid className="w-3.5 h-3.5" />
+                    <span>ผัง Matrix</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleClearCache}
+                    disabled={isClearingCache}
+                    className="px-3 py-1.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 font-bold cursor-pointer inline-flex items-center gap-1 disabled:opacity-50"
+                  >
+                    <Trash2 className={`w-3.5 h-3.5 ${isClearingCache ? 'animate-spin' : ''}`} />
+                    <span>{clearCacheNotice || 'ล้างแคช'}</span>
+                  </button>
+                  <button
+                    type="button"
                     onClick={onToggleLanguage}
                     className="px-3 py-1.5 rounded-xl bg-white border border-[#a9d7ff] text-[#0756bc] font-bold cursor-pointer inline-flex items-center gap-1"
                   >
                     <Globe className="w-3.5 h-3.5" />
-                    <span>{language === 'th' ? 'ภาษา: TH' : 'Lang: EN'}</span>
+                    <span>{language === 'th' ? '🇬🇧 EN' : '🇹🇭 TH'}</span>
                   </button>
                   <button
                     type="button"
@@ -2231,6 +2434,26 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
                     )}
                     <span>{theme === 'light' ? 'ธีมสว่าง' : 'ธีมมืด'}</span>
                   </button>
+                  {isAdminUser && onOpenDeployModal && (
+                    <button
+                      type="button"
+                      onClick={onOpenDeployModal}
+                      className="px-3 py-1.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold cursor-pointer inline-flex items-center gap-1"
+                    >
+                      <Zap className="w-3.5 h-3.5" />
+                      <span>Deploy สัญญา</span>
+                    </button>
+                  )}
+                  {isAdminUser && onToggleAdminView && (
+                    <button
+                      type="button"
+                      onClick={onToggleAdminView}
+                      className="px-3 py-1.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 font-bold cursor-pointer inline-flex items-center gap-1"
+                    >
+                      <Shield className="w-3.5 h-3.5" />
+                      <span>Admin</span>
+                    </button>
+                  )}
                 </div>
               </div>
             </div>

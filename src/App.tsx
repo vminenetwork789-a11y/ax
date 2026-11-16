@@ -585,9 +585,14 @@ export default function App() {
             onOpenRegisterModal={() => setIsRegisterModalOpen(true)}
             onOpenContractSwitcher={() => setIsContractSwitcherOpen(true)}
             onConnectWallet={connectWallet}
+            onDisconnect={handleFullLogout}
             onSwitchNetwork={switchToBscTestnet}
+            onRefreshOnChainData={refreshUserData}
             onApproveUsdt={handleApproveUsdt}
             onUpgradeToRank={handleUpgradeRank}
+            isAdminUser={isAdminUser}
+            onOpenDeployModal={() => setIsDeployModalOpen(true)}
+            onToggleAdminView={toggleAdminView}
             isLoadingTx={txState.isLoading}
             refreshTrigger={txState.successMessage}
           />
