@@ -7437,6 +7437,41 @@ async function startApp() {
     return fullSyncInFlight;
   }
 
+  let lastChainCountCheckAt = 0;
+  let chainCountCheckPromise: Promise<void> | null = null;
+  async function ensureMatrixDbFreshWithChain(forceSync = false): Promise<void> {
+    if (forceSync || !matrixDB.nodesByRank[1] || matrixDB.nodesByRank[1].length <= 1) {
+      await syncAllMatrixDatabase(CONTRACT_ADDRESS, forceSync);
+      return;
+    }
+    const now = Date.now();
+    if (now - lastChainCountCheckAt < 6000) return;
+    if (chainCountCheckPromise) return chainCountCheckPromise;
+    chainCountCheckPromise = (async () => {
+      try {
+        lastChainCountCheckAt = Date.now();
+        const provider = getProvider();
+        const contract = new ethers.Contract(CONTRACT_ADDRESS, MATRIX_READ_ABI, provider);
+        const [r1Chain, r2Chain, r3Chain] = await Promise.all([
+          contract.totalNodesInRank(1).then(Number).catch(() => 0),
+          contract.totalNodesInRank(2).then(Number).catch(() => 0),
+          contract.totalNodesInRank(3).then(Number).catch(() => 0),
+        ]);
+        const r1Db = (matrixDB.nodesByRank[1] || []).filter((n) => !n.isSyntheticExtra).length;
+        const r2Db = (matrixDB.nodesByRank[2] || []).filter((n) => !n.isSyntheticExtra).length;
+        const r3Db = (matrixDB.nodesByRank[3] || []).filter((n) => !n.isSyntheticExtra).length;
+        if (r1Chain > r1Db || r2Chain > r2Db || r3Chain > r3Db) {
+          await syncAllMatrixDatabase(CONTRACT_ADDRESS, true);
+        }
+      } catch {
+        // ignore RPC check errors and serve existing DB
+      } finally {
+        chainCountCheckPromise = null;
+      }
+    })();
+    return chainCountCheckPromise;
+  }
+
   const runInitialReconciliation = () => {
     try {
       reconcileRank1AutoMainIds();
@@ -7825,11 +7860,8 @@ async function startApp() {
     try {
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
       const mainIdNum = Math.max(1, Number(req.params.mainId) || 1);
-      if (!matrixDB.nodesByRank[1] || matrixDB.nodesByRank[1].length <= 1) {
-        syncAllMatrixDatabase(CONTRACT_ADDRESS, false).catch(() => {});
-      } else {
-        reconcileAutoExtraIdsAcrossRanks();
-      }
+      await ensureMatrixDbFreshWithChain(false);
+      reconcileAutoExtraIdsAcrossRanks();
       const stats = computeMainIdDatabaseStats(mainIdNum);
       res.json({
         success: true,
@@ -7846,11 +7878,8 @@ async function startApp() {
     try {
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
       const mainIdNum = Math.max(1, Number(req.params.mainId) || 1);
-      if (!matrixDB.nodesByRank[1] || matrixDB.nodesByRank[1].length <= 1) {
-        await syncAllMatrixDatabase(CONTRACT_ADDRESS, false);
-      } else {
-        reconcileAutoExtraIdsAcrossRanks();
-      }
+      await ensureMatrixDbFreshWithChain(false);
+      reconcileAutoExtraIdsAcrossRanks();
 
       const autoMainSourceMap = reconcileRank1AutoMainIds();
       const r1Nodes = (matrixDB.nodesByRank[1] || []).filter((n) => !n.isSyntheticExtra);
@@ -8151,13 +8180,10 @@ async function startApp() {
   app.get('/api/matrix/per-id-history', async (req: Request, res: Response) => {
     try {
       const forceSync = req.query.forceSync === '1';
-      if (forceSync || !matrixDB.nodesByRank[1] || matrixDB.nodesByRank[1].length <= 1) {
-        await syncAllMatrixDatabase(CONTRACT_ADDRESS, forceSync);
-      } else {
-        reconcileAutoExtraIdsAcrossRanks();
-        if (matrixDB.rewardLogs.length === 0) rebuildDatabaseRewardLogsFromNodes();
-        if (!matrixDB.upgradeLogs || matrixDB.upgradeLogs.length === 0) rebuildDatabaseUpgradeLogsFromNodes();
-      }
+      await ensureMatrixDbFreshWithChain(forceSync);
+      reconcileAutoExtraIdsAcrossRanks();
+      if (matrixDB.rewardLogs.length === 0) rebuildDatabaseRewardLogsFromNodes();
+      if (!matrixDB.upgradeLogs || matrixDB.upgradeLogs.length === 0) rebuildDatabaseUpgradeLogsFromNodes();
 
       const autoMainSourceMap = reconcileRank1AutoMainIds();
       const r1Nodes = matrixDB.nodesByRank[1] || [];
@@ -9267,13 +9293,14 @@ async function startApp() {
           rep.pools.newExtraIdPool = stats.newExtraIdPool;
         }
 
-        // Build 35% Vault Audit Ledger (Inflow vs Outflow & Running Balance)
-        const ledgerEvents: VaultLedgerItem[] = [];
+        // Build 35% Vault Audit Ledger (Inflow vs Outflow & Per-Pool Running Balance)
+        type OrderedLedgerItem = VaultLedgerItem & { _orderMs: number; _seq: number };
+        const ledgerEvents: OrderedLedgerItem[] = [];
         const sortedInflows = rep.vault35History.slice().reverse();
         const sortedAutoSpawned = rep.autoIdsSpawned.slice().reverse();
         const sortedExtraSpawned = rep.autoExtraIdsSpawned.slice().reverse();
 
-        // 1. Inflow Events
+        const inflowItems: OrderedLedgerItem[] = [];
         for (const inf of sortedInflows) {
           const isExtraLeftBonus =
             (inf.note || '').includes('Extra R') ||
@@ -9307,8 +9334,9 @@ async function startApp() {
             }
           }
 
-          ledgerEvents.push({
-            id: `v-in-${rep.id}-${ledgerEvents.length + 1}`,
+          const rawMs = new Date(inf.timestamp).getTime() || 0;
+          inflowItems.push({
+            id: `v-in-${rep.id}-${inflowItems.length + 1}`,
             timestamp: inf.timestamp,
             direction: 'IN',
             actionType: 'RECEIVE_VAULT',
@@ -9321,13 +9349,41 @@ async function startApp() {
             note: inf.note,
             poolBalanceAfterUsdt: 0,
             balanceAfterUsdt: 0,
+            _orderMs: rawMs,
+            _seq: inflowItems.length + 1,
           });
         }
 
-        // 2. Outflow Events: Auto IDs
+        // Chronological inflows so causal milestones for Auto ID / Extra ID / Upgrade outflows never sort before funding inflows
+        inflowItems.sort((a, b) => a._orderMs - b._orderMs || a._seq - b._seq);
+        ledgerEvents.push(...inflowItems);
+
+        const findFundingMilestoneMs = (
+          pool: 'UPGRADE_POOL' | 'AUTO_ID_POOL' | 'EXTRA_ID_POOL',
+          cumulativeThreshold: number
+        ): number => {
+          let cum = 0;
+          let lastMs = 0;
+          for (const inf of inflowItems) {
+            if (inf.poolType !== pool) continue;
+            cum = Number((cum + inf.amountUsdt).toFixed(4));
+            lastMs = inf._orderMs;
+            if (cum + 1e-6 >= cumulativeThreshold) {
+              return lastMs;
+            }
+          }
+          return lastMs;
+        };
+
+        // 2. Outflow Events: Auto IDs (strictly ordered after funding inflow milestone)
+        let cumAutoCost = 0;
         sortedAutoSpawned.forEach((sp, idx) => {
           const spTime = sp.timestamp || new Date(Date.now() - (idx + 1) * 60000).toISOString();
           const autoIdCost = RANK_PRICES_USDT[0] || 5;
+          cumAutoCost = Number((cumAutoCost + autoIdCost).toFixed(4));
+          const minTriggerMs = findFundingMilestoneMs('AUTO_ID_POOL', cumAutoCost);
+          const rawMs = new Date(spTime).getTime() || 0;
+          const orderMs = Math.max(rawMs, minTriggerMs + idx + 1);
           ledgerEvents.push({
             id: `v-out-auto-${rep.id}-${sp.id}`,
             timestamp: spTime,
@@ -9342,13 +9398,20 @@ async function startApp() {
             note: `สร้าง Auto ID สำเร็จ (ID #${sp.id})`,
             poolBalanceAfterUsdt: 0,
             balanceAfterUsdt: 0,
+            _orderMs: orderMs,
+            _seq: 10000 + idx,
           });
         });
 
-        // 3. Outflow Events: Extra IDs
+        // 3. Outflow Events: Extra IDs (strictly ordered after funding inflow milestone)
+        let cumExtraCost = 0;
         sortedExtraSpawned.forEach((sp, idx) => {
           const cost = RANK_PRICES_USDT[sp.rank - 1] || 10;
           const spTime = sp.timestamp || new Date(Date.now() - (idx + 1) * 50000).toISOString();
+          cumExtraCost = Number((cumExtraCost + cost).toFixed(4));
+          const minTriggerMs = findFundingMilestoneMs('EXTRA_ID_POOL', cumExtraCost);
+          const rawMs = new Date(spTime).getTime() || 0;
+          const orderMs = Math.max(rawMs, minTriggerMs + idx + 1);
           ledgerEvents.push({
             id: `v-out-extra-${rep.id}-${sp.rank}-${sp.id}`,
             timestamp: spTime,
@@ -9363,6 +9426,8 @@ async function startApp() {
             note: `สร้าง Extra ID สำเร็จ (ID #${sp.id})`,
             poolBalanceAfterUsdt: 0,
             balanceAfterUsdt: 0,
+            _orderMs: orderMs,
+            _seq: 20000 + idx,
           });
         });
 
@@ -9373,6 +9438,7 @@ async function startApp() {
             .sort((a: any, b: any) => a.rank - b.rank);
 
           let remUpToAllocate = upDeduct;
+          let cumUpgCost = 0;
           for (let i = 0; i < userRankNodes.length && remUpToAllocate > 0; i++) {
             const rn = userRankNodes[i];
             const prevR = rn.rank - 1;
@@ -9380,9 +9446,17 @@ async function startApp() {
             const maxForThis = Math.min(rPrice, remUpToAllocate);
             const amtToDeduct = Number(maxForThis.toFixed(2));
             remUpToAllocate = Number((remUpToAllocate - amtToDeduct).toFixed(2));
+            cumUpgCost = Number((cumUpgCost + amtToDeduct).toFixed(4));
 
             const origNode = (matrixDB.nodesByRank[rn.rank] || []).find((n) => n.id === rn.nodeId);
-            const uTime = origNode?.createdAt || (sortedInflows[0]?.timestamp ? new Date(new Date(sortedInflows[0].timestamp).getTime() + (i + 1) * 1000).toISOString() : new Date().toISOString());
+            const uTime =
+              origNode?.createdAt ||
+              (sortedInflows[0]?.timestamp
+                ? new Date(new Date(sortedInflows[0].timestamp).getTime() + (i + 1) * 1000).toISOString()
+                : new Date().toISOString());
+            const minTriggerMs = findFundingMilestoneMs('UPGRADE_POOL', cumUpgCost);
+            const rawMs = new Date(uTime).getTime() || 0;
+            const orderMs = Math.max(rawMs, minTriggerMs + i + 1);
             ledgerEvents.push({
               id: `v-out-up-${rep.id}-${rn.rank}`,
               timestamp: uTime,
@@ -9397,13 +9471,18 @@ async function startApp() {
               note: `อัปเกรดสู่ Rank ${rn.rank} สำเร็จ`,
               poolBalanceAfterUsdt: 0,
               balanceAfterUsdt: 0,
+              _orderMs: orderMs,
+              _seq: 30000 + i,
             });
           }
 
           if (remUpToAllocate > 0) {
+            cumUpgCost = Number((cumUpgCost + remUpToAllocate).toFixed(4));
+            const minTriggerMs = findFundingMilestoneMs('UPGRADE_POOL', cumUpgCost);
+            const nowMs = Math.max(Date.now(), minTriggerMs + 50);
             ledgerEvents.push({
               id: `v-out-up-${rep.id}-rem`,
-              timestamp: new Date().toISOString(),
+              timestamp: new Date(nowMs).toISOString(),
               direction: 'OUT',
               actionType: 'AUTO_UPGRADE',
               actionLabelTh: 'หักอัปเกรดสะสม',
@@ -9415,29 +9494,47 @@ async function startApp() {
               note: 'อัปเกรดแรงค์สำเร็จ',
               poolBalanceAfterUsdt: 0,
               balanceAfterUsdt: 0,
+              _orderMs: nowMs,
+              _seq: 39999,
             });
           }
         }
 
-        // Sort chronological (oldest first) to compute running total
-        ledgerEvents.sort(
-          (a, b) => (new Date(a.timestamp).getTime() || 0) - (new Date(b.timestamp).getTime() || 0)
-        );
+        // Sort chronological (oldest first) to compute running total AND per-pool running balance
+        ledgerEvents.sort((a, b) => {
+          if (a._orderMs !== b._orderMs) return a._orderMs - b._orderMs;
+          if (a.direction !== b.direction) return a.direction === 'IN' ? -1 : 1;
+          return a._seq - b._seq;
+        });
         let netRunningTotal = 0;
+        const poolRunningTotals: Record<'UPGRADE_POOL' | 'AUTO_ID_POOL' | 'EXTRA_ID_POOL', number> = {
+          UPGRADE_POOL: 0,
+          AUTO_ID_POOL: 0,
+          EXTRA_ID_POOL: 0,
+        };
         for (const ev of ledgerEvents) {
           if (ev.direction === 'IN') {
             netRunningTotal = Number((netRunningTotal + ev.amountUsdt).toFixed(2));
+            poolRunningTotals[ev.poolType] = Number(
+              (poolRunningTotals[ev.poolType] + ev.amountUsdt).toFixed(2)
+            );
           } else {
             netRunningTotal = Number(Math.max(0, netRunningTotal - ev.amountUsdt).toFixed(2));
+            poolRunningTotals[ev.poolType] = Number(
+              Math.max(0, poolRunningTotals[ev.poolType] - ev.amountUsdt).toFixed(2)
+            );
           }
           ev.balanceAfterUsdt = netRunningTotal;
+          ev.poolBalanceAfterUsdt = poolRunningTotals[ev.poolType];
         }
 
-        // Sort descending (newest first) for UI presentation
-        ledgerEvents.sort(
-          (a, b) => (new Date(b.timestamp).getTime() || 0) - (new Date(a.timestamp).getTime() || 0)
-        );
-        rep.vault35Ledger = ledgerEvents;
+        // Sort descending (newest first) for UI presentation and strip internal ordering fields
+        ledgerEvents.sort((a, b) => {
+          if (b._orderMs !== a._orderMs) return b._orderMs - a._orderMs;
+          if (a.direction !== b.direction) return a.direction === 'OUT' ? -1 : 1;
+          return b._seq - a._seq;
+        });
+        rep.vault35Ledger = ledgerEvents.map(({ _orderMs, _seq, ...rest }) => rest);
       }
 
       const allReports = Array.from(reportsMap.values()).sort((a, b) => a.id - b.id);

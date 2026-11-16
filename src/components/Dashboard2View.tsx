@@ -1,7 +1,10 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { ethers } from 'ethers';
 import {
   RANK_PRICES_USDT,
   CONTRACT_ADDRESS,
+  MATRIX_ABI,
+  SUPPORTED_NETWORKS,
 } from '../contracts/config';
 import { calculateMainIdVaultPools } from '../utils/vaultPools';
 import { buildReferralLink } from '../utils/referralLink';
@@ -227,6 +230,14 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
   const [membersScope, setMembersScope] = useState<'all' | 'direct' | 'subtree'>('all');
   const [membersSelectedRank, setMembersSelectedRank] = useState<number | 'all'>('all');
   const [membersSearch, setMembersSearch] = useState<string>('');
+  const [liveOnChainPools, setLiveOnChainPools] = useState<{
+    mainId: number;
+    contract: string;
+    currentRank: number;
+    upgradeRankPool: number;
+    newAutoIdPool: number;
+    newExtraIdPool: number;
+  } | null>(null);
 
   const openVaultModal = useCallback(
     (tab: 'all' | 'upgrade' | 'auto_id' | 'extra_id' = 'all') => {
@@ -426,12 +437,85 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
   );
   const shortWallet = `${displayOwner.slice(0, 6)}...${displayOwner.slice(-5)}`;
 
-  // Build Vault breakdown from report or utility fallback
+  useEffect(() => {
+    let cancelled = false;
+    const targetContract = (contractAddress || CONTRACT_ADDRESS || '').trim();
+    if (!targetContract || !ethers.isAddress(targetContract) || !displayId) return;
+    if (!displayOwner || displayOwner === ethers.ZeroAddress) return;
+
+    const loadOnChainPools = async () => {
+      const rpcList = SUPPORTED_NETWORKS[97]?.rpcUrls || [
+        'https://bsc-testnet-rpc.publicnode.com',
+        'https://data-seed-prebsc-1-s1.binance.org:8545/',
+      ];
+      for (const rpcUrl of rpcList) {
+        try {
+          const provider = new ethers.JsonRpcProvider(rpcUrl);
+          const contract = new ethers.Contract(targetContract, MATRIX_ABI, provider);
+          const res = await contract.getMainIdThreePools(displayOwner, BigInt(displayId));
+          if (cancelled) return;
+          const upg = Number(Number(ethers.formatUnits(res[3] ?? 0n, 18)).toFixed(2));
+          const auto = Number(Number(ethers.formatUnits(res[4] ?? 0n, 18)).toFixed(2));
+          const extra = Number(Number(ethers.formatUnits(res[5] ?? 0n, 18)).toFixed(2));
+          const rankVal = Number(res[0] ?? 1);
+          setLiveOnChainPools({
+            mainId: displayId,
+            contract: targetContract.toLowerCase(),
+            currentRank: rankVal,
+            upgradeRankPool: upg,
+            newAutoIdPool: auto,
+            newExtraIdPool: extra,
+          });
+          if (
+            activeReport &&
+            Number(activeReport.id) === displayId &&
+            (Math.abs(auto - Number(activeReport.newAutoIdPool ?? 0)) > 0.01 ||
+              Math.abs(upg - Number(activeReport.upgradeRankPool ?? 0)) > 0.01 ||
+              Math.abs(extra - Number(activeReport.newExtraIdPool ?? 0)) > 0.01)
+          ) {
+            fetch('/api/matrix/per-id-history?forceSync=1', {
+              headers: { Accept: 'application/json' },
+            })
+              .then((r) => (r.ok ? r.json() : null))
+              .then((d) => {
+                if (!cancelled && d?.success && Array.isArray(d.reports)) {
+                  setReports(d.reports);
+                  if (d.systemPools) setSystemPools(d.systemPools);
+                }
+              })
+              .catch(() => {});
+          }
+          return;
+        } catch {
+          // try next RPC endpoint
+        }
+      }
+    };
+
+    loadOnChainPools();
+    return () => {
+      cancelled = true;
+    };
+  }, [displayId, displayOwner, contractAddress, refreshTrigger, activeReport?.id, activeReport?.newAutoIdPool, activeReport?.upgradeRankPool, activeReport?.newExtraIdPool]);
+
+  // Build Vault breakdown from report (synced with live on-chain getMainIdThreePools when available)
   const vaultPools = useMemo(() => {
+    const activeContractLower = (contractAddress || CONTRACT_ADDRESS || '').trim().toLowerCase();
+    const hasMatchingLivePools =
+      liveOnChainPools &&
+      liveOnChainPools.mainId === displayId &&
+      liveOnChainPools.contract === activeContractLower;
+
     if (activeReport) {
-      const upgradeRankPool = Number(activeReport.upgradeRankPool ?? 0);
-      const newAutoIdPool = Number(activeReport.newAutoIdPool ?? 0);
-      const newExtraIdPool = Number(activeReport.newExtraIdPool ?? 0);
+      const upgradeRankPool = hasMatchingLivePools
+        ? liveOnChainPools.upgradeRankPool
+        : Number(activeReport.upgradeRankPool ?? 0);
+      const newAutoIdPool = hasMatchingLivePools
+        ? liveOnChainPools.newAutoIdPool
+        : Number(activeReport.newAutoIdPool ?? 0);
+      const newExtraIdPool = hasMatchingLivePools
+        ? liveOnChainPools.newExtraIdPool
+        : Number(activeReport.newExtraIdPool ?? 0);
       const upgradesDeductedUsdt = Number(
         activeReport.vaultDeductedBreakdown?.upgradesTotalUsdt ?? 0
       );
@@ -456,8 +540,10 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
         newExtraIdPoolGross,
         totalRemaining: Number(
           (
-            activeReport.vault35RemainingTotalUsdt ??
-            upgradeRankPool + newAutoIdPool + newExtraIdPool
+            hasMatchingLivePools
+              ? upgradeRankPool + newAutoIdPool + newExtraIdPool
+              : activeReport.vault35RemainingTotalUsdt ??
+                upgradeRankPool + newAutoIdPool + newExtraIdPool
           ).toFixed(2)
         ),
         grossTotal: Number(activeReport.vault35GrossTotalUsdt ?? 0),
@@ -485,7 +571,7 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
       grossTotal: calc.totalAccumulatedVault,
       deductedTotal: 0,
     };
-  }, [activeReport, profile?.vaults, displayId, currentRank]);
+  }, [activeReport, profile?.vaults, displayId, currentRank, contractAddress, liveOnChainPools]);
 
   const activeMembersData = useMemo(() => {
     if (!membersData || Number(membersData.mainId) !== displayId) return null;
@@ -1418,9 +1504,7 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
                   <div>
                     <div className="text-[26px] sm:text-[29px]">🚀</div>
                     <h3 className="text-[12px] sm:text-[13px] font-bold leading-snug my-1 text-[#09265f]">
-                      ถังอัปเกรดแรงก์
-                      <br />
-                      (Upgrade Rank Pool)
+                      อัพเกรด Rank
                     </h3>
                     <strong className="text-[20px] sm:text-[22px] font-black block text-[#09265f]">
                       {vaultPools.upgradeRankPool.toFixed(2)}
@@ -1447,9 +1531,7 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
                   <div>
                     <div className="text-[26px] sm:text-[29px]">👤</div>
                     <h3 className="text-[12px] sm:text-[13px] font-bold leading-snug my-1 text-[#09265f]">
-                      ถังสร้าง Main ID
-                      <br />
-                      (New Auto ID Pool)
+                      Auto ID
                     </h3>
                     <strong className="text-[20px] sm:text-[22px] font-black block text-[#09265f]">
                       {vaultPools.newAutoIdPool.toFixed(2)}
@@ -1484,9 +1566,7 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
                   <div>
                     <div className="text-[26px] sm:text-[29px]">✦</div>
                     <h3 className="text-[12px] sm:text-[13px] font-bold leading-snug my-1 text-[#09265f]">
-                      ถังสร้าง Extra ID
-                      <br />
-                      (New Extra ID Pool)
+                      Extra ID
                     </h3>
                     <strong className="text-[20px] sm:text-[22px] font-black block text-[#09265f]">
                       {vaultPools.newExtraIdPool.toFixed(2)}
@@ -2733,7 +2813,7 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
                         {summary.totalSubtreeNodesAcrossRanks}
                       </strong>
                       <span className="text-[10px] text-[#55769b]">
-                        Auto {summary.totalAutoIds} · Extra {summary.totalExtraIds} · โคลน {summary.totalClones}
+                        Auto ในผัง {summary.totalAutoIds} (สร้างเอง {totalAutoIds}) · Extra {summary.totalExtraIds} · โคลน {summary.totalClones}
                       </span>
                     </div>
                     <div className="p-2.5 rounded-xl bg-white border border-[#b8e5ff]">
@@ -3153,7 +3233,7 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
                       },
                       {
                         key: 'upgrade',
-                        title: '🚀 อัปเกรด Rank',
+                        title: '🚀 อัพเกรด Rank',
                         sub: `${vaultPools.upgradeRankPool.toFixed(2)} U`,
                         activeCls: 'bg-[#0284c7] text-white border-[#0284c7]',
                       },
@@ -3202,7 +3282,7 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
                     <div className="flex items-center justify-between gap-2 flex-wrap">
                       <div>
                         <div className="font-black text-[#09265f] text-sm">
-                          🚀 ถังอัปเกรดแรงก์ (Upgrade Rank Pool)
+                          🚀 อัพเกรด Rank
                         </div>
                         <div className="text-[11px] text-[#3f6493]">
                           {currentRank >= 18
@@ -3228,7 +3308,7 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
                     <div className="flex items-center justify-between gap-2 flex-wrap">
                       <div>
                         <div className="font-black text-[#064e3b] text-sm">
-                          👤 ถังสร้าง Main ID ใหม่ (Auto ID Pool)
+                          👤 Auto ID
                         </div>
                         <div className="text-[11px] text-[#0f6b47] font-semibold">
                           สร้างแล้ว <strong>{totalAutoIds} รหัส</strong> · หักสร้างสะสม{' '}
@@ -3346,7 +3426,7 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
                     <div className="flex items-center justify-between gap-2 flex-wrap">
                       <div>
                         <div className="font-black text-[#4c1d95] text-sm">
-                          ✦ ถังสร้าง Extra ID (New Extra ID Pool)
+                          ✦ Extra ID
                         </div>
                         <div className="text-[11px] text-[#5b21b6] font-semibold">
                           สร้างแล้ว <strong>{totalExtraIds} รหัส</strong> · หักสร้างสะสม{' '}
@@ -3512,11 +3592,18 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
                             {item.direction === 'OUT' ? '-' : '+'}
                             {Number(item.amountUsdt || 0).toFixed(2)} U
                           </strong>
-                          {typeof item.balanceAfterUsdt === 'number' && (
+                          {vaultPoolTab !== 'all' && typeof item.poolBalanceAfterUsdt === 'number' ? (
                             <span className="text-[9.5px] text-[#55769b] block">
-                              คงเหลือ {Number(item.balanceAfterUsdt).toFixed(2)} U
+                              คงเหลือถังนี้ {Number(item.poolBalanceAfterUsdt).toFixed(2)} U
                             </span>
-                          )}
+                          ) : typeof item.balanceAfterUsdt === 'number' ? (
+                            <span className="text-[9.5px] text-[#55769b] block">
+                              คงเหลือรวม {Number(item.balanceAfterUsdt).toFixed(2)} U
+                              {typeof item.poolBalanceAfterUsdt === 'number'
+                                ? ` · ถังนี้ ${Number(item.poolBalanceAfterUsdt).toFixed(2)} U`
+                                : ''}
+                            </span>
+                          ) : null}
                         </div>
                       </div>
                     ))
