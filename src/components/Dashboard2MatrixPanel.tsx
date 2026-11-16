@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { RefreshCw, Search, ArrowLeft, ExternalLink, ArrowUp } from 'lucide-react';
+import { RefreshCw, Search, ArrowLeft, ExternalLink, ArrowUp, X, Users } from 'lucide-react';
 
 export interface MatrixTreeNodeRaw {
   id: number;
@@ -49,11 +49,27 @@ const shortAddr = (addr?: string): string => {
   return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
 };
 
+const isAutoNode = (node?: MatrixTreeNodeRaw | null): boolean => {
+  if (!node) return false;
+  const ot = String(node.originType || '').toUpperCase();
+  const cot = String(node.confirmedOriginType || '').toUpperCase();
+  return ot === 'AUTO_ID' || ot === 'AUTO_NEW_MAIN' || cot === 'AUTO_ID' || cot === 'AUTO_NEW_MAIN';
+};
+
+const isExtraNode = (node?: MatrixTreeNodeRaw | null): boolean => {
+  if (!node) return false;
+  const ot = String(node.originType || '').toUpperCase();
+  const cot = String(node.confirmedOriginType || '').toUpperCase();
+  return Boolean(node.isExtraId) || ot === 'AUTO_EXTRA' || cot === 'AUTO_EXTRA';
+};
+
 const getNodeTypeLabel = (node?: MatrixTreeNodeRaw | null): string => {
   if (!node) return 'Main ID';
-  if (node.isExtraId) return `Extra ID (จาก #${node.originMainId || node.directSponsorNodeId || '-'})`;
-  if (node.isClone) return `โคลนนิ่ง (จาก Main #${node.originMainId || '-'})`;
-  if (node.originType === 'AUTO_ID' || node.confirmedOriginType === 'AUTO_ID') {
+  if (isExtraNode(node)) return `Extra ID (จาก #${node.originMainId || node.directSponsorNodeId || '-'})`;
+  if (node.isClone || String(node.originType || '').toUpperCase() === 'CLONE') {
+    return `โคลนนิ่ง (จาก Main #${node.originMainId || '-'})`;
+  }
+  if (isAutoNode(node)) {
     return 'Auto ID';
   }
   return 'Main ID';
@@ -61,9 +77,9 @@ const getNodeTypeLabel = (node?: MatrixTreeNodeRaw | null): string => {
 
 const getShortTypeTag = (node?: MatrixTreeNodeRaw | null): string => {
   if (!node) return 'MAIN';
-  if (node.isExtraId) return 'EXTRA';
-  if (node.isClone) return 'CLONE';
-  if (node.originType === 'AUTO_ID' || node.confirmedOriginType === 'AUTO_ID') return 'AUTO';
+  if (isExtraNode(node)) return 'EXTRA';
+  if (node.isClone || String(node.originType || '').toUpperCase() === 'CLONE') return 'CLONE';
+  if (isAutoNode(node)) return 'AUTO';
   return 'MAIN';
 };
 
@@ -90,6 +106,9 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
   const [loading, setLoading] = useState<boolean>(false);
   const [loadError, setLoadError] = useState<string>('');
   const [searchInput, setSearchInput] = useState<string>('');
+  const [layerPopupModal, setLayerPopupModal] = useState<number | 'all' | null>(null);
+  const [popupTypeFilter, setPopupTypeFilter] = useState<'ALL' | 'MAIN' | 'AUTO' | 'CLONE' | 'EXTRA'>('ALL');
+  const [popupSearch, setPopupSearch] = useState<string>('');
   const [searchResult, setSearchResult] = useState<{
     message: string;
     isError?: boolean;
@@ -773,13 +792,28 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
         </div>
 
         {/* Selected Layer Detail Panel */}
-        <div className="flex items-center justify-between gap-2 mt-5 mb-2">
+        <div className="flex items-center justify-between gap-2 mt-5 mb-2 flex-wrap">
           <h3 className="text-[15px] sm:text-[16px] font-black text-[#09275f]">
             ชั้นที่ {selectedLayer}
           </h3>
-          <span className="text-[10.5px] font-bold px-2.5 py-1 rounded-full bg-[#e4f4ff] text-[#0757b8] font-mono tabular-nums">
-            {fmtNum(theoreticalCapacity)} ตำแหน่ง · พบ {currentLayerEntries.length} รหัส
-          </span>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[10.5px] font-bold px-2.5 py-1 rounded-full bg-[#e4f4ff] text-[#0757b8] font-mono tabular-nums">
+              {fmtNum(theoreticalCapacity)} ตำแหน่ง · พบ {currentLayerEntries.length} รหัส
+            </span>
+            {currentLayerEntries.length > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  setPopupTypeFilter('ALL');
+                  setPopupSearch('');
+                  setLayerPopupModal(selectedLayer);
+                }}
+                className="px-2.5 py-1 rounded-full bg-[#087cf4] hover:bg-[#0568d0] text-white text-[10.5px] font-bold inline-flex items-center gap-1 cursor-pointer shadow-xs"
+              >
+                <Users className="w-3 h-3" /> ดูรายชื่อชั้น {selectedLayer}
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="p-3 rounded-[16px] bg-[#f4fbff] border border-[#c6e6ff]">
@@ -956,17 +990,33 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
 
       {/* 5. 15-LAYER SUMMARY TABLE */}
       <section className="mx-1 p-4 rounded-[21px] bg-white/90 border border-[#b8e1ff] shadow-[0_8px_22px_rgba(7,85,181,0.17)]">
-        <div className="flex items-center justify-between gap-2 mb-3">
-          <h3 className="text-[15px] sm:text-[16px] font-black text-[#09275f]">
-            📋 สรุปโครงสร้างแต่ละชั้น
-          </h3>
-          <small className="text-[10.5px] font-semibold text-[#5a78a1]">
-            ความจุตามทฤษฎี & สมาชิกจริง
-          </small>
+        <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
+          <div>
+            <h3 className="text-[15px] sm:text-[16px] font-black text-[#09275f]">
+              📋 สรุปโครงสร้างแต่ละชั้น
+            </h3>
+            <small className="text-[10.5px] font-semibold text-[#5a78a1]">
+              ความจุตามทฤษฎี & สมาชิกจริง
+            </small>
+          </div>
+          {totalSubtreeCount > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                setPopupTypeFilter('ALL');
+                setPopupSearch('');
+                setLayerPopupModal('all');
+              }}
+              className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-[#22caff] to-[#0758d4] text-white text-[11px] font-bold inline-flex items-center gap-1.5 shadow-sm cursor-pointer hover:brightness-105 transition"
+            >
+              <Users className="w-3.5 h-3.5" />
+              <span>ดูสมาชิกจริงทั้งหมด ({totalSubtreeCount} รหัส)</span>
+            </button>
+          )}
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full border-separate border-spacing-y-1.5 min-w-[460px] text-xs">
+          <table className="w-full border-separate border-spacing-y-1.5 min-w-[480px] text-xs">
             <thead>
               <tr className="text-left text-[#54749b]">
                 <th className="px-2 py-1.5">ชั้น</th>
@@ -979,10 +1029,10 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
               {Array.from({ length: 15 }, (_, idx) => idx + 1).map((n) => {
                 const realEntries = layersMap[n] || [];
                 const previewIds = realEntries
-                  .slice(0, 4)
+                  .slice(0, 3)
                   .map((e) => `#${e.node.id}`)
                   .join(', ');
-                const extraMore = realEntries.length > 4 ? ` +อีก ${realEntries.length - 4}` : '';
+                const extraMore = realEntries.length > 3 ? ` +${realEntries.length - 3}` : '';
                 const isRowSelected = selectedLayer === n;
                 return (
                   <tr
@@ -1021,13 +1071,29 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
                       }`}
                     >
                       {realEntries.length > 0 ? (
-                        <span className="font-bold text-emerald-700">
-                          {realEntries.length} รหัส{' '}
-                          <span className="font-mono text-[#09275f] font-normal">
-                            ({previewIds}
-                            {extraMore})
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <span className="font-bold text-emerald-700">
+                            {realEntries.length} รหัส{' '}
+                            <span className="font-mono text-[#09275f] font-normal">
+                              ({previewIds}
+                              {extraMore})
+                            </span>
                           </span>
-                        </span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              chooseLayer(n);
+                              setPopupTypeFilter('ALL');
+                              setPopupSearch('');
+                              setLayerPopupModal(n);
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-[#087cf4] hover:bg-[#0568d0] text-white text-[10.5px] font-bold inline-flex items-center gap-1 whitespace-nowrap cursor-pointer shadow-xs"
+                          >
+                            <Users className="w-3 h-3" />
+                            <span>ดูข้อมูลสมาชิก</span>
+                          </button>
+                        </div>
                       ) : (
                         <span className="text-[#6d8aad]">ว่าง (0 รหัส)</span>
                       )}
@@ -1040,9 +1106,276 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
         </div>
 
         <p className="text-[11px] text-[#58769d] leading-relaxed mt-2">
-          คลิกที่แถวของแต่ละชั้นเพื่อเปิดดูรายชื่อสมาชิกจริง สายซ้าย/ขวา และตำแหน่งผู้แนะนำได้ทันที
+          กดปุ่ม <strong className="text-[#0754b9]">ดูข้อมูลสมาชิก</strong> ในคอลัมน์ข้อมูลสมาชิกจริง เพื่อเปิดป๊อปอัพแสดง ID, สถานะไอดี และผู้แนะนำของแต่ละรหัส
         </p>
       </section>
+
+      {/* POPUP MODAL: REAL MEMBERS IN LAYER / SUBTREE (ID, STATUS, SPONSOR) */}
+      {layerPopupModal !== null && (() => {
+        const rawEntries: LayerNodeEntry[] =
+          layerPopupModal === 'all'
+            ? Array.from({ length: 15 }, (_, idx) => layersMap[idx + 1] || []).flat()
+            : layersMap[layerPopupModal] || [];
+
+        const tagCounts = {
+          ALL: rawEntries.length,
+          MAIN: 0,
+          AUTO: 0,
+          CLONE: 0,
+          EXTRA: 0,
+        };
+        for (const entry of rawEntries) {
+          const tag = getShortTypeTag(entry.node) as 'MAIN' | 'AUTO' | 'CLONE' | 'EXTRA';
+          if (tagCounts[tag] !== undefined) tagCounts[tag] += 1;
+        }
+
+        const qTrim = popupSearch.trim().toLowerCase().replace(/^#/, '');
+        const filteredEntries = rawEntries.filter((entry) => {
+          const n = entry.node;
+          const tag = getShortTypeTag(n);
+          if (popupTypeFilter !== 'ALL' && tag !== popupTypeFilter) return false;
+          if (qTrim) {
+            const originNode = n.originMainId ? nodeMap.get(Number(n.originMainId)) : undefined;
+            const sponsorId =
+              Number(n.directSponsorNodeId || 0) > 0
+                ? Number(n.directSponsorNodeId)
+                : Number(originNode?.directSponsorNodeId || n.originMainId || 0);
+            const hay = `${n.id} #${n.id} ${getNodeTypeLabel(n)} ${tag} ${sponsorId} #${sponsorId} ${
+              n.owner || ''
+            }`.toLowerCase();
+            if (!hay.includes(qTrim)) return false;
+          }
+          return true;
+        });
+
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs"
+            onClick={() => setLayerPopupModal(null)}
+          >
+            <div
+              className="w-full max-w-2xl max-h-[88vh] overflow-y-auto rounded-[24px] bg-gradient-to-br from-white to-[#e3f4ff] border-2 border-[#a9ddff] shadow-2xl p-4 sm:p-5 text-[#09265f] space-y-3"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Modal Header */}
+              <div className="flex items-start justify-between gap-2 border-b border-[#b8e5ff] pb-2.5">
+                <div>
+                  <h3 className="text-base sm:text-lg font-black text-[#09265f]">
+                    {layerPopupModal === 'all'
+                      ? `👥 ข้อมูลสมาชิกจริงทั้ง 15 ชั้น (Rank ${matrixRank} · ใต้ #${effectiveRootId})`
+                      : `👥 ข้อมูลสมาชิกจริง — ชั้นที่ ${layerPopupModal} (Rank ${matrixRank} · ใต้ #${effectiveRootId})`}
+                  </h3>
+                  <p className="text-[11px] font-semibold text-[#45668f] mt-0.5">
+                    แสดง ID · สถานะไอดี (Main / Auto / Clone / Extra) · ผู้แนะนำตรง
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setLayerPopupModal(null)}
+                  className="p-1.5 rounded-xl bg-white hover:bg-blue-50 border border-[#b8e5ff] text-[#0756bc] cursor-pointer shrink-0"
+                  aria-label="ปิดหน้าต่าง"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Layer Quick Selector inside Modal */}
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+                <button
+                  type="button"
+                  onClick={() => setLayerPopupModal('all')}
+                  className={`px-2.5 py-1 rounded-full text-[11px] font-bold whitespace-nowrap border cursor-pointer ${
+                    layerPopupModal === 'all'
+                      ? 'bg-[#087cf4] text-white border-[#087cf4]'
+                      : 'bg-white text-[#0756bc] border-[#b8e5ff]'
+                  }`}
+                >
+                  ทุกชั้น ({totalSubtreeCount})
+                </button>
+                {Array.from({ length: 15 }, (_, idx) => idx + 1).map((layerNum) => {
+                  const cnt = (layersMap[layerNum] || []).length;
+                  if (cnt === 0 && layerPopupModal !== layerNum) return null;
+                  const active = layerPopupModal === layerNum;
+                  return (
+                    <button
+                      key={`pop-l-${layerNum}`}
+                      type="button"
+                      onClick={() => setLayerPopupModal(layerNum)}
+                      className={`px-2.5 py-1 rounded-full text-[11px] font-bold whitespace-nowrap border cursor-pointer ${
+                        active
+                          ? 'bg-[#087cf4] text-white border-[#087cf4]'
+                          : 'bg-white text-[#0756bc] border-[#b8e5ff]'
+                      }`}
+                    >
+                      ชั้น {layerNum} ({cnt})
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Status Filter Chips + Search */}
+              <div className="space-y-2">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {(
+                    [
+                      { key: 'ALL', label: 'ทั้งหมด' },
+                      { key: 'MAIN', label: 'Main ID' },
+                      { key: 'AUTO', label: 'Auto ID' },
+                      { key: 'CLONE', label: 'โคลนนิ่ง' },
+                      { key: 'EXTRA', label: 'Extra ID' },
+                    ] as const
+                  ).map((f) => {
+                    const active = popupTypeFilter === f.key;
+                    const count = tagCounts[f.key];
+                    return (
+                      <button
+                        key={f.key}
+                        type="button"
+                        onClick={() => setPopupTypeFilter(f.key)}
+                        className={`px-2.5 py-1 rounded-full text-[11px] font-bold border cursor-pointer inline-flex items-center gap-1 ${
+                          active
+                            ? 'bg-[#0754b9] text-white border-[#0754b9]'
+                            : 'bg-white text-[#0756bc] border-[#b8e5ff]'
+                        }`}
+                      >
+                        <span>{f.label}</span>
+                        <span
+                          className={`px-1.5 rounded-full text-[10px] font-mono ${
+                            active ? 'bg-white/25 text-white' : 'bg-[#e3f4ff] text-[#0756bc]'
+                          }`}
+                        >
+                          {count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-[#5a78a1] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={popupSearch}
+                    onChange={(e) => setPopupSearch(e.target.value)}
+                    placeholder="ค้นหาเลข ID, สถานะไอดี, เลขผู้แนะนำ หรือกระเป๋า..."
+                    className="w-full pl-8 pr-3 py-2 rounded-xl bg-white border border-[#a9d7ff] text-xs font-semibold text-[#09265f] focus:outline-none focus:border-[#087cf4]"
+                  />
+                </div>
+              </div>
+
+              {/* Members Table / Cards */}
+              {filteredEntries.length === 0 ? (
+                <div className="p-6 text-center rounded-2xl bg-white border border-[#b8e5ff] text-xs font-semibold text-[#54759c]">
+                  ไม่พบสมาชิกจริงตามเงื่อนไขที่เลือก
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
+                  {filteredEntries.map((entry) => {
+                    const n = entry.node;
+                    const tag = getShortTypeTag(n);
+                    const statusLabel = getNodeTypeLabel(n);
+                    const originNode = n.originMainId
+                      ? nodeMap.get(Number(n.originMainId))
+                      : undefined;
+                    const sponsorId =
+                      Number(n.directSponsorNodeId || 0) > 0
+                        ? Number(n.directSponsorNodeId)
+                        : Number(originNode?.directSponsorNodeId || 0);
+                    const sponsorNode = sponsorId > 0 ? nodeMap.get(sponsorId) : undefined;
+                    const sponsorStatus = sponsorNode ? getShortTypeTag(sponsorNode) : '';
+
+                    const badgeClass =
+                      tag === 'AUTO'
+                        ? 'bg-amber-100 text-amber-800 border-amber-300'
+                        : tag === 'EXTRA'
+                        ? 'bg-fuchsia-100 text-fuchsia-800 border-fuchsia-300'
+                        : tag === 'CLONE'
+                        ? 'bg-sky-100 text-sky-800 border-sky-300'
+                        : 'bg-emerald-100 text-emerald-800 border-emerald-300';
+
+                    return (
+                      <div
+                        key={`pop-member-${entry.layer}-${n.id}`}
+                        className="p-3 rounded-xl bg-white border border-[#b8e5ff] flex items-center justify-between gap-2.5 text-xs shadow-2xs"
+                      >
+                        <div className="min-w-0 space-y-1 flex-1">
+                          {/* Row 1: ID + Layer + Status Badge */}
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-mono font-black text-sm text-[#0754b9]">
+                              ID #{n.id}
+                            </span>
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold border ${badgeClass}`}
+                            >
+                              {statusLabel}
+                            </span>
+                            <span className="px-2 py-0.5 rounded-md bg-[#eef7ff] text-[#35567e] font-mono text-[10px] font-bold">
+                              ชั้น {entry.layer} ·{' '}
+                              {entry.side === 'ROOT'
+                                ? 'ROOT'
+                                : entry.side === 'LEFT'
+                                ? `ซ้ายใต้ #${entry.parentId}`
+                                : `ขวาใต้ #${entry.parentId}`}
+                            </span>
+                          </div>
+
+                          {/* Row 2: Explicit ID Status & Direct Sponsor */}
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 text-[11px] bg-[#f5fbff] px-2.5 py-1.5 rounded-lg border border-[#d7edff]">
+                            <div>
+                              <span className="text-[#5a78a1] font-semibold">สถานะไอดี: </span>
+                              <strong className="text-[#09265f]">{statusLabel}</strong>
+                            </div>
+                            <div>
+                              <span className="text-[#5a78a1] font-semibold">ผู้แนะนำ: </span>
+                              <strong className="font-mono text-[#0754b9]">
+                                {sponsorId > 0 ? `#${sponsorId}` : '—'}
+                              </strong>
+                              {sponsorStatus && (
+                                <span className="ml-1 text-[10px] text-[#54759c]">
+                                  ({sponsorStatus})
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="text-[10px] font-mono text-[#6283aa]">
+                            Wallet: {shortAddr(n.owner)} · Rank {matrixRank}
+                          </div>
+                        </div>
+
+                        <div className="flex flex-col gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              focusNodeAsRoot(Number(n.id));
+                              setLayerPopupModal(null);
+                            }}
+                            className="px-2.5 py-1.5 rounded-lg bg-[#087cf4] hover:bg-[#0568d0] text-white text-[10.5px] font-bold cursor-pointer whitespace-nowrap"
+                          >
+                            เปิดผัง #{n.id}
+                          </button>
+                          {!n.isExtraId && !n.isClone && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                onSelectMainId(String(n.id));
+                                setLayerPopupModal(null);
+                              }}
+                              className="px-2.5 py-1 rounded-lg bg-[#e6f5ff] hover:bg-[#d5eeff] border border-[#a5d6ff] text-[#0754b9] text-[10.5px] font-bold cursor-pointer whitespace-nowrap"
+                            >
+                              สลับดู ID
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };

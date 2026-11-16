@@ -189,14 +189,16 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
   const [recentUpgrades, setRecentUpgrades] = useState<any[]>([]);
   const [copiedRef, setCopiedRef] = useState<boolean>(false);
   const [refStatusText, setRefStatusText] = useState<string>('');
-  const [customInspectInput, setCustomInspectInput] = useState<string>('');
   const [historyFilter, setHistoryFilter] = useState<
-    'all' | 'direct' | 'level' | 'vault' | 'upgrade' | 'auto_id' | 'extra_id'
+    'all' | 'direct' | 'level' | 'vault' | 'upgrade' | 'auto_id' | 'extra_id' | 'registration'
   >('all');
   const [historySearch, setHistorySearch] = useState<string>('');
   const [historyStartDateTime, setHistoryStartDateTime] = useState<string>('');
   const [historyEndDateTime, setHistoryEndDateTime] = useState<string>('');
-  const [idSpecificUpgrades, setIdSpecificUpgrades] = useState<any[]>([]);
+  const [idSpecificUpgradesState, setIdSpecificUpgradesState] = useState<{
+    mainId: number;
+    rows: any[];
+  }>({ mainId: 0, rows: [] });
   const [vaultPoolTab, setVaultPoolTab] = useState<'all' | 'upgrade' | 'auto_id' | 'extra_id'>('all');
   const [vaultDirectionFilter, setVaultDirectionFilter] = useState<'ALL' | 'IN' | 'OUT'>('ALL');
   const [matrixTargetRank, setMatrixTargetRank] = useState<number | undefined>(undefined);
@@ -278,20 +280,30 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
     };
   }, [fetchDashboardData, contractAddress, refreshTrigger]);
 
-  // Active report for selected Main ID
+  // Active report for selected Main ID (scoped to connected wallet when connected)
   const activeReport = useMemo(() => {
     if (reports.length === 0) return null;
-    const exact = reports.find((r) => Number(r.id) === activeIdNum);
-    if (exact) return exact;
     if (account) {
       const lower = account.toLowerCase();
-      const firstOwned = reports.find(
-        (r) => String(r.owner || '').toLowerCase() === lower && !r.isClone && !r.isExtraId
+      const walletOwnedIds = new Set<number>(
+        (profile?.ownedMainIdsRank1 || [])
+          .map((id: any) => Number(id))
+          .filter((n: number) => Number.isFinite(n) && n > 0)
       );
-      if (firstOwned) return firstOwned;
+      const walletReports = reports.filter(
+        (r) =>
+          !r.isClone &&
+          !r.isExtraId &&
+          (String(r.owner || '').toLowerCase() === lower || walletOwnedIds.has(Number(r.id)))
+      );
+      const exactWallet = walletReports.find((r) => Number(r.id) === activeIdNum);
+      if (exactWallet) return exactWallet;
+      if (walletReports.length > 0) return walletReports[0];
     }
+    const exact = reports.find((r) => Number(r.id) === activeIdNum);
+    if (exact) return exact;
     return reports[0];
-  }, [reports, activeIdNum, account]);
+  }, [reports, activeIdNum, account, profile?.ownedMainIdsRank1]);
 
   const displayId = Number(activeReport?.id || activeIdNum || 1);
 
@@ -306,7 +318,9 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
       if (!res.ok || !json?.success) {
         throw new Error(json?.error || 'ไม่สามารถดึงข้อมูลสมาชิกของ ID นี้ได้');
       }
-      setMembersData(json);
+      setMembersData((prev: any) =>
+        Number(json.mainId) === targetId ? json : prev
+      );
     } catch (err: any) {
       setMembersError(err?.message || 'เกิดข้อผิดพลาดในการโหลดข้อมูลสมาชิก');
     } finally {
@@ -315,15 +329,14 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
   }, []);
 
   useEffect(() => {
-    if (activeModal === 'members') {
-      fetchIdMembers(displayId);
-    }
-  }, [activeModal, displayId, refreshTrigger, fetchIdMembers]);
+    fetchIdMembers(displayId);
+  }, [displayId, refreshTrigger, fetchIdMembers]);
 
   useEffect(() => {
     let cancelled = false;
-    setIdSpecificUpgrades([]);
-    fetch(`/api/upgrades?mainId=${displayId}`, { headers: { Accept: 'application/json' } })
+    const targetId = displayId;
+    setIdSpecificUpgradesState({ mainId: targetId, rows: [] });
+    fetch(`/api/upgrades?mainId=${targetId}`, { headers: { Accept: 'application/json' } })
       .then((res) => (res.ok ? res.json() : null))
       .then((json) => {
         if (cancelled || !json) return;
@@ -332,7 +345,10 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
           : Array.isArray(json.upgrades)
           ? json.upgrades
           : [];
-        setIdSpecificUpgrades(rows);
+        setIdSpecificUpgradesState({
+          mainId: targetId,
+          rows: rows.filter((u: any) => Number(u.mainNodeId) === targetId),
+        });
       })
       .catch(() => {});
     return () => {
@@ -410,6 +426,19 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
     };
   }, [activeReport, profile?.vaults, displayId, currentRank]);
 
+  const activeMembersData = useMemo(() => {
+    if (!membersData || Number(membersData.mainId) !== displayId) return null;
+    return membersData;
+  }, [membersData, displayId]);
+
+  const idMembersByRank = useMemo(() => {
+    const map = new Map<number, any>();
+    for (const rGroup of activeMembersData?.ranks || []) {
+      map.set(Number(rGroup.rank), rGroup);
+    }
+    return map;
+  }, [activeMembersData]);
+
   const direct30Total = Number(activeReport?.direct30TotalUsdt ?? 0);
   const level30Total = Number(activeReport?.level30TotalUsdt ?? 0);
   const totalIncomeUsdt = Number((direct30Total + level30Total).toFixed(2));
@@ -463,53 +492,97 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
     }
   };
 
-  // All IDs owned by connected wallet (for Switch ID modal)
+  // Main & Auto IDs strictly owned by the currently connected wallet (for Switch ID modal)
   const ownedWalletReports = useMemo(() => {
-    const walletLower = (account || displayOwner || '').toLowerCase();
-    if (!walletLower) return reports.slice(0, 20);
-    const list: Array<{
-      key: string;
-      id: number;
-      mainIdToSelect: number;
-      label: string;
-      badge: string;
-      rank: number;
-      directSponsorNodeId: number;
-      isExtra?: boolean;
-      isAuto?: boolean;
-    }> = [];
+    if (!account) return [];
+    const walletLower = account.toLowerCase();
+    const profileOwnedSet = new Set<number>(
+      (profile?.ownedMainIdsRank1 || [])
+        .map((id: any) => Number(id))
+        .filter((n: number) => Number.isFinite(n) && n > 0)
+    );
+
+    const map = new Map<
+      number,
+      {
+        key: string;
+        id: number;
+        mainIdToSelect: number;
+        label: string;
+        badge: string;
+        rank: number;
+        directSponsorNodeId: number;
+        owner: string;
+        isExtra?: boolean;
+        isAuto?: boolean;
+        clonesCount: number;
+      }
+    >();
+
     for (const r of reports) {
-      if (String(r.owner || '').toLowerCase() !== walletLower) continue;
-      list.push({
-        key: `MAIN-${r.id}`,
-        id: Number(r.id),
-        mainIdToSelect: Number(r.id),
-        label: r.isAutoId ? `Auto ID #${r.id}` : `Main ID #${r.id}`,
+      if (r.isClone || r.isExtraId) continue;
+      const numId = Number(r.id);
+      const isOwnedByAccount =
+        String(r.owner || '').toLowerCase() === walletLower || profileOwnedSet.has(numId);
+      if (!isOwnedByAccount) continue;
+      map.set(numId, {
+        key: `MAIN-${numId}`,
+        id: numId,
+        mainIdToSelect: numId,
+        label: r.isAutoId ? `Auto ID #${numId}` : `Main ID #${numId}`,
         badge: r.isAutoId ? 'AUTO ID' : 'MAIN ID',
         rank: Number(r.currentMaxRank || 1),
         directSponsorNodeId: Number(r.directSponsorNodeId || 1),
+        owner: String(r.owner || account),
         isAuto: Boolean(r.isAutoId),
+        clonesCount: Number(r.totalClonesCount || 0),
       });
     }
-    return list.sort((a, b) => a.id - b.id);
-  }, [reports, account, displayOwner]);
+
+    for (const id of profileOwnedSet) {
+      if (!map.has(id)) {
+        map.set(id, {
+          key: `MAIN-${id}`,
+          id,
+          mainIdToSelect: id,
+          label: `Main ID #${id}`,
+          badge: 'MAIN ID',
+          rank: Number(profile?.currentMaxRank || 1),
+          directSponsorNodeId: Number(profile?.sponsorMainNodeId || 1),
+          owner: account,
+          isAuto: false,
+          clonesCount: 0,
+        });
+      }
+    }
+
+    return Array.from(map.values()).sort((a, b) => a.id - b.id);
+  }, [reports, account, profile?.ownedMainIdsRank1, profile?.currentMaxRank, profile?.sponsorMainNodeId]);
 
   const ownedExtraIds = useMemo(() => {
-    const walletLower = (account || displayOwner || '').toLowerCase();
+    if (!account) return [];
+    const walletLower = account.toLowerCase();
     const extras: any[] = [];
     for (const r of reports) {
       for (const ex of r.autoExtraIdsSpawned || []) {
-        if (!walletLower || String(ex.owner || r.owner || '').toLowerCase() === walletLower) {
+        if (String(ex.owner || r.owner || '').toLowerCase() === walletLower) {
           extras.push(ex);
         }
       }
     }
     return extras;
-  }, [reports, account, displayOwner]);
+  }, [reports, account]);
 
   const allSellPools: any[] = activeReport?.allSellQualification?.pools || [];
 
-  type HistoryKind = 'direct' | 'level' | 'vault' | 'upgrade' | 'auto_id' | 'extra_id';
+  type HistoryKind =
+    | 'direct'
+    | 'level'
+    | 'vault'
+    | 'upgrade'
+    | 'auto_id'
+    | 'extra_id'
+    | 'registration';
   type CombinedHistoryRow = {
     id: string;
     kind: HistoryKind;
@@ -525,90 +598,148 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
     isOutflow?: boolean;
     isClone?: boolean;
     isAdminFree?: boolean;
+    poolLabel?: string;
     note: string;
     timestamp: string;
     formattedDateTime: string;
     txHash?: string;
   };
 
+  const idCloneNodeIds = useMemo(() => {
+    const set = new Set<number>();
+    if (activeReport && Number(activeReport.id) === displayId) {
+      for (const c of activeReport.clonesSpawned || []) {
+        const cid = Number(c?.id || 0);
+        if (cid > 0) set.add(cid);
+      }
+      for (const rn of activeReport.rankNodesList || []) {
+        if (rn?.isClone && Number(rn.id) > 0) set.add(Number(rn.id));
+      }
+    }
+    return set;
+  }, [activeReport, displayId]);
+
   const combinedHistoryRows = useMemo<CombinedHistoryRow[]>(() => {
-    if (!activeReport) return [];
+    if (!activeReport || Number(activeReport.id) !== displayId) return [];
     const rows: CombinedHistoryRow[] = [];
 
     const findMatchingTxHash = (
-      kind: 'reg' | 'upgrade',
+      kind: 'reg' | 'upgrade' | 'DIRECT' | 'LEVEL' | 'UPGRADE_VAULT',
       nodeId: number,
       rank: number
     ): string | undefined => {
       const hit = recentTransactions.find((t: any) => {
         if (!isRealChainTxHash(t?.txHash)) return false;
+        const cat = String(t.category || '').toUpperCase();
         if (kind === 'reg') {
           return (
             t.id === `reg-r1-${nodeId}` ||
-            (String(t.category || '').toUpperCase() === 'REGISTRATION' &&
+            (cat === 'REGISTRATION' &&
               Number(t.mainNodeId) === nodeId &&
               Number(t.rank || 1) === rank)
           );
         }
+        if (kind === 'upgrade') {
+          return (
+            cat === 'UPGRADE' &&
+            Number(t.mainNodeId) === nodeId &&
+            Number(t.rank) === rank
+          );
+        }
         return (
-          String(t.category || '').toUpperCase() === 'UPGRADE' &&
-          Number(t.mainNodeId) === nodeId &&
-          Number(t.rank) === rank
+          cat === 'PAYOUT' &&
+          String(t.rewardType || '').toUpperCase() === kind &&
+          Number(t.fromNodeId) === nodeId &&
+          Number(t.rank || 1) === rank &&
+          (Number(t.mainNodeId) === displayId ||
+            Number(t.toNodeId) === displayId ||
+            idCloneNodeIds.has(Number(t.toNodeId || t.mainNodeId || 0)))
         );
       });
       return hit?.txHash;
     };
 
+    const vaultInLedger: any[] = (activeReport.vault35Ledger || []).filter(
+      (item: any) => item.direction === 'IN'
+    );
+    const usedLedgerIdx = new Set<number>();
+
     (activeReport.direct30History || []).forEach((h: any, i: number) => {
       const ts = String(h.timestamp || '');
+      const rank = Number(h.rank || 1);
+      const fromId = Number(h.fromNodeId || 0);
       rows.push({
-        id: `d-${i}-${h.fromNodeId}-${h.rank}`,
+        id: `d-${i}-${fromId}-${rank}`,
         kind: 'direct',
         label: '30% แนะนำตรง',
-        rank: Number(h.rank || 1),
-        fromNodeId: Number(h.fromNodeId || 0),
+        rank,
+        fromNodeId: fromId,
         amount: Number(h.amountUsdt || 0),
         note: String(h.note || ''),
         timestamp: ts,
         formattedDateTime: formatThaiDateTime(ts),
-        txHash: isRealChainTxHash(h.txHash) ? h.txHash : undefined,
+        txHash: isRealChainTxHash(h.txHash)
+          ? h.txHash
+          : findMatchingTxHash('DIRECT', fromId, rank),
       });
     });
 
     (activeReport.level30History || []).forEach((h: any, i: number) => {
       const ts = String(h.timestamp || '');
+      const rank = Number(h.rank || 1);
+      const fromId = Number(h.fromNodeId || 0);
       rows.push({
-        id: `l-${i}-${h.fromNodeId}-${h.rank}`,
+        id: `l-${i}-${fromId}-${rank}`,
         kind: 'level',
         label: h.tier ? `ค่าชั้น Lv.${h.tier}` : '30% ค่าชั้น',
-        rank: Number(h.rank || 1),
-        fromNodeId: Number(h.fromNodeId || 0),
+        rank,
+        fromNodeId: fromId,
         amount: Number(h.amountUsdt || 0),
         note: String(h.note || ''),
         timestamp: ts,
         formattedDateTime: formatThaiDateTime(ts),
-        txHash: isRealChainTxHash(h.txHash) ? h.txHash : undefined,
+        txHash: isRealChainTxHash(h.txHash)
+          ? h.txHash
+          : findMatchingTxHash('LEVEL', fromId, rank),
       });
     });
 
     (activeReport.vault35History || []).forEach((h: any, i: number) => {
       const ts = String(h.timestamp || '');
+      const rank = Number(h.rank || 1);
+      const fromId = Number(h.fromNodeId || 0);
+      const amt = Number(h.amountUsdt || 0);
+      const ledgerMatchIdx = vaultInLedger.findIndex(
+        (lv, idx) =>
+          !usedLedgerIdx.has(idx) &&
+          Number(lv.rank) === rank &&
+          Math.abs(Number(lv.amountUsdt || 0) - amt) < 0.01 &&
+          (!ts || !lv.timestamp || lv.timestamp === ts)
+      );
+      if (ledgerMatchIdx >= 0) usedLedgerIdx.add(ledgerMatchIdx);
+      const poolLabel =
+        ledgerMatchIdx >= 0 ? String(vaultInLedger[ledgerMatchIdx]?.poolLabelTh || '') : '';
       rows.push({
-        id: `v-${i}-${h.fromNodeId}-${h.rank}`,
+        id: `v-${i}-${fromId}-${rank}`,
         kind: 'vault',
         label: '35% เข้า Vault',
-        rank: Number(h.rank || 1),
-        fromNodeId: Number(h.fromNodeId || 0),
-        amount: Number(h.amountUsdt || 0),
+        rank,
+        fromNodeId: fromId,
+        amount: amt,
+        poolLabel: poolLabel || undefined,
         note: String(h.note || ''),
         timestamp: ts,
         formattedDateTime: formatThaiDateTime(ts),
-        txHash: isRealChainTxHash(h.txHash) ? h.txHash : undefined,
+        txHash: isRealChainTxHash(h.txHash)
+          ? h.txHash
+          : findMatchingTxHash('UPGRADE_VAULT', fromId, rank),
       });
     });
 
+    const idSpecificRows =
+      idSpecificUpgradesState.mainId === displayId ? idSpecificUpgradesState.rows : [];
     const mergedUpgradesMap = new Map<string, any>();
-    [...recentUpgrades, ...idSpecificUpgrades].forEach((u: any) => {
+    [...recentUpgrades, ...idSpecificRows].forEach((u: any) => {
       if (Number(u.mainNodeId) !== displayId) return;
       const key = `${u.toRank}-${u.newNodeId}-${u.isClone ? 'c' : 'm'}-${u.isExtraId ? 'e' : 'n'}`;
       mergedUpgradesMap.set(key, u);
@@ -628,14 +759,18 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
       const ts = String(u.createdAt || u.timestamp || '');
       const realTx = isRealChainTxHash(u.txHash)
         ? u.txHash
-        : findMatchingTxHash('upgrade', nodeId, toRank);
+        : findMatchingTxHash('upgrade', displayId, toRank);
       const modeDesc = isClone
         ? 'โคลนนิ่งใน Rank'
         : isAdminFree
         ? 'Admin อัพฟรี (0 U)'
         : u.upgradeMode === 'AUTO_VAULT'
         ? 'Auto Upgrade จาก Vault'
-        : `จ่าย Wallet ${walletPaid.toFixed(2)} U`;
+        : walletPaid > 0
+        ? `จ่าย Wallet ${walletPaid.toFixed(2)} U`
+        : vaultDeducted > 0
+        ? `หัก Vault ${vaultDeducted.toFixed(2)} U`
+        : `อัปเกรด R${fromRank} → R${toRank}`;
       const parentSide = u.parentId
         ? ` · วางใต้ #${u.parentId} (${u.side === 'RIGHT' ? 'ขวา' : 'ซ้าย'})`
         : '';
@@ -655,7 +790,7 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
         isClone,
         isAdminFree,
         note: `อัปเกรด R${fromRank} → R${toRank} · Node #${nodeId} (${modeDesc}${
-          vaultDeducted > 0 ? ` · หัก Vault ${vaultDeducted.toFixed(2)} U` : ''
+          vaultDeducted > 0 && walletPaid > 0 ? ` · หัก Vault ${vaultDeducted.toFixed(2)} U` : ''
         })${parentSide}`,
         timestamp: ts,
         formattedDateTime: formatThaiDateTime(ts),
@@ -709,7 +844,49 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
         } (ฝั่ง${sideTh})`,
         timestamp: ts,
         formattedDateTime: formatThaiDateTime(ts),
-        txHash: findMatchingTxHash('reg', nodeId, rank),
+        txHash:
+          recentUpgrades.find(
+            (u: any) =>
+              u.isExtraId &&
+              Number(u.newNodeId) === nodeId &&
+              Number(u.toRank) === rank &&
+              isRealChainTxHash(u.txHash)
+          )?.txHash || findMatchingTxHash('reg', nodeId, rank),
+      });
+    });
+
+    // Own registration / creation event for the switched ID (and its Rank-1 clones)
+    const regTxs = recentTransactions.filter((t: any) => {
+      if (String(t?.category || '').toUpperCase() !== 'REGISTRATION') return false;
+      const mId = Number(t.mainNodeId || 0);
+      const nId = Number(String(t.id || '').replace('reg-r1-', '') || mId);
+      return mId === displayId || nId === displayId;
+    });
+    const addedRegIds = new Set<string>();
+    regTxs.forEach((t: any) => {
+      const key = String(t.id || t.txHash || `${t.mainNodeId}-${t.rank}`);
+      if (addedRegIds.has(key)) return;
+      addedRegIds.add(key);
+      const nId = Number(String(t.id || '').replace('reg-r1-', '') || t.mainNodeId || displayId);
+      const isSelfClone = nId !== displayId;
+      const ts = String(t.timestamp || '');
+      rows.push({
+        id: `reg-${key}`,
+        kind: 'registration',
+        label: isSelfClone
+          ? 'โคลนนิ่ง Rank 1'
+          : activeReport.isAutoId
+          ? 'สร้าง Auto ID (เริ่มต้น)'
+          : 'สมัครสมาชิก / เปิด ID',
+        rank: Number(t.rank || 1),
+        fromNodeId: nId,
+        isClone: isSelfClone,
+        amount: Number(t.amountUsdt || 5),
+        isOutflow: true,
+        note: String(t.detailsTh || t.titleTh || `เปิดรหัส ID #${nId}`),
+        timestamp: ts,
+        formattedDateTime: formatThaiDateTime(ts),
+        txHash: isRealChainTxHash(t.txHash) ? t.txHash : undefined,
       });
     });
 
@@ -718,7 +895,7 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
       const tb = new Date(b.timestamp || 0).getTime();
       return (Number.isFinite(tb) ? tb : 0) - (Number.isFinite(ta) ? ta : 0);
     });
-  }, [activeReport, idSpecificUpgrades, recentUpgrades, recentTransactions, displayId]);
+  }, [activeReport, idSpecificUpgradesState, recentUpgrades, recentTransactions, displayId, idCloneNodeIds]);
 
   const historyCounts = useMemo(() => {
     const counts = {
@@ -729,6 +906,7 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
       upgrade: 0,
       auto_id: 0,
       extra_id: 0,
+      registration: 0,
     };
     const totals = {
       direct: 0,
@@ -837,7 +1015,10 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
             <div className="flex items-center gap-2 shrink-0">
               <button
                 type="button"
-                onClick={fetchDashboardData}
+                onClick={() => {
+                  fetchDashboardData();
+                  fetchIdMembers(displayId);
+                }}
                 className="p-2 rounded-xl bg-white/15 hover:bg-white/25 border border-cyan-300/40 text-white transition cursor-pointer"
                 title={language === 'th' ? 'รีเฟรชข้อมูลจริง' : 'Refresh Live Data'}
               >
@@ -994,18 +1175,29 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
               </article>
 
               <article
-                onClick={() => setActiveModal('members')}
+                onClick={() => {
+                  setMembersSelectedRank('all');
+                  setActiveModal('members');
+                }}
                 className="min-w-0 p-3 sm:p-4 rounded-[21px] bg-gradient-to-br from-white to-[#d8f0ff] border-[1.5px] border-[#a8dfff] shadow-[0_8px_22px_rgba(0,72,190,0.23)] min-h-[126px] cursor-pointer hover:border-[#087cf4] transition"
               >
                 <div className="text-[24px] sm:text-[28px] text-[#087cf4] leading-none">👥</div>
                 <label className="block text-[11px] sm:text-[12px] font-bold mt-1.5 min-h-[28px] text-[#09265f]">
-                  สมาชิกทั้งหมด
+                  สมาชิกทั้งหมด (ID #{displayId})
                 </label>
-                <strong className="block text-[20px] sm:text-[28px] leading-[1.15] my-1 tracking-tight text-[#09265f] font-black">
-                  {totalMembersR1.toLocaleString()}
+                <strong className="block text-[20px] sm:text-[28px] leading-[1.15] my-1 tracking-tight text-[#09265f] font-black font-mono tabular-nums">
+                  {activeMembersData
+                    ? Number(activeMembersData.summary?.totalAllMembersAcrossRanks ?? 0).toLocaleString()
+                    : membersLoading
+                    ? '...'
+                    : totalMembersR1.toLocaleString()}
                 </strong>
                 <small className="block text-[10px] sm:text-[11px] font-bold text-[#0c559f] truncate">
-                  R1 Members (ตรง {directMainIdsList.length} IDs)
+                  {activeMembersData
+                    ? `${activeMembersData.summary?.totalUniqueMemberMainIds ?? 0} รหัส · ลูกตรง ${
+                        activeMembersData.summary?.totalDirectMainIds ?? directMainIdsList.length
+                      } IDs`
+                    : `ลูกตรง ${directMainIdsList.length} IDs · แตะดูแยก Rank`}
                 </small>
               </article>
 
@@ -1187,9 +1379,21 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
 
             {/* 7. 18-RANK MEMBER TABLE */}
             <section className="mx-1 p-3.5 sm:p-4 rounded-[24px] bg-gradient-to-br from-white/95 to-[#dff4ff]/95 border-[1.5px] border-[#a9ddff] shadow-[0_8px_22px_rgba(0,72,190,0.23)]">
-              <h2 className="flex items-center justify-between gap-2 mb-3 px-0.5 text-[16px] sm:text-[18px] font-black text-[#09265f]">
-                <span>👑 ตารางสมาชิกครบ 18 RANK</span>
-                <span className="text-xs font-bold text-[#0756bc]">RANK 1–18</span>
+              <h2 className="flex items-center justify-between gap-2 mb-3 px-0.5 text-[16px] sm:text-[18px] font-black text-[#09265f] flex-wrap">
+                <span>👑 ตารางสมาชิกครบ 18 RANK (ID #{displayId})</span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMembersSelectedRank('all');
+                      setActiveModal('members');
+                    }}
+                    className="px-2.5 py-1 rounded-xl bg-white border border-[#9fd4ff] text-[11px] font-bold text-[#0756bc] hover:bg-[#eef8ff] cursor-pointer"
+                  >
+                    👥 ดูสมาชิกแยก Rank ›
+                  </button>
+                  <span className="text-xs font-bold text-[#0756bc]">RANK 1–18</span>
+                </div>
               </h2>
 
               <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
@@ -1197,7 +1401,9 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
                   const isCurrent = n === currentRank;
                   const isUnlocked = n < currentRank;
                   const priceUsdt = RANK_PRICES_USDT[n - 1] || 5;
-                  const membersInRank = Number(rankCounts[n] ?? 0);
+                  const membersInRankSystem = Number(rankCounts[n] ?? 0);
+                  const idRankObj = idMembersByRank.get(n);
+                  const idMembersInRank = idRankObj ? Number(idRankObj.totalMembersInRank ?? 0) : null;
                   const req = ALLSELL_DIRECT_REQUIREMENTS[n];
                   const matchingPool = allSellPools.find((p) => Number(p.targetRank) === n);
 
@@ -1251,11 +1457,31 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
                             {priceUsdt.toLocaleString()} U
                           </strong>
                         </div>
-                        <div>
-                          สมาชิกใน Rank:{' '}
-                          <strong className={isCurrent ? 'text-white' : 'text-[#082d73]'}>
-                            {membersInRank}
-                          </strong>
+                        <div className="flex items-center justify-between gap-1">
+                          <span>
+                            สมาชิก ID นี้:{' '}
+                            <strong className={isCurrent ? 'text-[#ffdf6d]' : 'text-[#0754b9]'}>
+                              {idMembersInRank !== null ? idMembersInRank : membersInRankSystem}
+                            </strong>
+                          </span>
+                          {idMembersInRank !== null && idMembersInRank > 0 && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setMembersSelectedRank(n);
+                                setActiveModal('members');
+                              }}
+                              className={`px-1 py-0.2 rounded text-[9px] font-bold underline cursor-pointer ${
+                                isCurrent ? 'text-cyan-100' : 'text-[#087cf4]'
+                              }`}
+                            >
+                              ดูรายชื่อ
+                            </button>
+                          )}
+                        </div>
+                        <div className="text-[9.5px] opacity-80">
+                          ทั้งระบบ: {membersInRankSystem} โหนด
                         </div>
                         <div>
                           Direct Sponsor:{' '}
@@ -1296,7 +1522,12 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
               <div className="grid grid-cols-3 gap-2.5">
                 <button
                   type="button"
-                  onClick={() => setActiveModal('members')}
+                  onClick={() => {
+                    setMembersSelectedRank('all');
+                    setMembersScope('all');
+                    setMembersSearch('');
+                    setActiveModal('members');
+                  }}
                   className="p-3.5 text-center rounded-[18px] bg-gradient-to-br from-white to-[#d5edff] border border-[#a7d8ff] shadow-[0_4px_12px_rgba(7,86,165,0.16)] text-xs font-black text-[#09265f] hover:border-[#087cf4] hover:-translate-y-0.5 transition cursor-pointer"
                 >
                   <b className="block text-[28px] text-[#087cf4] mb-1">👥</b>
@@ -1368,11 +1599,20 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
             {/* Header + ID Switcher + Refresh */}
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <div>
-                <h2 className="text-base sm:text-lg font-black text-[#09265f]">
-                  ▥ ประวัติรายได้ & กิจกรรมของ ID #{displayId}
+                <h2 className="text-base sm:text-lg font-black text-[#09265f] flex items-center gap-2 flex-wrap">
+                  <span>▥ ประวัติรายได้ & กิจกรรมของ ID #{displayId}</span>
+                  <span
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
+                      activeReport?.isAutoId
+                        ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                        : 'bg-[#d7efff] text-[#0754b9] border border-[#96d2ff]'
+                    }`}
+                  >
+                    {activeReport?.isAutoId ? 'AUTO ID' : 'MAIN ID'} · Rank {currentRank}
+                  </span>
                 </h2>
                 <p className="text-[11px] font-semibold text-[#3f6493]">
-                  รวมรายได้ 30% แนะนำ · 30% ค่าชั้น · 35% Vault · อัพ Rank · สร้าง Auto ID และ Extra ID
+                  อ้างอิงตามบัญชี ID #{displayId} (ผู้แนะนำ #{activeReport?.directSponsorNodeId || 1}) · 30% แนะนำ · 30% ค่าชั้น · 35% Vault · อัพ Rank · Auto ID & Extra ID
                 </p>
               </div>
               <div className="flex items-center gap-1.5">
@@ -1446,6 +1686,7 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
                   { key: 'upgrade', label: 'อัพ Rank' },
                   { key: 'auto_id', label: 'Auto ID' },
                   { key: 'extra_id', label: 'Extra ID' },
+                  { key: 'registration', label: 'เปิด ID' },
                 ] as const
               ).map((item) => {
                 const active = historyFilter === item.key;
@@ -1586,6 +1827,8 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
                       ? 'bg-amber-100 text-amber-800'
                       : row.kind === 'auto_id'
                       ? 'bg-violet-100 text-violet-700'
+                      : row.kind === 'registration'
+                      ? 'bg-teal-100 text-teal-800'
                       : 'bg-fuchsia-100 text-fuchsia-700';
 
                   return (
@@ -1610,9 +1853,18 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
                             <span className="font-mono font-bold text-fuchsia-700">
                               Extra R{row.rank}-#{row.fromNodeId}
                             </span>
+                          ) : row.kind === 'registration' ? (
+                            <span className="font-mono font-bold text-teal-700">
+                              Node #{row.fromNodeId} · Rank {row.rank}
+                            </span>
                           ) : (
                             <span className="font-mono font-bold text-[#0754b9]">
                               Rank {row.rank} · จาก #{row.fromNodeId}
+                            </span>
+                          )}
+                          {row.poolLabel && (
+                            <span className="px-1.5 py-0.5 rounded bg-indigo-50 border border-indigo-200 text-indigo-700 text-[10px] font-bold">
+                              เข้า {row.poolLabel}
                             </span>
                           )}
                           {row.isClone && (
@@ -1663,6 +1915,10 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
                               </span>
                             )}
                           </>
+                        ) : row.kind === 'registration' ? (
+                          <strong className="text-sm font-black text-teal-700 block">
+                            {row.amount.toFixed(2)} U
+                          </strong>
                         ) : (
                           <>
                             <strong
@@ -1696,24 +1952,69 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
           </section>
         )}
 
-        {/* TAB: TRANSACTIONS */}
-        {bottomTab === 'transactions' && (
+        {/* TAB: TRANSACTIONS (SCOPED TO SWITCHED ID) */}
+        {bottomTab === 'transactions' && (() => {
+          const idSpecificRows =
+            idSpecificUpgradesState.mainId === displayId ? idSpecificUpgradesState.rows : [];
+          const upMap = new Map<string, any>();
+          [...recentUpgrades, ...idSpecificRows].forEach((u: any) => {
+            if (Number(u.mainNodeId) !== displayId) return;
+            const key = `${u.toRank}-${u.newNodeId}-${u.isClone ? 'c' : 'm'}-${u.isExtraId ? 'e' : 'n'}`;
+            upMap.set(key, u);
+          });
+          const idUpgrades = Array.from(upMap.values()).sort(
+            (a, b) =>
+              new Date(b.createdAt || b.timestamp || 0).getTime() -
+              new Date(a.createdAt || a.timestamp || 0).getTime()
+          );
+
+          const idTransactions = recentTransactions.filter((tx: any) => {
+            const mId = Number(tx.mainNodeId || 0);
+            const tId = Number(tx.toNodeId || 0);
+            const regNodeId =
+              String(tx.category || '').toUpperCase() === 'REGISTRATION'
+                ? Number(String(tx.id || '').replace('reg-r1-', '') || mId)
+                : 0;
+            return (
+              mId === displayId ||
+              tId === displayId ||
+              regNodeId === displayId ||
+              idCloneNodeIds.has(mId) ||
+              idCloneNodeIds.has(tId)
+            );
+          });
+
+          return (
           <section className="mx-1 p-4 rounded-[24px] bg-gradient-to-br from-white/95 to-[#dff4ff]/95 border-[1.5px] border-[#a9ddff] shadow-[0_8px_22px_rgba(0,72,190,0.23)] space-y-3">
-            <div className="flex items-center justify-between gap-2">
-              <h2 className="text-base sm:text-lg font-black text-[#09265f]">
-                ⇄ ธุรกรรมและประวัติอัปเกรดล่าสุด
-              </h2>
-              <button
-                type="button"
-                onClick={fetchDashboardData}
-                className="px-3 py-1 rounded-xl bg-white border border-[#a9ddff] text-xs font-bold text-[#0756bc] cursor-pointer"
-              >
-                รีเฟรช
-              </button>
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div>
+                <h2 className="text-base sm:text-lg font-black text-[#09265f]">
+                  ⇄ ธุรกรรมและประวัติอัปเกรดของ ID #{displayId}
+                </h2>
+                <p className="text-[11px] font-semibold text-[#3f6493]">
+                  แสดงเฉพาะธุรกรรม On-Chain และประวัติอัปเกรดของ ID #{displayId} ({idTransactions.length} ธุรกรรม · {idUpgrades.length} อัปเกรด)
+                </p>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setActiveModal('switch_id')}
+                  className="px-2.5 py-1 rounded-xl bg-white border border-[#a9ddff] text-xs font-bold text-[#0756bc] cursor-pointer"
+                >
+                  ⇄ สลับ ID (#{displayId})
+                </button>
+                <button
+                  type="button"
+                  onClick={fetchDashboardData}
+                  className="px-3 py-1 rounded-xl bg-[#087cf4] text-white text-xs font-bold cursor-pointer"
+                >
+                  รีเฟรช
+                </button>
+              </div>
             </div>
 
             <div className="space-y-2 max-h-[540px] overflow-y-auto pr-1">
-              {recentUpgrades.slice(0, 15).map((up: any, i: number) => (
+              {idUpgrades.map((up: any, i: number) => (
                 <div
                   key={`up-${i}-${up.newNodeId}-${up.toRank}`}
                   className="p-3 rounded-xl bg-white/90 border border-[#b8e5ff] flex items-center justify-between gap-2 text-xs"
@@ -1726,57 +2027,92 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
                       <span>
                         Main #{up.mainNodeId} · Node #{up.newNodeId}
                       </span>
+                      {up.isClone && (
+                        <span className="px-1.5 py-0.5 rounded bg-sky-100 text-sky-700 text-[10px] font-bold">
+                          โคลนนิ่ง
+                        </span>
+                      )}
                     </div>
                     <div className="text-[11px] text-[#55769b] font-mono mt-0.5">
-                      ผู้แนะนำ #{up.directSponsorNodeId} · อัพไลน์ #{up.parentId} ({up.side})
+                      ผู้แนะนำ #{up.directSponsorNodeId} · อัพไลน์ #{up.parentId} ({up.side}) ·{' '}
+                      {formatThaiDateTime(up.createdAt || up.timestamp)}
                     </div>
                   </div>
-                  <div className="text-right font-mono shrink-0">
+                  <div className="text-right font-mono shrink-0 space-y-0.5">
                     <strong className="text-sm font-black text-[#0754b9] block">
                       {Number(up.rankPriceUsdt || 0).toFixed(2)} U
                     </strong>
-                    <span className="text-[10px] text-emerald-700">
-                      Vault -{Number(up.vaultDeductedUsdt || 0).toFixed(2)} U
-                    </span>
+                    {Number(up.vaultDeductedUsdt || 0) > 0 && (
+                      <span className="text-[10px] text-emerald-700 block">
+                        Vault -{Number(up.vaultDeductedUsdt || 0).toFixed(2)} U
+                      </span>
+                    )}
+                    {isRealChainTxHash(up.txHash) && (
+                      <a
+                        href={`https://testnet.bscscan.com/tx/${up.txHash}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[10px] text-[#087cf4] hover:underline inline-flex items-center gap-0.5 justify-end"
+                      >
+                        BscScan <ArrowUpRight className="w-2.5 h-2.5" />
+                      </a>
+                    )}
                   </div>
                 </div>
               ))}
 
-              {recentTransactions.slice(0, 15).map((tx: any, i: number) => (
+              {idTransactions.map((tx: any, i: number) => (
                 <div
                   key={`tx-${i}-${tx.txHash || tx.id}`}
                   className="p-3 rounded-xl bg-white/90 border border-[#b8e5ff] flex items-center justify-between gap-2 text-xs"
                 >
-                  <div className="min-w-0">
-                    <div className="font-bold text-[#09265f]">
-                      {tx.type || 'ONCHAIN'} · Node #{tx.nodeId || tx.mainNodeId || '—'} (Rank{' '}
-                      {tx.rank || 1})
+                  <div className="min-w-0 space-y-0.5">
+                    <div className="font-bold text-[#09265f] flex items-center gap-1.5 flex-wrap">
+                      <span className="px-2 py-0.5 rounded bg-[#e0f2ff] text-[#0754b9] font-mono text-[10px]">
+                        {tx.rewardType || tx.category || 'ONCHAIN'}
+                      </span>
+                      <span>{tx.titleTh || `Node #${tx.toNodeId || tx.mainNodeId || displayId}`}</span>
+                      <span className="text-[10px] font-mono text-[#55769b]">
+                        (Rank {tx.rank || 1})
+                      </span>
                     </div>
-                    <div className="text-[11px] text-[#55769b] font-mono truncate">
-                      {String(tx.owner || '').slice(0, 10)}...{String(tx.owner || '').slice(-6)}
+                    <div className="text-[11px] text-[#45668f] break-words">
+                      {tx.detailsTh || tx.titleEn || ''}
+                    </div>
+                    <div className="text-[10px] text-[#6283aa] font-mono">
+                      {formatThaiDateTime(tx.timestamp)}
                     </div>
                   </div>
-                  {tx.txHash && String(tx.txHash).startsWith('0x') && (
-                    <a
-                      href={`https://testnet.bscscan.com/tx/${tx.txHash}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="px-2.5 py-1 rounded-lg bg-[#eff8ff] border border-[#a9d7ff] text-[11px] font-bold text-[#0756bc] hover:underline shrink-0 inline-flex items-center gap-1"
-                    >
-                      BscScan <ArrowUpRight className="w-3 h-3" />
-                    </a>
-                  )}
+                  <div className="text-right font-mono shrink-0 space-y-0.5">
+                    {Number(tx.amountUsdt || 0) > 0 && (
+                      <strong className="text-sm font-black text-emerald-600 block">
+                        {String(tx.category || '').toUpperCase() === 'PAYOUT' ? '+' : ''}
+                        {Number(tx.amountUsdt).toFixed(2)} U
+                      </strong>
+                    )}
+                    {isRealChainTxHash(tx.txHash) && (
+                      <a
+                        href={`https://testnet.bscscan.com/tx/${tx.txHash}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="px-2 py-0.5 rounded-lg bg-[#eff8ff] border border-[#a9d7ff] text-[10px] font-bold text-[#0756bc] hover:underline inline-flex items-center gap-1"
+                      >
+                        BscScan <ArrowUpRight className="w-2.5 h-2.5" />
+                      </a>
+                    )}
+                  </div>
                 </div>
               ))}
 
-              {recentUpgrades.length === 0 && recentTransactions.length === 0 && (
+              {idUpgrades.length === 0 && idTransactions.length === 0 && (
                 <div className="p-6 text-center rounded-2xl bg-white/70 border border-[#b8e5ff] text-xs font-semibold text-[#54759c]">
-                  ยังไม่มีข้อมูลธุรกรรมในระบบ
+                  ยังไม่มีข้อมูลธุรกรรมสำหรับ ID #{displayId}
                 </div>
               )}
             </div>
           </section>
-        )}
+          );
+        })()}
 
         {/* TAB: HELP */}
         {bottomTab === 'help' && (
@@ -1973,105 +2309,142 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
               </button>
             </div>
 
-            {/* MODAL: SWITCH ID */}
+            {/* MODAL: SWITCH ID (STRICTLY FROM CONNECTED WALLET ONLY) */}
             {activeModal === 'switch_id' && (
               <div className="space-y-3 text-xs">
-                <div className="flex gap-2">
-                  <input
-                    type="number"
-                    min={1}
-                    placeholder="พิมพ์เลข Main ID เช่น 1, 2, 3..."
-                    value={customInspectInput}
-                    onChange={(e) => setCustomInspectInput(e.target.value)}
-                    className="flex-1 px-3 py-2 rounded-xl border border-[#a9d7ff] bg-white font-mono"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const num = parseInt(customInspectInput, 10);
-                      if (num >= 1) {
-                        onSelectMainId(String(num));
-                        setActiveModal(null);
-                      }
-                    }}
-                    className="px-4 py-2 rounded-xl bg-gradient-to-br from-[#23caff] to-[#0755d7] text-white font-bold cursor-pointer"
-                  >
-                    เปิดดู ID
-                  </button>
-                </div>
-
-                <div className="font-bold text-[#0754b9]">
-                  รหัสหลักในกระเป๋า ({ownedWalletReports.length} IDs):
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[300px] overflow-y-auto">
-                  {ownedWalletReports.map((item) => {
-                    const isSelected = item.id === displayId;
-                    return (
-                      <button
-                        key={item.key}
-                        type="button"
-                        onClick={() => {
-                          onSelectMainId(String(item.mainIdToSelect));
-                          setActiveModal(null);
-                        }}
-                        className={`p-3 rounded-xl text-left border transition cursor-pointer flex items-center justify-between ${
-                          isSelected
-                            ? 'bg-gradient-to-br from-[#087cf4] to-[#0646b3] text-white border-[#5ddcff]'
-                            : 'bg-white hover:bg-blue-50 border-[#b8e5ff]'
-                        }`}
-                      >
-                        <div>
-                          <div className="font-black text-sm">{item.label}</div>
-                          <div
-                            className={`text-[10px] font-mono ${
-                              isSelected ? 'text-cyan-100' : 'text-[#55769b]'
-                            }`}
-                          >
-                            Rank {item.rank} · ผู้แนะนำ #{item.directSponsorNodeId}
-                          </div>
-                        </div>
-                        <span
-                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                            isSelected
-                              ? 'bg-[#ffdf6d] text-[#173b77]'
-                              : 'bg-[#d7efff] text-[#0754b9]'
-                          }`}
-                        >
-                          {item.badge}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {ownedExtraIds.length > 0 && (
-                  <div className="pt-2 border-t border-[#b8e5ff] space-y-1.5">
-                    <div className="font-bold text-[#5b21b6]">
-                      Extra IDs ในกระเป๋า ({ownedExtraIds.length} IDs):
+                {!account ? (
+                  <div className="p-5 rounded-2xl bg-white border border-[#b8e5ff] text-center space-y-3">
+                    <div className="text-sm font-black text-[#09265f]">
+                      ยังไม่ได้เชื่อมต่อกระเป๋า Web3
                     </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {ownedExtraIds.map((ex: any) => (
+                    <p className="text-[11px] text-[#55769b]">
+                      กรุณาเชื่อมต่อกระเป๋า เพื่อดูรายการ ID ทั้งหมดที่มีอยู่ในกระเป๋าของคุณ
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveModal(null);
+                        onConnectWallet();
+                      }}
+                      className="px-4 py-2 rounded-xl bg-gradient-to-br from-[#23caff] to-[#0755d7] text-white font-bold cursor-pointer shadow-sm"
+                    >
+                      เชื่อมต่อกระเป๋า
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="p-2.5 rounded-xl bg-white border border-[#b8e5ff] flex items-center justify-between gap-2 flex-wrap">
+                      <div>
+                        <div className="text-[10px] font-bold text-[#55769b]">
+                          อ้างอิงจากกระเป๋าที่เชื่อมต่อ
+                        </div>
+                        <div className="font-mono font-black text-[11px] sm:text-xs text-[#09265f] break-all">
+                          {account}
+                        </div>
+                      </div>
+                      <span className="px-2.5 py-1 rounded-full bg-[#e0f2ff] border border-[#a9d7ff] text-[#0754b9] font-extrabold text-[11px] whitespace-nowrap">
+                        พบในกระเป๋า {ownedWalletReports.length} IDs
+                      </span>
+                    </div>
+
+                    {ownedWalletReports.length === 0 ? (
+                      <div className="p-5 rounded-2xl bg-white border border-[#b8e5ff] text-center space-y-3">
+                        <div className="text-sm font-black text-[#09265f]">
+                          ยังไม่พบ ID ในกระเป๋านี้
+                        </div>
+                        <p className="text-[11px] text-[#55769b]">
+                          กระเป๋านี้ยังไม่ได้ลงทะเบียนในระบบ Fractal Flow Matrix 18
+                        </p>
                         <button
-                          key={`ex-sw-${ex.rank}-${ex.id}`}
                           type="button"
                           onClick={() => {
-                            openDashboard2Matrix(Number(ex.rank || 2), Number(ex.id || 0));
+                            setActiveModal(null);
+                            onOpenRegisterModal();
                           }}
-                          className="px-2.5 py-1 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 font-mono text-[11px] font-bold cursor-pointer hover:bg-rose-100"
+                          className="px-4 py-2 rounded-xl bg-gradient-to-br from-[#23caff] to-[#0755d7] text-white font-bold cursor-pointer shadow-sm"
                         >
-                          {ex.label || `Extra R${ex.rank}-#${ex.id}`} (ผู้แนะนำ #{ex.directSponsorNodeId})
+                          สมัครสมาชิกใหม่
                         </button>
-                      ))}
-                    </div>
-                  </div>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[340px] overflow-y-auto">
+                        {ownedWalletReports.map((item) => {
+                          const isSelected = item.id === displayId;
+                          return (
+                            <button
+                              key={item.key}
+                              type="button"
+                              onClick={() => {
+                                onSelectMainId(String(item.mainIdToSelect));
+                                setActiveModal(null);
+                              }}
+                              className={`p-3 rounded-xl text-left border transition cursor-pointer flex items-center justify-between ${
+                                isSelected
+                                  ? 'bg-gradient-to-br from-[#087cf4] to-[#0646b3] text-white border-[#5ddcff]'
+                                  : 'bg-white hover:bg-blue-50 border-[#b8e5ff]'
+                              }`}
+                            >
+                              <div>
+                                <div className="font-black text-sm">{item.label}</div>
+                                <div
+                                  className={`text-[10px] font-mono ${
+                                    isSelected ? 'text-cyan-100' : 'text-[#55769b]'
+                                  }`}
+                                >
+                                  Rank {item.rank} · แนะนำ #{item.directSponsorNodeId}
+                                  {item.clonesCount > 0 ? ` · โคลน ${item.clonesCount}` : ''}
+                                </div>
+                              </div>
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                  isSelected
+                                    ? 'bg-[#ffdf6d] text-[#173b77]'
+                                    : item.isAuto
+                                    ? 'bg-amber-100 text-amber-800'
+                                    : 'bg-[#d7efff] text-[#0754b9]'
+                                }`}
+                              >
+                                {item.badge}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {ownedExtraIds.length > 0 && (
+                      <div className="pt-2 border-t border-[#b8e5ff] space-y-1.5">
+                        <div className="font-bold text-[#5b21b6]">
+                          Extra IDs ในกระเป๋า ({ownedExtraIds.length} IDs):
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {ownedExtraIds.map((ex: any) => (
+                            <button
+                              key={`ex-sw-${ex.rank}-${ex.id}`}
+                              type="button"
+                              onClick={() => {
+                                openDashboard2Matrix(Number(ex.rank || 2), Number(ex.id || 0));
+                              }}
+                              className="px-2.5 py-1 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 font-mono text-[11px] font-bold cursor-pointer hover:bg-rose-100"
+                            >
+                              {ex.label || `Extra R${ex.rank}-#${ex.id}`} (ผู้แนะนำ #{ex.directSponsorNodeId})
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             )}
 
             {/* MODAL: MEMBERS & DIRECT SPONSOR BY RANK */}
             {activeModal === 'members' && (() => {
-              const rankList: any[] = Array.isArray(membersData?.ranks) ? membersData.ranks : [];
-              const summary = membersData?.summary || {
+              const isFreshMembers = Boolean(activeMembersData);
+              const rankList: any[] = isFreshMembers && Array.isArray(activeMembersData.ranks)
+                ? activeMembersData.ranks
+                : [];
+              const summary = (isFreshMembers && activeMembersData.summary) || {
                 totalAllMembersAcrossRanks: 0,
                 totalUniqueMemberMainIds: 0,
                 totalDirectMainIds: directMainIdsList.length,
@@ -2116,7 +2489,7 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
                     <div className="p-2.5 rounded-xl bg-white border border-[#b8e5ff]">
                       <div className="text-[10px] text-[#55769b]">สมาชิกของ ID #{displayId}</div>
                       <strong className="text-lg font-black text-[#0754b9] block">
-                        {summary.totalAllMembersAcrossRanks}
+                        {isFreshMembers ? summary.totalAllMembersAcrossRanks : '...'}
                       </strong>
                       <span className="text-[10px] text-[#55769b]">
                         ({summary.totalUniqueMemberMainIds} Main IDs)
@@ -2151,7 +2524,7 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
                     </div>
                   </div>
 
-                  {/* Scope Tabs + Search + Refresh */}
+                  {/* Scope Tabs + Search + Switch ID + Refresh */}
                   <div className="flex flex-wrap items-center justify-between gap-2 bg-white/80 p-2 rounded-2xl border border-[#b8e5ff]">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       {(
@@ -2176,7 +2549,7 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
                       ))}
                     </div>
 
-                    <div className="flex items-center gap-1.5 flex-1 sm:flex-initial min-w-[180px]">
+                    <div className="flex items-center gap-1.5 flex-1 sm:flex-initial min-w-[200px]">
                       <input
                         type="text"
                         value={membersSearch}
@@ -2184,6 +2557,13 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
                         placeholder="ค้นหา #ID หรือ 0x..."
                         className="flex-1 min-w-0 px-2.5 py-1.5 rounded-xl border border-[#a9d7ff] bg-white text-[11px] font-mono"
                       />
+                      <button
+                        type="button"
+                        onClick={() => setActiveModal('switch_id')}
+                        className="px-2.5 py-1.5 rounded-xl bg-[#e6f5ff] border border-[#96ceff] text-[#0754b9] font-bold cursor-pointer hover:bg-[#d5eeff] whitespace-nowrap"
+                      >
+                        ⇄ สลับ ID
+                      </button>
                       <button
                         type="button"
                         onClick={() => fetchIdMembers(displayId)}
@@ -2236,7 +2616,7 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
                   </div>
 
                   {/* Content Body */}
-                  {membersLoading && !membersData ? (
+                  {!isFreshMembers && membersLoading ? (
                     <div className="p-8 text-center rounded-2xl bg-white/80 border border-[#b8e5ff] text-[#0756bc] font-bold">
                       กำลังดึงข้อมูลสมาชิกทั้งหมดของ ID #{displayId} แยกตาม Rank 1–18...
                     </div>
