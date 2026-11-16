@@ -63,10 +63,30 @@ const isExtraNode = (node?: MatrixTreeNodeRaw | null): boolean => {
   return Boolean(node.isExtraId) || ot === 'AUTO_EXTRA' || cot === 'AUTO_EXTRA';
 };
 
-const getNodeTypeLabel = (node?: MatrixTreeNodeRaw | null): string => {
+const isCloneNode = (node?: MatrixTreeNodeRaw | null): boolean => {
+  if (!node) return false;
+  return Boolean(node.isClone) || String(node.originType || '').toUpperCase() === 'CLONE';
+};
+
+const getMainId = (node?: MatrixTreeNodeRaw | null, fallbackId?: number): number => {
+  if (!node) return Number(fallbackId || 0);
+  const orig = Number(node.originMainId || 0);
+  return orig > 0 ? orig : Number(node.id || fallbackId || 0);
+};
+
+const getNodeTypeLabel = (
+  node?: MatrixTreeNodeRaw | null,
+  cloneSeq = 0,
+  totalClonesForMain = 0
+): string => {
   if (!node) return 'Main ID';
   if (isExtraNode(node)) return `Extra ID (จาก #${node.originMainId || node.directSponsorNodeId || '-'})`;
-  if (node.isClone || String(node.originType || '').toUpperCase() === 'CLONE') {
+  if (isCloneNode(node)) {
+    if (cloneSeq > 0) {
+      return totalClonesForMain > 0
+        ? `โคลนนิ่ง ครั้งที่ ${cloneSeq} (ทั้งหมด ${totalClonesForMain})`
+        : `โคลนนิ่ง ครั้งที่ ${cloneSeq}`;
+    }
     return `โคลนนิ่ง (จาก Main #${node.originMainId || '-'})`;
   }
   if (isAutoNode(node)) {
@@ -78,9 +98,19 @@ const getNodeTypeLabel = (node?: MatrixTreeNodeRaw | null): string => {
 const getShortTypeTag = (node?: MatrixTreeNodeRaw | null): string => {
   if (!node) return 'MAIN';
   if (isExtraNode(node)) return 'EXTRA';
-  if (node.isClone || String(node.originType || '').toUpperCase() === 'CLONE') return 'CLONE';
+  if (isCloneNode(node)) return 'CLONE';
   if (isAutoNode(node)) return 'AUTO';
   return 'MAIN';
+};
+
+const getDisplayStatusText = (node?: MatrixTreeNodeRaw | null, cloneSeq = 0): string => {
+  if (!node) return 'Main ID';
+  if (isExtraNode(node)) return 'Extra ID';
+  if (isCloneNode(node)) {
+    return cloneSeq > 0 ? `โคลนนิ่ง · ครั้งที่ ${cloneSeq}` : 'โคลนนิ่ง';
+  }
+  if (isAutoNode(node)) return 'Auto ID';
+  return 'Main ID';
 };
 
 export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
@@ -98,7 +128,7 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
   const [matrixRank, setMatrixRank] = useState<number>(() =>
     Math.max(1, Math.min(18, Number(initialRank || currentRank || 1)))
   );
-  const [selectedLayer, setSelectedLayer] = useState<number>(1);
+  const [selectedLayer, setSelectedLayer] = useState<number>(0);
   const [focusedRootId, setFocusedRootId] = useState<number | null>(
     initialRootNodeId ? Number(initialRootNodeId) : null
   );
@@ -122,18 +152,19 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
   useEffect(() => {
     if (initialRank && initialRank >= 1 && initialRank <= 18) {
       setMatrixRank(initialRank);
-      setSelectedLayer(1);
+      setSelectedLayer(0);
     }
   }, [initialRank]);
 
   useEffect(() => {
     setFocusedRootId(initialRootNodeId ? Number(initialRootNodeId) : null);
-    setSelectedLayer(1);
+    setSelectedLayer(0);
     setSearchResult(null);
   }, [displayId, initialRootNodeId]);
 
-  const fetchRankNodes = useCallback(async () => {
-    setLoading(true);
+  const fetchRankNodes = useCallback(async (opts?: { silent?: boolean } | unknown) => {
+    const silent = Boolean(opts && typeof opts === 'object' && 'silent' in opts && (opts as { silent?: boolean }).silent);
+    if (!silent) setLoading(true);
     setLoadError('');
     try {
       const qs = new URLSearchParams({ rank: String(matrixRank) });
@@ -147,22 +178,50 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
       }
       setNodes(Array.isArray(json.nodes) ? json.nodes : []);
     } catch (err: any) {
-      setLoadError(err?.message || 'เกิดข้อผิดพลาดในการโหลดผัง Matrix');
+      if (!silent) {
+        setLoadError(err?.message || 'เกิดข้อผิดพลาดในการโหลดผัง Matrix');
+      }
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [matrixRank, contractAddress]);
 
   useEffect(() => {
     fetchRankNodes();
+    const onRefresh = () => fetchRankNodes({ silent: true });
+    window.addEventListener('matrix:tree:refresh', onRefresh);
+    const interval = setInterval(() => {
+      fetchRankNodes({ silent: true });
+    }, 15000);
+    return () => {
+      window.removeEventListener('matrix:tree:refresh', onRefresh);
+      clearInterval(interval);
+    };
   }, [fetchRankNodes, refreshTrigger]);
 
-  const nodeMap = useMemo(() => {
+  const { nodeMap, cloneIdsByMainId, cloneSeqByNodeId } = useMemo(() => {
     const m = new Map<number, MatrixTreeNodeRaw>();
-    for (const n of nodes) {
+    const clonesByMain = new Map<number, number[]>();
+    const sorted = [...nodes].sort((a, b) => Number(a.id) - Number(b.id));
+    for (const n of sorted) {
       m.set(Number(n.id), n);
+      if (isCloneNode(n)) {
+        const mainId = getMainId(n);
+        const list = clonesByMain.get(mainId) || [];
+        list.push(Number(n.id));
+        clonesByMain.set(mainId, list);
+      }
     }
-    return m;
+    const seqMap = new Map<number, number>();
+    for (const n of sorted) {
+      if (isCloneNode(n)) {
+        const mainId = getMainId(n);
+        const list = clonesByMain.get(mainId) || [];
+        const perMainSeq = list.indexOf(Number(n.id)) + 1;
+        seqMap.set(Number(n.id), perMainSeq);
+      }
+    }
+    return { nodeMap: m, cloneIdsByMainId: clonesByMain, cloneSeqByNodeId: seqMap };
   }, [nodes]);
 
   const defaultRootId = useMemo(() => {
@@ -186,10 +245,10 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
   const rightChildNode =
     rootNode && rootNode.rightChild > 0 ? nodeMap.get(Number(rootNode.rightChild)) || null : null;
 
-  // Build 15 layers BFS from effectiveRootId + global depth map from #1
+  // Build layers 0 (Root) -> 1..15 BFS from effectiveRootId + global depth map from #1
   const { layersMap, subtreeDepthMap, globalDepthMap, totalSubtreeCount } = useMemo(() => {
     const layers: Record<number, LayerNodeEntry[]> = {};
-    for (let l = 1; l <= 15; l++) layers[l] = [];
+    for (let l = 0; l <= 15; l++) layers[l] = [];
     const subDepth = new Map<number, LayerNodeEntry>();
     const globDepth = new Map<number, number>();
     let subTotal = 0;
@@ -198,16 +257,16 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
       const visited = new Set<number>([Number(rootNode.id)]);
       const rootEntry: LayerNodeEntry = {
         node: rootNode,
-        layer: 1,
+        layer: 0,
         parentId: Number(rootNode.parentId || 0),
         side: 'ROOT',
         path: ['ROOT'],
       };
-      layers[1] = [rootEntry];
+      layers[0] = [rootEntry];
       subDepth.set(Number(rootNode.id), rootEntry);
       subTotal = 1;
 
-      for (let l = 1; l < 15; l++) {
+      for (let l = 0; l < 15; l++) {
         const current = layers[l];
         if (!current || current.length === 0) break;
         const next: LayerNodeEntry[] = [];
@@ -247,12 +306,12 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
       }
     }
 
-    // Compute global depth starting from #1 (if present)
+    // Compute global depth starting from #1 (Layer 0 = Root #1)
     const globalRoot = nodeMap.get(1) || nodes[0];
     if (globalRoot) {
       const gVisited = new Set<number>([Number(globalRoot.id)]);
-      const queue: Array<{ id: number; depth: number }> = [{ id: Number(globalRoot.id), depth: 1 }];
-      globDepth.set(Number(globalRoot.id), 1);
+      const queue: Array<{ id: number; depth: number }> = [{ id: Number(globalRoot.id), depth: 0 }];
+      globDepth.set(Number(globalRoot.id), 0);
       while (queue.length > 0) {
         const cur = queue.shift()!;
         const n = nodeMap.get(cur.id);
@@ -276,58 +335,58 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
   }, [rootNode, nodeMap, nodes]);
 
   const currentLayerEntries = layersMap[selectedLayer] || [];
-  const theoreticalCapacity = 2 ** (selectedLayer - 1);
+  const theoreticalCapacity = 2 ** selectedLayer;
 
   const chooseLayer = (n: number) => {
-    const clamped = Math.max(1, Math.min(15, n));
+    const clamped = Math.max(0, Math.min(15, n));
     setSelectedLayer(clamped);
   };
 
   const focusNodeAsRoot = (nodeId: number) => {
     if (!nodeMap.has(nodeId)) return;
     setFocusedRootId(nodeId);
-    setSelectedLayer(1);
+    setSelectedLayer(0);
   };
 
   const runMatrixSearch = () => {
     const raw = searchInput.trim();
     if (!raw) {
       setSearchResult({
-        message: 'กรุณากรอก ID, Wallet หรือเลขชั้น (1–15) ที่ต้องการค้นหา',
+        message: 'กรุณากรอก ID, Wallet หรือเลขชั้น (0–15) ที่ต้องการค้นหา',
         isError: true,
       });
       return;
     }
 
-    // Explicit layer command: e.g. "ชั้น 5", "layer 5", "L5"
+    // Explicit layer command: e.g. "ชั้น 0", "ชั้น 5", "layer 5", "L5"
     const explicitLayerMatch = raw.match(/^(?:ชั้น|layer|l)\s*(\d{1,2})$/i);
     if (explicitLayerMatch) {
       const n = Number(explicitLayerMatch[1]);
-      if (n >= 1 && n <= 15) {
+      if (n >= 0 && n <= 15) {
         chooseLayer(n);
         const foundCount = (layersMap[n] || []).length;
         setSearchResult({
           message: `แสดงผังชั้นที่ ${n} (Rank ${matrixRank}) แล้ว · ความจุตามทฤษฎี ${fmtNum(
-            2 ** (n - 1)
+            2 ** n
           )} ตำแหน่ง · พบสมาชิกจริงในชั้นนี้ ${foundCount} รหัส`,
         });
         return;
       }
       setSearchResult({
-        message: 'เลขชั้นต้องอยู่ระหว่าง 1–15 เท่านั้น',
+        message: 'เลขชั้นต้องอยู่ระหว่าง 0–15 เท่านั้น',
         isError: true,
       });
       return;
     }
 
-    // Bare 1-2 digit number (1..15) OR explicit ID (#5 / ID 5 / 26)
+    // Bare 1-2 digit number (0..15) OR explicit ID (#5 / ID 5 / 26)
     const bareNumberMatch = raw.match(/^(\d{1,2})$/);
     if (bareNumberMatch) {
       const n = Number(bareNumberMatch[1]);
-      if (n >= 1 && n <= 15) {
+      if (n >= 0 && n <= 15) {
         chooseLayer(n);
         const foundInLayer = (layersMap[n] || []).length;
-        const nodeHit = nodeMap.get(n);
+        const nodeHit = n > 0 ? nodeMap.get(n) : undefined;
         if (nodeHit) {
           const subEntry = subtreeDepthMap.get(n);
           setSearchResult({
@@ -345,7 +404,7 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
         } else {
           setSearchResult({
             message: `แสดงผังชั้นที่ ${n} (Rank ${matrixRank}) แล้ว · ความจุตามทฤษฎี ${fmtNum(
-              2 ** (n - 1)
+              2 ** n
             )} ตำแหน่ง · พบสมาชิกจริง ${foundInLayer} รหัส`,
           });
         }
@@ -371,10 +430,10 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
       }
       setSearchResult({
         message: `พบ ID #${targetId} (${getNodeTypeLabel(nodeHit)}) ใน Rank ${matrixRank}${
-          subEntry
+          subEntry !== undefined
             ? ` · อยู่ชั้นที่ ${subEntry.layer} ใต้ Root #${effectiveRootId}`
             : ` · อยู่นอกสายใต้ #${effectiveRootId} (ชั้นที่ ${
-                globalDepthMap.get(targetId) || '—'
+                globalDepthMap.get(targetId) ?? '—'
               } จาก Root #1)`
         }`,
         matches: [
@@ -447,7 +506,11 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
 
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="px-3 py-1.5 rounded-full bg-white/15 border border-[#9eeaff] text-xs font-bold whitespace-nowrap">
-              👤 ID #{effectiveRootId} · {getShortTypeTag(rootNode)}
+              👤 ID #{getMainId(rootNode, effectiveRootId)} ·{' '}
+              {getDisplayStatusText(
+                rootNode,
+                rootNode ? cloneSeqByNodeId.get(Number(rootNode.id)) || 0 : 0
+              )}
             </span>
             <button
               type="button"
@@ -493,7 +556,7 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
                   onClick={() => {
                     setMatrixRank(r);
                     setFocusedRootId(null);
-                    setSelectedLayer(1);
+                    setSelectedLayer(0);
                     setSearchResult(null);
                   }}
                   className={`px-2.5 py-1 rounded-xl text-[11px] font-bold whitespace-nowrap shrink-0 border transition cursor-pointer ${
@@ -547,9 +610,9 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
           </div>
         </div>
         <p className="text-[11px] text-[#58769d] leading-relaxed mt-2.5">
-          *จำนวนตำแหน่งเป็นการคำนวณตามโครงสร้าง Binary Tree ทางทฤษฎี (ชั้นที่ n มี 2^(n−1) ตำแหน่ง) · ใต้{' '}
+          *จำนวนตำแหน่งเป็นการคำนวณตามโครงสร้าง Binary Tree ทางทฤษฎี (ชั้นที่ n มี 2^n ตำแหน่ง โดยชั้น 0 คือ Root) · ใต้{' '}
           <strong className="text-[#0754b9]">ID #{effectiveRootId}</strong> ใน Rank {matrixRank}{' '}
-          พบสมาชิกสะสมทั้ง 15 ชั้นรวม <strong className="font-mono">{totalSubtreeCount}</strong> รหัส
+          พบสมาชิกสะสมชั้น 0–15 รวม <strong className="font-mono">{totalSubtreeCount}</strong> รหัส
         </p>
       </section>
 
@@ -607,15 +670,20 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
                     >
                       <div className="min-w-0">
                         <div className="font-black text-[#09265f] font-mono">
-                          R{matrixRank}-#{m.node.id}{' '}
+                          ID #{getMainId(m.node)}{' '}
                           <span className="text-[10px] font-sans text-[#0756bc]">
-                            · {getShortTypeTag(m.node)}
+                            ·{' '}
+                            {getDisplayStatusText(
+                              m.node,
+                              cloneSeqByNodeId.get(Number(m.node.id)) || 0
+                            )}
                           </span>
                         </div>
                         <div className="text-[10px] text-[#4f7097] truncate">
-                          {m.layerInSubtree
+                          R{matrixRank}-#{m.node.id} ·{' '}
+                          {m.layerInSubtree !== undefined
                             ? `ชั้น ${m.layerInSubtree} (ใต้ #${effectiveRootId})`
-                            : m.layerFromGlobal
+                            : m.layerFromGlobal !== undefined
                             ? `ชั้น ${m.layerFromGlobal} (จาก #1)`
                             : ''}{' '}
                           · Parent #{m.node.parentId || 0}{' '}
@@ -636,7 +704,7 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
             </div>
           ) : (
             <span>
-              พิมพ์เลขชั้น (เช่น 3 หรือ ชั้น 5) เพื่อกระโดดไปยังชั้นนั้นทันที หรือค้นหาด้วยเลข ID / กระเป๋า Wallet
+              พิมพ์เลขชั้น (เช่น 0, 1 หรือ ชั้น 5) เพื่อกระโดดไปยังชั้นนั้นทันที หรือค้นหาด้วยเลข ID / กระเป๋า Wallet
             </span>
           )}
         </div>
@@ -653,9 +721,9 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
           </small>
         </div>
 
-        {/* Quick 1..15 Layer Chips */}
+        {/* Quick 0..15 Layer Chips */}
         <div className="flex gap-1.5 flex-wrap">
-          {Array.from({ length: 15 }, (_, idx) => idx + 1).map((n) => {
+          {Array.from({ length: 16 }, (_, idx) => idx).map((n) => {
             const active = selectedLayer === n;
             const cnt = (layersMap[n] || []).length;
             return (
@@ -725,13 +793,19 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
         {/* Root Node Card */}
         <div className="mt-3.5 mx-auto w-[min(280px,88%)] text-center rounded-[17px] p-3 bg-gradient-to-br from-[#0643a9] to-[#0789f4] text-white border-2 border-[#9ceeff] shadow-[0_5px_17px_rgba(6,120,220,0.4)]">
           <b className="block text-[16px] font-black">
-            ROOT · ID #{effectiveRootId}
+            ROOT · ID #{getMainId(rootNode, effectiveRootId)}
           </b>
           <small className="block text-[10.5px] text-[#dcf8ff] mt-0.5">
             {rootNode
-              ? `${getNodeTypeLabel(rootNode)} · แนะนำโดย #${
-                  rootNode.directSponsorNodeId || '-'
-                } · ${shortAddr(rootNode.owner)}`
+              ? `${getNodeTypeLabel(
+                  rootNode,
+                  cloneSeqByNodeId.get(Number(rootNode.id)) || 0,
+                  (cloneIdsByMainId.get(getMainId(rootNode)) || []).length
+                )}${
+                  rootNode.id !== getMainId(rootNode) ? ` (โหนด #${rootNode.id})` : ''
+                } · แนะนำโดย #${rootNode.directSponsorNodeId || '-'} · ${shortAddr(
+                  rootNode.owner
+                )}`
               : 'ตำแหน่งอ้างอิงของผัง'}
           </small>
         </div>
@@ -749,11 +823,18 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
             >
               <span className="absolute -top-[13px] left-1/2 w-[1px] h-[13px] bg-[#4c9fe5]" />
               <b className="block text-[13px] font-black text-[#09275f]">
-                LEFT · ID #{leftChildNode.id}
+                LEFT · ID #{getMainId(leftChildNode)}
               </b>
               <small className="block text-[10px] text-[#3e6493] mt-1 leading-snug">
-                {getShortTypeTag(leftChildNode)} · แนะนำ #{leftChildNode.directSponsorNodeId || '-'}
+                {getDisplayStatusText(
+                  leftChildNode,
+                  cloneSeqByNodeId.get(Number(leftChildNode.id)) || 0
+                )}{' '}
+                · แนะนำ #{leftChildNode.directSponsorNodeId || '-'}
                 <br />
+                {leftChildNode.id !== getMainId(leftChildNode)
+                  ? `โหนด #${leftChildNode.id} · `
+                  : ''}
                 {shortAddr(leftChildNode.owner)} · แตะดูสายนี้ ›
               </small>
             </button>
@@ -774,11 +855,18 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
             >
               <span className="absolute -top-[13px] left-1/2 w-[1px] h-[13px] bg-[#4c9fe5]" />
               <b className="block text-[13px] font-black text-[#09275f]">
-                RIGHT · ID #{rightChildNode.id}
+                RIGHT · ID #{getMainId(rightChildNode)}
               </b>
               <small className="block text-[10px] text-[#4c4287] mt-1 leading-snug">
-                {getShortTypeTag(rightChildNode)} · แนะนำ #{rightChildNode.directSponsorNodeId || '-'}
+                {getDisplayStatusText(
+                  rightChildNode,
+                  cloneSeqByNodeId.get(Number(rightChildNode.id)) || 0
+                )}{' '}
+                · แนะนำ #{rightChildNode.directSponsorNodeId || '-'}
                 <br />
+                {rightChildNode.id !== getMainId(rightChildNode)
+                  ? `โหนด #${rightChildNode.id} · `
+                  : ''}
                 {shortAddr(rightChildNode.owner)} · แตะดูสายนี้ ›
               </small>
             </button>
@@ -821,8 +909,8 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
             รายละเอียดตำแหน่ง (ชั้นที่ {selectedLayer})
           </b>
           <p className="text-[11px] text-[#58769d] leading-relaxed mt-1">
-            {selectedLayer === 1
-              ? `ชั้นแรกเป็นตำแหน่ง Root ของผัง (ID #${effectiveRootId}) · มีตำแหน่งลูกชั้นถัดไป ซ้าย ${
+            {selectedLayer === 0
+              ? `ชั้นที่ 0 เป็นตำแหน่ง Root ของผัง (ID #${effectiveRootId}) · มีตำแหน่งลูกชั้นที่ 1 ซ้าย ${
                   leftChildNode ? `#${leftChildNode.id}` : 'ว่าง'
                 } / ขวา ${rightChildNode ? `#${rightChildNode.id}` : 'ว่าง'}`
               : `ชั้นที่ ${selectedLayer} มีตำแหน่งตามทฤษฎี ${fmtNum(
@@ -832,7 +920,7 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
                 } รหัส`}
           </p>
 
-          {selectedLayer === 1 ? (
+          {selectedLayer === 0 ? (
             <div className="relative flex justify-center gap-4 mx-auto mt-5 max-w-[430px]">
               <div className="absolute -top-[12px] left-1/4 right-1/4 h-[1px] bg-[#4c9fe5]" />
               <div
@@ -845,10 +933,16 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
               >
                 <span className="absolute -top-[13px] left-1/2 w-[1px] h-[13px] bg-[#4c9fe5]" />
                 <b className="block text-xs font-black">
-                  {leftChildNode ? `LEFT CHILD · #${leftChildNode.id}` : 'LEFT CHILD'}
+                  {leftChildNode ? `LEFT CHILD · ID #${getMainId(leftChildNode)}` : 'LEFT CHILD'}
                 </b>
                 <small className="block text-[10px] mt-0.5 text-[#5a78a1]">
-                  {leftChildNode ? getNodeTypeLabel(leftChildNode) : 'รอข้อมูลสมาชิก'}
+                  {leftChildNode
+                    ? getNodeTypeLabel(
+                        leftChildNode,
+                        cloneSeqByNodeId.get(Number(leftChildNode.id)) || 0,
+                        (cloneIdsByMainId.get(getMainId(leftChildNode)) || []).length
+                      )
+                    : 'รอข้อมูลสมาชิก'}
                 </small>
               </div>
 
@@ -862,10 +956,16 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
               >
                 <span className="absolute -top-[13px] left-1/2 w-[1px] h-[13px] bg-[#4c9fe5]" />
                 <b className="block text-xs font-black">
-                  {rightChildNode ? `RIGHT CHILD · #${rightChildNode.id}` : 'RIGHT CHILD'}
+                  {rightChildNode ? `RIGHT CHILD · ID #${getMainId(rightChildNode)}` : 'RIGHT CHILD'}
                 </b>
                 <small className="block text-[10px] mt-0.5 text-[#5a78a1]">
-                  {rightChildNode ? getNodeTypeLabel(rightChildNode) : 'รอข้อมูลสมาชิก'}
+                  {rightChildNode
+                    ? getNodeTypeLabel(
+                        rightChildNode,
+                        cloneSeqByNodeId.get(Number(rightChildNode.id)) || 0,
+                        (cloneIdsByMainId.get(getMainId(rightChildNode)) || []).length
+                      )
+                    : 'รอข้อมูลสมาชิก'}
                 </small>
               </div>
             </div>
@@ -897,12 +997,17 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
                   >
                     <div className="min-w-0 space-y-0.5">
                       <div className="font-black text-[#09275f] font-mono">
-                        R{matrixRank}-#{n.id}{' '}
+                        ID #{getMainId(n)}{' '}
                         <span className="text-[10px] font-sans font-bold text-[#0756bc]">
-                          · {getShortTypeTag(n)}
+                          ·{' '}
+                          {getDisplayStatusText(
+                            n,
+                            cloneSeqByNodeId.get(Number(n.id)) || 0
+                          )}
                         </span>
                       </div>
                       <div className="text-[10px] text-[#45668f] truncate">
+                        {n.id !== getMainId(n) ? `โหนด #${n.id} · ` : ''}
                         ใต้ #{entry.parentId} ({isLeftSide ? 'ซ้าย' : 'ขวา'}) · แนะนำ #
                         {n.directSponsorNodeId || '-'}
                       </div>
@@ -922,7 +1027,7 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
                       {!n.isExtraId && !n.isClone && (
                         <button
                           type="button"
-                          onClick={() => onSelectMainId(String(n.id))}
+                          onClick={() => onSelectMainId(String(getMainId(n)))}
                           className="px-2 py-0.5 rounded-lg bg-[#e6f5ff] border border-[#a5d6ff] text-[#0754b9] text-[10px] font-bold cursor-pointer"
                         >
                           ดู ID
@@ -941,15 +1046,15 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
       <section className="mx-1 p-4 rounded-[21px] bg-white/90 border border-[#b8e1ff] shadow-[0_8px_22px_rgba(7,85,181,0.17)]">
         <div className="flex items-center justify-between gap-2 mb-3">
           <h3 className="text-[15px] sm:text-[16px] font-black text-[#09275f]">
-            📚 เลือกดูครบทั้ง 15 ชั้น
+            📚 เลือกดูชั้น 0–15 (Root → ชั้น 15)
           </h3>
           <small className="text-[10.5px] font-semibold text-[#5a78a1]">
             แตะชั้นที่ต้องการ
           </small>
         </div>
 
-        <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
-          {Array.from({ length: 15 }, (_, idx) => idx + 1).map((n) => {
+        <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+          {Array.from({ length: 16 }, (_, idx) => idx).map((n) => {
             const selected = selectedLayer === n;
             const realCount = (layersMap[n] || []).length;
             return (
@@ -963,13 +1068,15 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
                     : 'bg-gradient-to-br from-white to-[#e3f4ff] text-[#09275f] border-[#b2dafa] hover:border-[#087cf4]'
                 }`}
               >
-                <b className="block text-[13px] font-black">ชั้นที่ {n}</b>
+                <b className="block text-[13px] font-black">
+                  ชั้นที่ {n}{n === 0 ? ' (Root)' : ''}
+                </b>
                 <small
                   className={`block text-[10px] mt-0.5 font-mono tabular-nums ${
                     selected ? 'text-[#e2f8ff]' : 'text-[#5a78a1]'
                   }`}
                 >
-                  {fmtNum(2 ** (n - 1))} ตำแหน่งสูงสุด*
+                  {fmtNum(2 ** n)} ตำแหน่งสูงสุด*
                 </small>
                 <small
                   className={`block text-[10px] font-bold mt-0.5 font-mono ${
@@ -1026,11 +1133,11 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
               </tr>
             </thead>
             <tbody>
-              {Array.from({ length: 15 }, (_, idx) => idx + 1).map((n) => {
+              {Array.from({ length: 16 }, (_, idx) => idx).map((n) => {
                 const realEntries = layersMap[n] || [];
                 const previewIds = realEntries
                   .slice(0, 3)
-                  .map((e) => `#${e.node.id}`)
+                  .map((e) => `#${getMainId(e.node)}${isCloneNode(e.node) ? '(โคลน)' : ''}`)
                   .join(', ');
                 const extraMore = realEntries.length > 3 ? ` +${realEntries.length - 3}` : '';
                 const isRowSelected = selectedLayer === n;
@@ -1056,14 +1163,14 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
                         isRowSelected ? 'bg-[#dff2ff]' : 'bg-[#edf7ff]'
                       }`}
                     >
-                      {fmtNum(2 ** (n - 1))}
+                      {fmtNum(2 ** n)}
                     </td>
                     <td
                       className={`px-2.5 py-2.5 font-mono tabular-nums ${
                         isRowSelected ? 'bg-[#dff2ff]' : 'bg-[#edf7ff]'
                       }`}
                     >
-                      {n === 15 ? '—' : fmtNum(2 ** n)}
+                      {n === 15 ? '—' : fmtNum(2 ** (n + 1))}
                     </td>
                     <td
                       className={`px-2.5 py-2.5 rounded-r-[10px] ${
@@ -1114,7 +1221,7 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
       {layerPopupModal !== null && (() => {
         const rawEntries: LayerNodeEntry[] =
           layerPopupModal === 'all'
-            ? Array.from({ length: 15 }, (_, idx) => layersMap[idx + 1] || []).flat()
+            ? Array.from({ length: 16 }, (_, idx) => layersMap[idx] || []).flat()
             : layersMap[layerPopupModal] || [];
 
         const tagCounts = {
@@ -1135,14 +1242,19 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
           const tag = getShortTypeTag(n);
           if (popupTypeFilter !== 'ALL' && tag !== popupTypeFilter) return false;
           if (qTrim) {
+            const mainIdNum = getMainId(n);
+            const totalClones = (cloneIdsByMainId.get(mainIdNum) || []).length;
+            const cloneSeq = cloneSeqByNodeId.get(Number(n.id)) || 0;
             const originNode = n.originMainId ? nodeMap.get(Number(n.originMainId)) : undefined;
             const sponsorId =
               Number(n.directSponsorNodeId || 0) > 0
                 ? Number(n.directSponsorNodeId)
                 : Number(originNode?.directSponsorNodeId || n.originMainId || 0);
-            const hay = `${n.id} #${n.id} ${getNodeTypeLabel(n)} ${tag} ${sponsorId} #${sponsorId} ${
-              n.owner || ''
-            }`.toLowerCase();
+            const hay = `${n.id} #${n.id} ${mainIdNum} #${mainIdNum} ${getNodeTypeLabel(
+              n,
+              cloneSeq,
+              totalClones
+            )} ${tag} ${sponsorId} #${sponsorId} ${n.owner || ''}`.toLowerCase();
             if (!hay.includes(qTrim)) return false;
           }
           return true;
@@ -1162,7 +1274,7 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
                 <div>
                   <h3 className="text-base sm:text-lg font-black text-[#09265f]">
                     {layerPopupModal === 'all'
-                      ? `👥 ข้อมูลสมาชิกจริงทั้ง 15 ชั้น (Rank ${matrixRank} · ใต้ #${effectiveRootId})`
+                      ? `👥 ข้อมูลสมาชิกจริง (ชั้น 0–15 · Rank ${matrixRank} · ใต้ #${effectiveRootId})`
                       : `👥 ข้อมูลสมาชิกจริง — ชั้นที่ ${layerPopupModal} (Rank ${matrixRank} · ใต้ #${effectiveRootId})`}
                   </h3>
                   <p className="text-[11px] font-semibold text-[#45668f] mt-0.5">
@@ -1192,7 +1304,7 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
                 >
                   ทุกชั้น ({totalSubtreeCount})
                 </button>
-                {Array.from({ length: 15 }, (_, idx) => idx + 1).map((layerNum) => {
+                {Array.from({ length: 16 }, (_, idx) => idx).map((layerNum) => {
                   const cnt = (layersMap[layerNum] || []).length;
                   if (cnt === 0 && layerPopupModal !== layerNum) return null;
                   const active = layerPopupModal === layerNum;
@@ -1273,7 +1385,22 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
                   {filteredEntries.map((entry) => {
                     const n = entry.node;
                     const tag = getShortTypeTag(n);
-                    const statusLabel = getNodeTypeLabel(n);
+                    const mainIdNum = getMainId(n);
+                    const isClone = isCloneNode(n);
+                    const totalClonesForMain = isClone
+                      ? (cloneIdsByMainId.get(mainIdNum) || []).length
+                      : 0;
+                    const cloneSeq = isClone ? cloneSeqByNodeId.get(Number(n.id)) || 0 : 0;
+                    const statusLabel = isClone
+                      ? cloneSeq > 0
+                        ? `โคลนนิ่ง · ครั้งที่ ${cloneSeq}`
+                        : 'โคลนนิ่ง'
+                      : getNodeTypeLabel(n);
+                    const detailStatusLabel = isClone
+                      ? `โคลนนิ่ง${cloneSeq > 0 ? ` ครั้งที่ ${cloneSeq}` : ''} ของ #${mainIdNum} (ทั้งหมด ${totalClonesForMain} ครั้ง · โหนด #${n.id})`
+                      : n.id !== mainIdNum
+                      ? `${statusLabel} (โหนด #${n.id})`
+                      : statusLabel;
                     const originNode = n.originMainId
                       ? nodeMap.get(Number(n.originMainId))
                       : undefined;
@@ -1299,10 +1426,10 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
                         className="p-3 rounded-xl bg-white border border-[#b8e5ff] flex items-center justify-between gap-2.5 text-xs shadow-2xs"
                       >
                         <div className="min-w-0 space-y-1 flex-1">
-                          {/* Row 1: ID + Layer + Status Badge */}
+                          {/* Row 1: Main ID + Status (+ Total Clones) + Layer */}
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <span className="font-mono font-black text-sm text-[#0754b9]">
-                              ID #{n.id}
+                              ID #{mainIdNum}
                             </span>
                             <span
                               className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold border ${badgeClass}`}
@@ -1323,7 +1450,7 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 text-[11px] bg-[#f5fbff] px-2.5 py-1.5 rounded-lg border border-[#d7edff]">
                             <div>
                               <span className="text-[#5a78a1] font-semibold">สถานะไอดี: </span>
-                              <strong className="text-[#09265f]">{statusLabel}</strong>
+                              <strong className="text-[#09265f]">{detailStatusLabel}</strong>
                             </div>
                             <div>
                               <span className="text-[#5a78a1] font-semibold">ผู้แนะนำ: </span>
@@ -1340,6 +1467,7 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
 
                           <div className="text-[10px] font-mono text-[#6283aa]">
                             Wallet: {shortAddr(n.owner)} · Rank {matrixRank}
+                            {n.id !== mainIdNum ? ` · โหนดในผัง #${n.id}` : ''}
                           </div>
                         </div>
 
@@ -1358,7 +1486,7 @@ export const Dashboard2MatrixPanel: React.FC<Dashboard2MatrixPanelProps> = ({
                             <button
                               type="button"
                               onClick={() => {
-                                onSelectMainId(String(n.id));
+                                onSelectMainId(String(mainIdNum));
                                 setLayerPopupModal(null);
                               }}
                               className="px-2.5 py-1 rounded-lg bg-[#e6f5ff] hover:bg-[#d5eeff] border border-[#a5d6ff] text-[#0754b9] text-[10.5px] font-bold cursor-pointer whitespace-nowrap"

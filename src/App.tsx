@@ -643,7 +643,7 @@ export default function App() {
           onClick={() => setIsRegisterModalOpen(false)}
         >
           <div
-            className="relative w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-2xl bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-indigo-500/40 shadow-[0_20px_50px_-10px_rgba(15,23,42,0.15)] dark:shadow-2xl p-2"
+            className={`relative w-full ${isDashboard2View ? 'max-w-md' : 'max-w-xl'} max-h-[90vh] overflow-y-auto rounded-2xl bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-indigo-500/40 shadow-[0_20px_50px_-10px_rgba(15,23,42,0.15)] dark:shadow-2xl p-2`}
             onClick={(e) => e.stopPropagation()}
           >
             <button
@@ -676,6 +676,7 @@ export default function App() {
                 }, 1050);
               }}
               language={language}
+              compact={isDashboard2View}
             />
           </div>
         </div>

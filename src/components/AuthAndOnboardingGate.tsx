@@ -21,6 +21,11 @@ import {
   Sun,
   Moon,
   Globe,
+  Search,
+  KeyRound,
+  Eye,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { TransactionToast } from './TransactionToast';
 import { ApplicantItem, PlacementMode } from '../utils/offChainSimulator';
@@ -105,8 +110,10 @@ export const AuthAndOnboardingGate: React.FC<AuthAndOnboardingGateProps> = ({
   txState,
   onClearTxState,
   onConnectWallet,
+  onLoginCustomInput,
   onDisconnect,
   onSwitchNetwork,
+  onEnterGuestDashboard,
   onApproveUsdt,
   onRegister,
   onCheckSponsor,
@@ -193,6 +200,26 @@ export const AuthAndOnboardingGate: React.FC<AuthAndOnboardingGateProps> = ({
     totalRank1FundsUsdt: 0,
   });
 
+  const [cachedReports, setCachedReports] = useState<any[]>([]);
+  const [walletQueryInput, setWalletQueryInput] = useState<string>('');
+  const [isCheckingWallet, setIsCheckingWallet] = useState<boolean>(false);
+  const [walletCheckError, setWalletCheckError] = useState<string | null>(null);
+  const [copiedCheckedAddr, setCopiedCheckedAddr] = useState<boolean>(false);
+  const [walletCheckResult, setWalletCheckResult] = useState<{
+    query: string;
+    resolvedAddress: string;
+    isRegistered: boolean;
+    matchedNodeId?: number;
+    mainIds: number[];
+    autoIds: number[];
+    cloneIds: number[];
+    extraIds: number[];
+    maxRank: number;
+    totalDirect30Usdt: number;
+    totalLevel30Usdt: number;
+    totalVaultRemainingUsdt: number;
+  } | null>(null);
+
   useEffect(() => {
     let active = true;
     const fetchLoginStats = async () => {
@@ -203,6 +230,7 @@ export const AuthAndOnboardingGate: React.FC<AuthAndOnboardingGateProps> = ({
         if (!active || !data?.success) return;
 
         const reports: any[] = Array.isArray(data.reports) ? data.reports : [];
+        setCachedReports(reports);
         // เฉพาะไอดีหลัก Rank 1 (ไม่นับรหัสโคลน และไม่นับ Auto ID)
         const manualMainReports = reports.filter(
           (r) => !r.isClone && !r.isExtraId && r.nodeType !== 'AUTO_ID'
@@ -237,6 +265,168 @@ export const AuthAndOnboardingGate: React.FC<AuthAndOnboardingGateProps> = ({
       clearInterval(timer);
     };
   }, []);
+
+  const handleCheckWalletStatus = async (overrideInput?: string) => {
+    const raw = (overrideInput ?? walletQueryInput).trim();
+    if (!raw) {
+      setWalletCheckError(
+        language === 'th'
+          ? 'กรุณากรอกที่อยู่กระเป๋า (0x...) หรือรหัสสมาชิก (เช่น 1, 25)'
+          : 'Please enter a wallet address (0x...) or Member ID (e.g. 1, 25)'
+      );
+      setWalletCheckResult(null);
+      return;
+    }
+
+    const isAddr = /^0x[a-fA-F0-9]{40}$/.test(raw);
+    const digitsOnly = raw.replace(/[^0-9]/g, '');
+    const numericId = !isAddr && digitsOnly ? parseInt(digitsOnly, 10) : NaN;
+
+    if (!isAddr && (!Number.isFinite(numericId) || numericId < 1)) {
+      setWalletCheckError(
+        language === 'th'
+          ? 'รูปแบบไม่ถูกต้อง กรุณากรอก Address 0x... (42 ตัวอักษร) หรือเลข ID ตั้งแต่ 1 ขึ้นไป'
+          : 'Invalid format. Enter a 0x... wallet address or Member ID >= 1'
+      );
+      setWalletCheckResult(null);
+      return;
+    }
+
+    setIsCheckingWallet(true);
+    setWalletCheckError(null);
+    try {
+      let reports = cachedReports;
+      const res = await fetch('/api/matrix/per-id-history');
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.success && Array.isArray(data.reports)) {
+          reports = data.reports;
+          setCachedReports(reports);
+        }
+      }
+
+      let targetAddress = isAddr ? raw : '';
+      let matchedNodeId: number | undefined;
+
+      if (!isAddr && Number.isFinite(numericId)) {
+        const matchedReport = reports.find((r) => Number(r.id) === numericId);
+        if (matchedReport?.owner) {
+          targetAddress = String(matchedReport.owner);
+          matchedNodeId = Number(matchedReport.id);
+        } else {
+          setWalletCheckResult(null);
+          setWalletCheckError(
+            language === 'th'
+              ? `ไม่พบรหัสสมาชิก #${numericId} ในระบบ (ปัจจุบันมีทั้งหมด ${reports.length} รหัส)`
+              : `Member ID #${numericId} not found (${reports.length} total nodes)`
+          );
+          return;
+        }
+      }
+
+      const lowerAddr = targetAddress.toLowerCase();
+      const ownedReports = reports.filter(
+        (r) => String(r.owner || '').toLowerCase() === lowerAddr
+      );
+
+      if (ownedReports.length === 0) {
+        setWalletCheckResult({
+          query: raw,
+          resolvedAddress: targetAddress,
+          isRegistered: false,
+          mainIds: [],
+          autoIds: [],
+          cloneIds: [],
+          extraIds: [],
+          maxRank: 0,
+          totalDirect30Usdt: 0,
+          totalLevel30Usdt: 0,
+          totalVaultRemainingUsdt: 0,
+        });
+        return;
+      }
+
+      const mainIds = ownedReports
+        .filter((r) => !r.isClone && !r.isExtraId && r.nodeType !== 'AUTO_ID')
+        .map((r) => Number(r.id))
+        .sort((a, b) => a - b);
+      const autoIds = ownedReports
+        .filter((r) => r.nodeType === 'AUTO_ID')
+        .map((r) => Number(r.id))
+        .sort((a, b) => a - b);
+      const cloneIds = ownedReports
+        .filter((r) => Boolean(r.isClone))
+        .map((r) => Number(r.id))
+        .sort((a, b) => a - b);
+      const extraIds = ownedReports
+        .filter((r) => Boolean(r.isExtraId) && !r.isClone)
+        .map((r) => Number(r.id))
+        .sort((a, b) => a - b);
+
+      const maxRank = ownedReports.reduce(
+        (acc, r) => Math.max(acc, Number(r.currentMaxRank || 1)),
+        1
+      );
+      const totalDirect30Usdt = ownedReports.reduce(
+        (sum, r) => sum + Number(r.direct30TotalUsdt || 0),
+        0
+      );
+      const totalLevel30Usdt = ownedReports.reduce(
+        (sum, r) => sum + Number(r.level30TotalUsdt || 0),
+        0
+      );
+      const totalVaultRemainingUsdt = ownedReports.reduce(
+        (sum, r) => sum + Number(r.vault35RemainingTotalUsdt || 0),
+        0
+      );
+
+      setWalletCheckResult({
+        query: raw,
+        resolvedAddress: String(ownedReports[0].owner || targetAddress),
+        isRegistered: true,
+        matchedNodeId,
+        mainIds,
+        autoIds,
+        cloneIds,
+        extraIds,
+        maxRank,
+        totalDirect30Usdt,
+        totalLevel30Usdt,
+        totalVaultRemainingUsdt,
+      });
+    } catch {
+      setWalletCheckError(
+        language === 'th'
+          ? 'ไม่สามารถดึงข้อมูลกระเป๋าได้ กรุณาลองใหม่อีกครั้ง'
+          : 'Failed to verify wallet. Please try again.'
+      );
+    } finally {
+      setIsCheckingWallet(false);
+    }
+  };
+
+  const handleDirectLoginWithInput = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const raw = walletQueryInput.trim();
+    if (!raw) {
+      setWalletCheckError(
+        language === 'th'
+          ? 'กรุณากรอกที่อยู่กระเป๋า (0x...) หรือรหัสสมาชิก (เช่น 1, 25)'
+          : 'Please enter a wallet address (0x...) or Member ID'
+      );
+      return;
+    }
+    setWalletCheckError(null);
+    await onLoginCustomInput(raw);
+  };
+
+  const handleCopyAddress = (addr: string) => {
+    if (!addr || typeof navigator === 'undefined' || !navigator.clipboard) return;
+    navigator.clipboard.writeText(addr).then(() => {
+      setCopiedCheckedAddr(true);
+      setTimeout(() => setCopiedCheckedAddr(false), 1800);
+    }).catch(() => {});
+  };
 
   const [isPlanExpanded, setIsPlanExpanded] = useState<boolean>(true);
 
@@ -379,6 +569,222 @@ export const AuthAndOnboardingGate: React.FC<AuthAndOnboardingGateProps> = ({
                 </>
               )}
             </button>
+
+            {/* เส้นแบ่งสำหรับเช็คกระเป๋า / เข้าสู่ระบบด้วย Address หรือ รหัสสมาชิก */}
+            <div className="relative flex items-center py-1">
+              <div className="flex-grow border-t border-slate-200 dark:border-slate-800" />
+              <span className="shrink-0 mx-3 text-[11px] font-bold text-[#64748B] dark:text-slate-400">
+                {language === 'th'
+                  ? 'หรือ เช็คกระเป๋า / เข้าสู่ระบบด้วย ID หรือ Address'
+                  : 'Or Check Wallet / Login via ID or Address'}
+              </span>
+              <div className="flex-grow border-t border-slate-200 dark:border-slate-800" />
+            </div>
+
+            {/* ฟอร์มเช็คกระเป๋า & เข้าสู่ระบบแบบ Read-Only / View Dashboard */}
+            <form onSubmit={handleDirectLoginWithInput} className="space-y-3 text-left">
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold text-[#475569] dark:text-slate-300">
+                  {language === 'th'
+                    ? 'เช็คกระเป๋า (กรอก Address 0x... หรือ รหัสสมาชิก เช่น 1, 25)'
+                    : 'Check Wallet (Enter 0x... Address or Member ID e.g. 1, 25)'}
+                </label>
+                <div className="relative">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={walletQueryInput}
+                    onChange={(e) => {
+                      setWalletQueryInput(e.target.value);
+                      if (walletCheckError) setWalletCheckError(null);
+                    }}
+                    placeholder={
+                      language === 'th'
+                        ? 'เช่น 0x5b07...Ad8a หรือ 1, 25'
+                        : 'e.g. 0x5b07...Ad8a or 1, 25'
+                    }
+                    className="w-full pl-10 pr-4 py-3 rounded-2xl bg-[#F8FAFC] dark:bg-slate-950 border border-slate-300 dark:border-slate-700 focus:border-[#2563EB] dark:focus:border-emerald-500 text-sm font-mono text-[#0F172A] dark:text-white focus:outline-none transition"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => handleCheckWalletStatus()}
+                  disabled={isCheckingWallet || isConnecting}
+                  className="py-3 px-4 rounded-2xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-[#0F172A] dark:text-slate-100 font-bold text-xs sm:text-sm transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+                >
+                  {isCheckingWallet ? (
+                    <div className="w-4 h-4 border-2 border-[#2563EB] dark:border-emerald-400 border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <Search className="w-4 h-4 text-[#2563EB] dark:text-emerald-400" />
+                  )}
+                  <span>{language === 'th' ? 'เช็คกระเป๋า' : 'Check Wallet'}</span>
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={isConnecting || !walletQueryInput.trim()}
+                  className="py-3 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white font-bold text-xs sm:text-sm shadow-sm transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  <KeyRound className="w-4 h-4" />
+                  <span>{language === 'th' ? 'เข้าสู่ระบบ' : 'Login'}</span>
+                </button>
+              </div>
+
+              {walletCheckError && (
+                <div className="p-3 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-500/30 text-xs text-rose-700 dark:text-rose-300 flex items-center gap-2 font-medium">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{walletCheckError}</span>
+                </div>
+              )}
+
+              {walletCheckResult && (
+                <div
+                  className={`p-4 rounded-2xl border space-y-3 ${
+                    walletCheckResult.isRegistered
+                      ? 'bg-emerald-50/70 dark:bg-emerald-950/25 border-emerald-200 dark:border-emerald-500/30'
+                      : 'bg-amber-50/70 dark:bg-amber-950/25 border-amber-200 dark:border-amber-500/30'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="space-y-1 min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        {walletCheckResult.isRegistered ? (
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                        ) : (
+                          <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                        )}
+                        <span
+                          className={`text-xs font-extrabold ${
+                            walletCheckResult.isRegistered
+                              ? 'text-emerald-800 dark:text-emerald-300'
+                              : 'text-amber-800 dark:text-amber-300'
+                          }`}
+                        >
+                          {walletCheckResult.isRegistered
+                            ? language === 'th'
+                              ? 'พบข้อมูลกระเป๋าในระบบ (ลงทะเบียนแล้ว)'
+                              : 'Registered Wallet Found'
+                            : language === 'th'
+                            ? 'กระเป๋านี้ยังไม่ได้ลงทะเบียน'
+                            : 'Wallet Not Registered Yet'}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[11px] font-mono text-[#475569] dark:text-slate-300 break-all">
+                          {walletCheckResult.resolvedAddress}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleCopyAddress(walletCheckResult.resolvedAddress)}
+                          className="p-1 rounded-lg hover:bg-white/80 dark:hover:bg-slate-800 text-slate-500 transition shrink-0 cursor-pointer"
+                          title={language === 'th' ? 'คัดลอก Address' : 'Copy Address'}
+                        >
+                          {copiedCheckedAddr ? (
+                            <Check className="w-3.5 h-3.5 text-emerald-600" />
+                          ) : (
+                            <Copy className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+                      </div>
+                    </div>
+
+                    {walletCheckResult.isRegistered && (
+                      <span className="shrink-0 text-[11px] font-extrabold font-mono px-2.5 py-1 rounded-xl bg-white dark:bg-slate-900 border border-emerald-200 dark:border-emerald-500/30 text-emerald-700 dark:text-emerald-300">
+                        Max R{walletCheckResult.maxRank}
+                      </span>
+                    )}
+                  </div>
+
+                  {walletCheckResult.isRegistered ? (
+                    <>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+                        <div className="p-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800">
+                          <div className="text-[10px] text-[#64748B] dark:text-slate-400">
+                            {language === 'th' ? 'ไอดีหลัก' : 'Main ID'}
+                          </div>
+                          <div className="text-sm font-extrabold font-mono text-[#2563EB] dark:text-blue-400">
+                            {walletCheckResult.mainIds.length}
+                          </div>
+                        </div>
+                        <div className="p-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800">
+                          <div className="text-[10px] text-[#64748B] dark:text-slate-400">Auto ID</div>
+                          <div className="text-sm font-extrabold font-mono text-emerald-600 dark:text-emerald-400">
+                            {walletCheckResult.autoIds.length}
+                          </div>
+                        </div>
+                        <div className="p-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800">
+                          <div className="text-[10px] text-[#64748B] dark:text-slate-400">Clone ID</div>
+                          <div className="text-sm font-extrabold font-mono text-purple-600 dark:text-purple-400">
+                            {walletCheckResult.cloneIds.length}
+                          </div>
+                        </div>
+                        <div className="p-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800">
+                          <div className="text-[10px] text-[#64748B] dark:text-slate-400">
+                            {language === 'th' ? 'รายได้ Direct+Lv' : 'Earned'}
+                          </div>
+                          <div className="text-sm font-extrabold font-mono text-[#0F172A] dark:text-white">
+                            {(
+                              walletCheckResult.totalDirect30Usdt +
+                              walletCheckResult.totalLevel30Usdt
+                            ).toFixed(2)}
+                          </div>
+                        </div>
+                      </div>
+
+                      {walletCheckResult.mainIds.length > 0 && (
+                        <div className="text-[11px] text-[#475569] dark:text-slate-300 font-mono">
+                          <span className="font-sans font-bold text-[#64748B] dark:text-slate-400 mr-1.5">
+                            {language === 'th' ? 'รหัสหลัก:' : 'Main IDs:'}
+                          </span>
+                          {walletCheckResult.mainIds.map((id) => `#${id}`).join(', ')}
+                        </div>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => onLoginCustomInput(walletCheckResult.resolvedAddress)}
+                        disabled={isConnecting}
+                        className="w-full py-2.5 px-4 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white font-bold text-xs sm:text-sm transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+                      >
+                        <Eye className="w-4 h-4" />
+                        <span>
+                          {language === 'th'
+                            ? 'เข้าสู่ระบบดูผังและข้อมูลกระเป๋านี้'
+                            : 'Login & View This Wallet Dashboard'}
+                        </span>
+                        <ArrowRight className="w-4 h-4" />
+                      </button>
+                    </>
+                  ) : (
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <button
+                        type="button"
+                        onClick={() => onLoginCustomInput(walletCheckResult.resolvedAddress)}
+                        disabled={isConnecting}
+                        className="flex-1 py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <UserPlus className="w-4 h-4" />
+                        <span>
+                          {language === 'th'
+                            ? 'ไปหน้าสมัครสมาชิกกระเป๋านี้'
+                            : 'Proceed to Register'}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={onEnterGuestDashboard}
+                        className="py-2.5 px-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold text-[#475569] dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition cursor-pointer"
+                      >
+                        {language === 'th' ? 'ดูภาพรวมระบบ (Guest)' : 'Guest Preview'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </form>
           </div>
 
           {/* แผนรายได้และหลักการทำงานของระบบ (Plan & Mechanics Breakdown) */}

@@ -65,6 +65,7 @@ interface RegisterSectionProps {
   txSuccess?: string | null;
   onRegisterSuccess?: (result?: any) => void;
   language: 'th' | 'en';
+  compact?: boolean;
 }
 
 export const RegisterSection: React.FC<RegisterSectionProps> = ({
@@ -83,6 +84,7 @@ export const RegisterSection: React.FC<RegisterSectionProps> = ({
   txSuccess,
   onRegisterSuccess,
   language,
+  compact = false,
 }) => {
   const initialRefSponsor = getActiveReferralSponsorId() || 1;
   // Text input state so user can freely delete, clear, and type multi-digit numbers like "22" or a wallet "0x..."
@@ -348,6 +350,147 @@ export const RegisterSection: React.FC<RegisterSectionProps> = ({
       onRegisterSuccess?.(res);
     }
   };
+
+  if (compact) {
+    return (
+      <div className="bg-white dark:bg-slate-900 rounded-2xl p-5 sm:p-6 space-y-4">
+        <div className="pr-8">
+          <h3 className="text-lg font-black text-[#09265f] dark:text-white">
+            {language === 'th' ? 'สมัคร / เพิ่ม ID ใหม่' : 'Register / Add New ID'}
+          </h3>
+          <p className="text-xs text-[#55769b] dark:text-slate-400 mt-0.5">
+            {language === 'th'
+              ? `ค่าสมัคร Rank 1: ${r1Price} USDT`
+              : `Rank 1 Fee: ${r1Price} USDT`}
+          </p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-1.5">
+            <label className="block text-sm font-bold text-[#09265f] dark:text-slate-200">
+              {language === 'th' ? 'ผู้แนะนำ (Sponsor ID)' : 'Sponsor ID'}
+            </label>
+            <input
+              type="text"
+              inputMode="text"
+              value={sponsorInputText}
+              onChange={(e) => handleSponsorTextChange(e.target.value)}
+              placeholder={
+                language === 'th'
+                  ? 'กรอกรหัสผู้แนะนำ เช่น 1 หรือ Address 0x...'
+                  : 'Enter Sponsor ID e.g. 1 or 0x...'
+              }
+              required
+              className="w-full rounded-xl bg-[#f7fcff] dark:bg-slate-950 border border-[#a9d7ff] dark:border-slate-700 focus:border-[#087cf4] dark:focus:border-emerald-500 px-4 py-3 text-sm font-mono font-bold text-[#09265f] dark:text-white focus:outline-none transition"
+            />
+
+            {isChecking ? (
+              <div className="text-xs text-[#55769b] dark:text-slate-400 flex items-center gap-1.5 pt-0.5">
+                <div className="w-3.5 h-3.5 border-2 border-[#087cf4] border-t-transparent rounded-full animate-spin" />
+                <span>{language === 'th' ? 'กำลังตรวจสอบผู้แนะนำ...' : 'Checking sponsor...'}</span>
+              </div>
+            ) : sponsorCheckResult?.checked ? (
+              sponsorCheckResult.isValid ? (
+                <div className="text-xs text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5 pt-0.5 font-semibold">
+                  <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                  <span>
+                    {language === 'th'
+                      ? `ผู้แนะนำ #${sponsorNodeId} พร้อมใช้งาน`
+                      : `Sponsor #${sponsorNodeId} is valid`}
+                  </span>
+                </div>
+              ) : (
+                <div className="text-xs text-rose-600 dark:text-rose-400 flex items-center gap-1.5 pt-0.5 font-semibold">
+                  <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                  <span>{sponsorCheckResult.reason}</span>
+                </div>
+              )
+            ) : null}
+          </div>
+
+          {txError && (
+            <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-500/40 text-xs text-rose-700 dark:text-rose-200 flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>{txError}</span>
+            </div>
+          )}
+          {txSuccess && (
+            <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-500/40 text-xs text-emerald-700 dark:text-emerald-200 flex items-start gap-2">
+              <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>{txSuccess}</span>
+            </div>
+          )}
+
+          {!account ? (
+            <button
+              type="button"
+              onClick={onConnectWallet}
+              className="w-full bg-gradient-to-br from-[#23caff] to-[#0755d7] text-white font-bold py-3.5 px-4 rounded-xl transition text-sm shadow-sm flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <Wallet className="w-4 h-4" />
+              <span>{language === 'th' ? 'เชื่อมต่อกระเป๋า Web3' : 'Connect Wallet'}</span>
+            </button>
+          ) : !isAllowanceSufficient && onApproveUsdt ? (
+            <div className="space-y-2.5">
+              <button
+                type="button"
+                onClick={() => onApproveUsdt(r1Price)}
+                disabled={isLoading}
+                className="w-full bg-[#087cf4] hover:bg-[#0667cc] text-white font-bold py-3 px-4 rounded-xl transition text-sm flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                <ShieldCheck className="w-4 h-4" />
+                <span>
+                  {isLoading
+                    ? currentStep || (language === 'th' ? 'กำลังดำเนินการ...' : 'Processing...')
+                    : language === 'th'
+                    ? `1. อนุมัติเหรียญ (${r1Price} USDT)`
+                    : `1. Approve (${r1Price} USDT)`}
+                </span>
+              </button>
+
+              <button
+                type="submit"
+                disabled={isLoading || sponsorCheckResult?.isValid === false}
+                className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 hover:brightness-105 text-white font-bold py-3.5 px-4 rounded-xl transition text-sm shadow-sm flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                <UserCheck className="w-4 h-4" />
+                <span>
+                  {language === 'th'
+                    ? `2. ยืนยันสมัคร / เพิ่ม ID (${r1Price} USDT)`
+                    : `2. Confirm Register / Add ID (${r1Price} USDT)`}
+                </span>
+              </button>
+            </div>
+          ) : (
+            <button
+              type="submit"
+              disabled={isLoading || sponsorCheckResult?.isValid === false}
+              className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 hover:brightness-105 text-white font-bold py-3.5 px-4 rounded-xl transition text-sm shadow-sm flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+            >
+              {isLoading ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                  <span className="truncate">
+                    {currentStep || (language === 'th' ? 'กำลังทำรายการ...' : 'Processing...')}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <UserCheck className="w-4 h-4" />
+                  <span>
+                    {language === 'th'
+                      ? `สมัคร / เพิ่ม ID (${r1Price} USDT)`
+                      : `Register / Add ID (${r1Price} USDT)`}
+                  </span>
+                  <ArrowRight className="w-4 h-4" />
+                </>
+              )}
+            </button>
+          )}
+        </form>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-6 shadow-xl relative overflow-hidden">

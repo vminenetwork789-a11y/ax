@@ -9616,7 +9616,7 @@ async function startApp() {
           isAutoId: d.isAutoId,
         }));
 
-        const poolsEval = ALLSELL_FOUR_POOL_DEFS.map((pDef) => {
+        const rawPoolsEval = ALLSELL_FOUR_POOL_DEFS.map((pDef) => {
           const hasSelfRank =
             rep.currentMaxRank >= pDef.requiredSelfRank ||
             rep.rankNodesList.some((rn) => rn.rank === pDef.requiredSelfRank);
@@ -9628,7 +9628,20 @@ async function startApp() {
             )
             .map((d) => ({ id: d.id, currentMaxRank: d.currentMaxRank }));
           const qualifiedDirectCount = qualifiedDirectIds.length;
-          const isQualified = hasSelfRank && qualifiedDirectCount >= pDef.requiredDirectCount;
+          const rawQualified = hasSelfRank && qualifiedDirectCount >= pDef.requiredDirectCount;
+          return {
+            pDef,
+            hasSelfRank,
+            qualifiedDirectIds,
+            qualifiedDirectCount,
+            rawQualified,
+          };
+        });
+
+        const pool1Passed = rawPoolsEval.find((item) => item.pDef.poolNumber === 1)?.rawQualified === true;
+
+        const poolsEval = rawPoolsEval.map(({ pDef, hasSelfRank, qualifiedDirectIds, qualifiedDirectCount, rawQualified }) => {
+          const isQualified = pDef.poolNumber === 1 ? rawQualified : pool1Passed && rawQualified;
           if (isQualified) {
             poolQualifiedIdsMap.get(pDef.poolNumber)?.push(rep.id);
           }
@@ -9646,6 +9659,9 @@ async function startApp() {
             allowedDirectRanksLabel: pDef.allowedDirectRanksLabel,
             qualifiedDirectIds,
             qualifiedDirectCount,
+            rawQualified,
+            pool1Passed,
+            blockedByPool1: pDef.poolNumber > 1 && !pool1Passed,
             isQualified,
             poolTotalUsdt: singlePoolTotalUsdt,
             estimatedShareUsdt: 0,
@@ -10286,8 +10302,12 @@ async function startApp() {
       }
     }
 
+    let pool1QualifiedIdSet: Set<number> | null = null;
     for (const pDef of poolDefs) {
       const qualifiedMains = eligibleMains.filter((m) => {
+        if (pDef.poolNumber > 1 && pool1QualifiedIdSet && !pool1QualifiedIdSet.has(m.id)) {
+          return false;
+        }
         const maxR = mainMaxRankMap.get(m.id) || 1;
         const rSet = mainRanksSetMap.get(m.id) || new Set([1]);
         const hasSelf = maxR >= pDef.requiredSelfRank || rSet.has(pDef.requiredSelfRank);
@@ -10305,6 +10325,9 @@ async function startApp() {
         });
         return qualDirects.length >= pDef.requiredDirectCount;
       });
+      if (pDef.poolNumber === 1) {
+        pool1QualifiedIdSet = new Set(qualifiedMains.map((m) => m.id));
+      }
 
       if (qualifiedMains.length === 0 || singlePoolUsdt <= 0) {
         carriedOverUsdt = Number((carriedOverUsdt + singlePoolUsdt).toFixed(2));

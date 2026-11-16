@@ -18,11 +18,8 @@ import {
   ShieldCheck,
   Sparkles,
   Wallet,
-  Network,
   Sun,
   Moon,
-  Globe,
-  SlidersHorizontal,
   Search,
   Calendar,
   Clock,
@@ -31,6 +28,7 @@ import {
   Zap,
   LogOut,
   LayoutGrid,
+  UserPlus,
 } from 'lucide-react';
 import { Dashboard2MatrixPanel } from './Dashboard2MatrixPanel';
 import { WalletIncomeNotifier } from './WalletIncomeNotifier';
@@ -66,7 +64,7 @@ interface Dashboard2ViewProps {
   refreshTrigger?: any;
 }
 
-type BottomTabKey = 'home' | 'matrix' | 'history' | 'transactions' | 'help' | 'settings';
+type BottomTabKey = 'home' | 'matrix' | 'history' | 'transactions' | 'help';
 type DetailModalKey =
   | null
   | 'switch_id'
@@ -174,8 +172,6 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
   onToggleLanguage,
   onToggleTheme,
   account,
-  chainId,
-  isBscTestnet,
   usdtBalance,
   bnbBalance,
   allowance,
@@ -185,10 +181,8 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
   onSelectMainId,
   onOpenMatrixTree,
   onOpenRegisterModal,
-  onOpenContractSwitcher,
   onConnectWallet,
   onDisconnect,
-  onSwitchNetwork,
   onRefreshOnChainData,
   onApproveUsdt,
   onUpgradeToRank,
@@ -260,8 +254,9 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
 
   const activeIdNum = Math.max(1, Number(selectedMainId || profile?.mainNodeIdRank1 || 1));
 
-  const fetchDashboardData = useCallback(async () => {
-    setIsSyncing(true);
+  const fetchDashboardData = useCallback(async (opts?: { silent?: boolean } | unknown) => {
+    const silent = Boolean(opts && typeof opts === 'object' && 'silent' in opts && (opts as { silent?: boolean }).silent);
+    if (!silent) setIsSyncing(true);
     try {
       const [perIdRes, countsRes, txRes, upRes] = await Promise.all([
         fetch('/api/matrix/per-id-history', { headers: { Accept: 'application/json' } }).catch(() => null),
@@ -294,7 +289,7 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
         else if (Array.isArray(u?.data)) setRecentUpgrades(u.data);
       }
     } finally {
-      setIsSyncing(false);
+      if (!silent) setIsSyncing(false);
     }
   }, []);
 
@@ -345,12 +340,15 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
     fetchDashboardData();
     const onRefresh = () => fetchDashboardData();
     window.addEventListener('matrix:tree:refresh', onRefresh);
-    const interval = setInterval(fetchDashboardData, 15000);
+    const interval = setInterval(() => {
+      fetchDashboardData({ silent: true });
+      onRefreshOnChainData?.();
+    }, 15000);
     return () => {
       window.removeEventListener('matrix:tree:refresh', onRefresh);
       clearInterval(interval);
     };
-  }, [fetchDashboardData, contractAddress, refreshTrigger]);
+  }, [fetchDashboardData, onRefreshOnChainData, contractAddress, refreshTrigger]);
 
   // Active report for selected Main ID (scoped to connected wallet when connected)
   const activeReport = useMemo(() => {
@@ -379,8 +377,9 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
 
   const displayId = Number(activeReport?.id || activeIdNum || 1);
 
-  const fetchIdMembers = useCallback(async (targetId: number) => {
-    setMembersLoading(true);
+  const fetchIdMembers = useCallback(async (targetId: number, opts?: { silent?: boolean }) => {
+    const silent = Boolean(opts?.silent);
+    if (!silent) setMembersLoading(true);
     setMembersError('');
     try {
       const res = await fetch(`/api/matrix/id-members/${targetId}`, {
@@ -394,37 +393,55 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
         Number(json.mainId) === targetId ? json : prev
       );
     } catch (err: any) {
-      setMembersError(err?.message || 'เกิดข้อผิดพลาดในการโหลดข้อมูลสมาชิก');
+      if (!silent) {
+        setMembersError(err?.message || 'เกิดข้อผิดพลาดในการโหลดข้อมูลสมาชิก');
+      }
     } finally {
-      setMembersLoading(false);
+      if (!silent) setMembersLoading(false);
     }
   }, []);
 
   useEffect(() => {
     fetchIdMembers(displayId);
+    const onRefresh = () => fetchIdMembers(displayId, { silent: true });
+    window.addEventListener('matrix:tree:refresh', onRefresh);
+    const interval = setInterval(() => {
+      fetchIdMembers(displayId, { silent: true });
+    }, 15000);
+    return () => {
+      window.removeEventListener('matrix:tree:refresh', onRefresh);
+      clearInterval(interval);
+    };
   }, [displayId, refreshTrigger, fetchIdMembers]);
 
   useEffect(() => {
     let cancelled = false;
     const targetId = displayId;
-    setIdSpecificUpgradesState({ mainId: targetId, rows: [] });
-    fetch(`/api/upgrades?mainId=${targetId}`, { headers: { Accept: 'application/json' } })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((json) => {
-        if (cancelled || !json) return;
-        const rows = Array.isArray(json.data)
-          ? json.data
-          : Array.isArray(json.upgrades)
-          ? json.upgrades
-          : [];
-        setIdSpecificUpgradesState({
-          mainId: targetId,
-          rows: rows.filter((u: any) => Number(u.mainNodeId) === targetId),
-        });
-      })
-      .catch(() => {});
+    setIdSpecificUpgradesState((prev) =>
+      prev.mainId === targetId ? prev : { mainId: targetId, rows: [] }
+    );
+    const loadIdUpgrades = () => {
+      fetch(`/api/upgrades?mainId=${targetId}`, { headers: { Accept: 'application/json' } })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((json) => {
+          if (cancelled || !json) return;
+          const rows = Array.isArray(json.data)
+            ? json.data
+            : Array.isArray(json.upgrades)
+            ? json.upgrades
+            : [];
+          setIdSpecificUpgradesState({
+            mainId: targetId,
+            rows: rows.filter((u: any) => Number(u.mainNodeId) === targetId),
+          });
+        })
+        .catch(() => {});
+    };
+    loadIdUpgrades();
+    const interval = setInterval(loadIdUpgrades, 15000);
     return () => {
       cancelled = true;
+      clearInterval(interval);
     };
   }, [displayId, refreshTrigger, bottomTab]);
 
@@ -493,8 +510,10 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
     };
 
     loadOnChainPools();
+    const interval = setInterval(loadOnChainPools, 15000);
     return () => {
       cancelled = true;
+      clearInterval(interval);
     };
   }, [displayId, displayOwner, contractAddress, refreshTrigger, activeReport?.id, activeReport?.newAutoIdPool, activeReport?.upgradeRankPool, activeReport?.newExtraIdPool]);
 
@@ -1175,14 +1194,6 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
                 <span className="text-base leading-none">♟</span>
                 <span className="hidden sm:inline">Matrix 15 ชั้น</span>
               </button>
-              <button
-                type="button"
-                onClick={() => setBottomTab((prev) => (prev === 'settings' ? 'home' : 'settings'))}
-                className="px-2.5 py-2 rounded-xl bg-white/15 hover:bg-white/25 border border-cyan-300/40 text-white font-bold text-base leading-none transition cursor-pointer"
-                title={language === 'th' ? 'เมนูและตั้งค่า' : 'Menu & Settings'}
-              >
-                ☰
-              </button>
             </div>
           </div>
 
@@ -1234,6 +1245,16 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
               >
                 <LayoutGrid className="w-3.5 h-3.5" />
                 <span>{language === 'th' ? 'ผัง Matrix' : 'Matrix'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={onOpenRegisterModal}
+                className="px-2.5 py-1 rounded-xl bg-emerald-500 hover:bg-emerald-400 border border-emerald-200/60 text-slate-950 text-[11px] font-extrabold inline-flex items-center gap-1 cursor-pointer shadow-xs transition"
+                title={language === 'th' ? 'สมัครสมาชิก / เพิ่ม ID ใหม่' : 'Register / Add ID'}
+              >
+                <UserPlus className="w-3.5 h-3.5" />
+                <span>{language === 'th' ? 'สมัคร/เพิ่ม ID' : 'Register / Add ID'}</span>
               </button>
 
               <button
@@ -1344,13 +1365,23 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={() => setActiveModal('switch_id')}
-            className="border-0 rounded-[16px] px-3 py-3 text-white font-bold text-xs sm:text-sm bg-gradient-to-br from-[#23caff] to-[#0755d7] shadow-[0_5px_15px_rgba(8,124,244,0.47)] hover:brightness-105 transition whitespace-nowrap cursor-pointer"
-          >
-            ⇄ สลับบัญชี
-          </button>
+          <div className="flex flex-col gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={onOpenRegisterModal}
+              className="border-0 rounded-[14px] px-3 py-2 text-white font-bold text-xs sm:text-sm bg-gradient-to-br from-emerald-500 to-teal-600 shadow-[0_4px_12px_rgba(16,185,129,0.38)] hover:brightness-105 transition whitespace-nowrap cursor-pointer inline-flex items-center justify-center gap-1.5"
+            >
+              <UserPlus className="w-3.5 h-3.5" />
+              <span>{language === 'th' ? 'สมัคร/เพิ่ม ID' : 'Register / Add ID'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveModal('switch_id')}
+              className="border-0 rounded-[14px] px-3 py-2 text-white font-bold text-xs sm:text-sm bg-gradient-to-br from-[#23caff] to-[#0755d7] shadow-[0_5px_15px_rgba(8,124,244,0.47)] hover:brightness-105 transition whitespace-nowrap cursor-pointer"
+            >
+              ⇄ {language === 'th' ? 'สลับบัญชี' : 'Switch ID'}
+            </button>
+          </div>
         </section>
           </>
         )}
@@ -1764,7 +1795,7 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
               </div>
 
               <p className="text-[10px] text-[#54759c] leading-relaxed mt-2.5">
-                สมาชิกใน Rank = จำนวนโหนดจริงใน Rank นั้นจากระบบ · Direct Sponsor (*) = เกณฑ์ผู้แนะนำตรงสำหรับสิทธิ์รับกองทุน AllSell (R11: 5 IDs ใน R8-11 · R14: 2 IDs ใน R12-14 · R16: 2 IDs ใน R14-16 · R18: 5 IDs ใน R16-18) · กดที่การ์ด Rank เพื่อเปิดดูผัง Matrix ของ Rank นั้น
+                สมาชิกใน Rank = จำนวนโหนดจริงใน Rank นั้นจากระบบ · Direct Sponsor (*) = เกณฑ์ผู้แนะนำตรงสำหรับสิทธิ์รับกองทุน AllSell (R11: 5 IDs ใน R8-11 · R14: 2 IDs ใน R12-14 · R16: 2 IDs ใน R14-16 · R18: 5 IDs ใน R16-18 โดยต้องผ่านเกณฑ์กองที่ 1 ก่อน) · กดที่การ์ด Rank เพื่อเปิดดูผัง Matrix ของ Rank นั้น
               </p>
             </section>
 
@@ -2403,146 +2434,10 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
           </section>
         )}
 
-        {/* TAB: SETTINGS */}
-        {bottomTab === 'settings' && (
-          <section className="mx-1 p-4 rounded-[24px] bg-gradient-to-br from-white/95 to-[#dff4ff]/95 border-[1.5px] border-[#a9ddff] shadow-[0_8px_22px_rgba(0,72,190,0.23)] space-y-3 text-xs">
-            <h2 className="text-base sm:text-lg font-black text-[#09265f]">⚙ ตั้งค่าระบบและกระเป๋า</h2>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              <div className="p-3.5 rounded-2xl bg-white/90 border border-[#b8e5ff] space-y-2">
-                <div className="font-bold text-[#0754b9] flex items-center gap-1.5">
-                  <Wallet className="w-4 h-4" />
-                  <span>สถานะกระเป๋าและเครือข่าย</span>
-                </div>
-                <div className="font-mono text-[11px] text-[#45668f] space-y-1">
-                  <div>Wallet: {account ? shortWallet : 'ยังไม่เชื่อมต่อ'}</div>
-                  <div>
-                    Chain ID: {chainId || '—'} ({isBscTestnet ? 'BSC Testnet ✓' : 'ไม่ใช่ BSC Testnet'})
-                  </div>
-                  <div>USDT Balance: {Number(usdtBalance || 0).toFixed(2)} U</div>
-                  <div>BNB Balance: {Number(bnbBalance || 0).toFixed(4)} tBNB</div>
-                </div>
-                <div className="flex items-center gap-2 pt-1 flex-wrap">
-                  {!account ? (
-                    <button
-                      type="button"
-                      onClick={onConnectWallet}
-                      className="px-3 py-1.5 rounded-xl bg-[#087cf4] text-white font-bold cursor-pointer"
-                    >
-                      เชื่อมต่อกระเป๋า
-                    </button>
-                  ) : !isBscTestnet ? (
-                    <button
-                      type="button"
-                      onClick={onSwitchNetwork}
-                      className="px-3 py-1.5 rounded-xl bg-amber-500 text-slate-950 font-bold cursor-pointer"
-                    >
-                      สลับไป BSC Testnet
-                    </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    onClick={onOpenRegisterModal}
-                    className="px-3 py-1.5 rounded-xl bg-emerald-600 text-white font-bold cursor-pointer"
-                  >
-                    + สมัครรหัสใหม่
-                  </button>
-                  {account && onDisconnect && (
-                    <button
-                      type="button"
-                      onClick={onDisconnect}
-                      className="px-3 py-1.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 font-bold cursor-pointer inline-flex items-center gap-1"
-                    >
-                      <LogOut className="w-3.5 h-3.5" />
-                      <span>{language === 'th' ? 'ออก' : 'Exit'}</span>
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              <div className="p-3.5 rounded-2xl bg-white/90 border border-[#b8e5ff] space-y-2">
-                <div className="font-bold text-[#0754b9] flex items-center gap-1.5">
-                  <SlidersHorizontal className="w-4 h-4" />
-                  <span>สัญญา Smart Contract & เครื่องมือระบบ</span>
-                </div>
-                <div className="font-mono text-[11px] text-[#45668f] break-all">
-                  Contract: {contractAddress || CONTRACT_ADDRESS}
-                </div>
-                <div className="flex items-center gap-2 flex-wrap pt-1">
-                  <button
-                    type="button"
-                    onClick={onOpenContractSwitcher}
-                    className="px-3 py-1.5 rounded-xl bg-white border border-[#a9d7ff] text-[#0756bc] font-bold cursor-pointer inline-flex items-center gap-1"
-                  >
-                    <Network className="w-3.5 h-3.5" />
-                    <span>เปลี่ยนสัญญา</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onOpenMatrixTree(currentRank)}
-                    className="px-3 py-1.5 rounded-xl bg-[#087cf4] text-white font-bold cursor-pointer inline-flex items-center gap-1"
-                  >
-                    <LayoutGrid className="w-3.5 h-3.5" />
-                    <span>ผัง Matrix</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleClearCache}
-                    disabled={isClearingCache}
-                    className="px-3 py-1.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 font-bold cursor-pointer inline-flex items-center gap-1 disabled:opacity-50"
-                  >
-                    <Trash2 className={`w-3.5 h-3.5 ${isClearingCache ? 'animate-spin' : ''}`} />
-                    <span>{clearCacheNotice || 'ล้างแคช'}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={onToggleLanguage}
-                    className="px-3 py-1.5 rounded-xl bg-white border border-[#a9d7ff] text-[#0756bc] font-bold cursor-pointer inline-flex items-center gap-1"
-                  >
-                    <Globe className="w-3.5 h-3.5" />
-                    <span>{language === 'th' ? '🇬🇧 EN' : '🇹🇭 TH'}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={onToggleTheme}
-                    className="px-3 py-1.5 rounded-xl bg-white border border-[#a9d7ff] text-[#0756bc] font-bold cursor-pointer inline-flex items-center gap-1"
-                  >
-                    {theme === 'light' ? (
-                      <Sun className="w-3.5 h-3.5 text-amber-500" />
-                    ) : (
-                      <Moon className="w-3.5 h-3.5" />
-                    )}
-                    <span>{theme === 'light' ? 'ธีมสว่าง' : 'ธีมมืด'}</span>
-                  </button>
-                  {isAdminUser && onOpenDeployModal && (
-                    <button
-                      type="button"
-                      onClick={onOpenDeployModal}
-                      className="px-3 py-1.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold cursor-pointer inline-flex items-center gap-1"
-                    >
-                      <Zap className="w-3.5 h-3.5" />
-                      <span>Deploy สัญญา</span>
-                    </button>
-                  )}
-                  {isAdminUser && onToggleAdminView && (
-                    <button
-                      type="button"
-                      onClick={onToggleAdminView}
-                      className="px-3 py-1.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 font-bold cursor-pointer inline-flex items-center gap-1"
-                    >
-                      <Shield className="w-3.5 h-3.5" />
-                      <span>Admin</span>
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-          </section>
-        )}
       </div>
 
       {/* STICKY BOTTOM NAVIGATION BAR */}
-      <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-[min(1080px,100%)] grid grid-cols-6 px-1.5 py-2 bg-white/95 backdrop-blur-md border border-[#c5e6ff] rounded-t-[24px] shadow-[0_-6px_22px_rgba(7,85,181,0.18)] z-40">
+      <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-[min(1080px,100%)] grid grid-cols-5 px-1.5 py-2 bg-white/95 backdrop-blur-md border border-[#c5e6ff] rounded-t-[24px] shadow-[0_-6px_22px_rgba(7,85,181,0.18)] z-40">
         {(
           [
             { key: 'home', icon: '⌂', label: 'หน้าหลัก' },
@@ -2550,7 +2445,6 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
             { key: 'history', icon: '▥', label: 'ประวัติ' },
             { key: 'transactions', icon: '⇄', label: 'ธุรกรรม' },
             { key: 'help', icon: '◉', label: 'ช่วยเหลือ' },
-            { key: 'settings', icon: '⚙', label: 'ตั้งค่า' },
           ] as const
         ).map((tab) => {
           const isActive = bottomTab === tab.key;
@@ -2645,9 +2539,22 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
                           {account}
                         </div>
                       </div>
-                      <span className="px-2.5 py-1 rounded-full bg-[#e0f2ff] border border-[#a9d7ff] text-[#0754b9] font-extrabold text-[11px] whitespace-nowrap">
-                        พบในกระเป๋า {ownedWalletReports.length} IDs
-                      </span>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="px-2.5 py-1 rounded-full bg-[#e0f2ff] border border-[#a9d7ff] text-[#0754b9] font-extrabold text-[11px] whitespace-nowrap">
+                          พบในกระเป๋า {ownedWalletReports.length} IDs
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveModal(null);
+                            onOpenRegisterModal();
+                          }}
+                          className="px-2.5 py-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] inline-flex items-center gap-1 cursor-pointer shadow-xs transition"
+                        >
+                          <UserPlus className="w-3 h-3" />
+                          <span>{language === 'th' ? 'สมัคร/เพิ่ม ID' : 'Register / Add ID'}</span>
+                        </button>
+                      </div>
                     </div>
 
                     {ownedWalletReports.length === 0 ? (
@@ -3631,40 +3538,59 @@ export const Dashboard2View: React.FC<Dashboard2ViewProps> = ({
                 </div>
 
                 <div className="space-y-2">
-                  {allSellPools.map((pool: any) => (
-                    <div
-                      key={pool.key}
-                      className={`p-3 rounded-xl border ${
-                        pool.isQualified
-                          ? 'bg-emerald-50 border-emerald-300'
-                          : 'bg-white border-[#b8e5ff]'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between font-bold">
-                        <span>{pool.titleTh}</span>
-                        <span
-                          className={`px-2 py-0.5 rounded-full text-[10px] ${
-                            pool.isQualified
-                              ? 'bg-emerald-600 text-white'
-                              : 'bg-slate-200 text-slate-700'
+                  {(() => {
+                    const pool1Passed = Boolean(
+                      allSellPools.find((x: any) => Number(x.poolNumber) === 1)?.isQualified
+                    );
+                    return allSellPools.map((pool: any) => {
+                      const poolNum = Number(pool.poolNumber || 1);
+                      const isQualified =
+                        poolNum === 1
+                          ? Boolean(pool.isQualified)
+                          : pool1Passed && Boolean(pool.isQualified);
+                      const blockedByPool1 =
+                        poolNum > 1 && !pool1Passed && Boolean(pool.blockedByPool1 || !isQualified);
+                      return (
+                        <div
+                          key={pool.key}
+                          className={`p-3 rounded-xl border ${
+                            isQualified
+                              ? 'bg-emerald-50 border-emerald-300'
+                              : 'bg-white border-[#b8e5ff]'
                           }`}
                         >
-                          {pool.isQualified ? 'ผ่านเกณฑ์รับสิทธิ์ ✓' : 'ยังไม่ผ่านเกณฑ์'}
-                        </span>
-                      </div>
-                      <div className="mt-1 text-[11px] text-[#45668f] flex items-center justify-between flex-wrap gap-1">
-                        <span>
-                          ตัวคุณอยู่ R{currentRank} ({pool.hasSelfRank ? '✓ ถึงเกณฑ์' : `ต้องถึง R${pool.requiredSelfRank}`}) · แนะนำตรง ({pool.allowedDirectRanksLabel}):{' '}
-                          <strong>
-                            {pool.qualifiedDirectCount}/{pool.requiredDirectCount} IDs
-                          </strong>
-                        </span>
-                        <strong className="font-mono text-[#0754b9]">
-                          ยอดกอง: {Number(pool.poolTotalUsdt || 0).toFixed(2)} U
-                        </strong>
-                      </div>
-                    </div>
-                  ))}
+                          <div className="flex items-center justify-between font-bold">
+                            <span>{pool.titleTh}</span>
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] ${
+                                isQualified
+                                  ? 'bg-emerald-600 text-white'
+                                  : 'bg-slate-200 text-slate-700'
+                              }`}
+                            >
+                              {isQualified ? 'ผ่านเกณฑ์รับสิทธิ์ ✓' : 'ยังไม่ผ่านเกณฑ์'}
+                            </span>
+                          </div>
+                          <div className="mt-1 text-[11px] text-[#45668f] flex items-center justify-between flex-wrap gap-1">
+                            <span>
+                              ตัวคุณอยู่ R{currentRank} ({pool.hasSelfRank ? '✓ ถึงเกณฑ์' : `ต้องถึง R${pool.requiredSelfRank}`}) · แนะนำตรง ({pool.allowedDirectRanksLabel}):{' '}
+                              <strong>
+                                {pool.qualifiedDirectCount}/{pool.requiredDirectCount} IDs
+                              </strong>
+                              {blockedByPool1 && (
+                                <span className="ml-1.5 inline-block px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-300 text-[9.5px] font-bold">
+                                  ต้องผ่านกองที่ 1 ก่อน
+                                </span>
+                              )}
+                            </span>
+                            <strong className="font-mono text-[#0754b9]">
+                              ยอดกอง: {Number(pool.poolTotalUsdt || 0).toFixed(2)} U
+                            </strong>
+                          </div>
+                        </div>
+                      );
+                    });
+                  })()}
                 </div>
               </div>
             )}

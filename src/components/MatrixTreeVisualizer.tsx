@@ -10344,58 +10344,76 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                               </span>
                             </div>
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[10px]">
-                              {poolsList.map((p: any) => (
-                                <div
-                                  key={`id-allsell-pool-${p.poolNumber}`}
-                                  className={`rounded-lg p-2 border ${
-                                    p.isQualified
-                                      ? 'bg-emerald-950/40 border-emerald-500/50'
-                                      : 'bg-slate-950/90 border-slate-800'
-                                  } space-y-1`}
-                                >
-                                  <div className="flex items-center justify-between gap-1">
-                                    <span className="font-extrabold text-amber-300 text-[10.5px]">{p.titleTh}</span>
-                                    <span
-                                      className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
-                                        p.isQualified
-                                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                                          : 'bg-slate-800 text-slate-400'
-                                      }`}
+                              {(() => {
+                                const pool1Passed = Boolean(
+                                  poolsList.find((x: any) => Number(x.poolNumber) === 1)?.isQualified
+                                );
+                                return poolsList.map((p: any) => {
+                                  const poolNum = Number(p.poolNumber || 1);
+                                  const isQualified =
+                                    poolNum === 1
+                                      ? Boolean(p.isQualified)
+                                      : pool1Passed && Boolean(p.isQualified);
+                                  const blockedByPool1 = poolNum > 1 && !pool1Passed;
+                                  return (
+                                    <div
+                                      key={`id-allsell-pool-${p.poolNumber}`}
+                                      className={`rounded-lg p-2 border ${
+                                        isQualified
+                                          ? 'bg-emerald-950/40 border-emerald-500/50'
+                                          : 'bg-slate-950/90 border-slate-800'
+                                      } space-y-1`}
                                     >
-                                      {p.isQualified ? '✅ ได้รับสิทธิ์' : '⏳ รอคุณสมบัติ'}
-                                    </span>
-                                  </div>
-                                  <div className="text-slate-300 flex items-center justify-between">
-                                    <span>1. ID หลักดำรงอยู่ใน r-{p.requiredSelfRank}:</span>
-                                    <span className={p.hasSelfRank ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
-                                      {p.hasSelfRank ? `✅ มี (r-${currentMaxR})` : `❌ อยู่ r-${currentMaxR}`}
-                                    </span>
-                                  </div>
-                                  <div className="text-slate-300">
-                                    <div className="flex items-center justify-between">
-                                      <span>2. แนะนำตรง {p.requiredDirectCount} ID:</span>
-                                      <span
-                                        className={
-                                          p.qualifiedDirectCount >= p.requiredDirectCount
-                                            ? 'text-emerald-400 font-bold'
-                                            : 'text-amber-300 font-bold'
-                                        }
-                                      >
-                                        {p.qualifiedDirectCount} / {p.requiredDirectCount} ID
-                                      </span>
+                                      <div className="flex items-center justify-between gap-1">
+                                        <span className="font-extrabold text-amber-300 text-[10.5px]">{p.titleTh}</span>
+                                        <span
+                                          className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                                            isQualified
+                                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                                              : 'bg-slate-800 text-slate-400'
+                                          }`}
+                                        >
+                                          {isQualified ? '✅ ได้รับสิทธิ์' : '⏳ รอคุณสมบัติ'}
+                                        </span>
+                                      </div>
+                                      <div className="text-slate-300 flex items-center justify-between">
+                                        <span>1. ID หลักดำรงอยู่ใน r-{p.requiredSelfRank}:</span>
+                                        <span className={p.hasSelfRank ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
+                                          {p.hasSelfRank ? `✅ มี (r-${currentMaxR})` : `❌ อยู่ r-${currentMaxR}`}
+                                        </span>
+                                      </div>
+                                      <div className="text-slate-300">
+                                        <div className="flex items-center justify-between">
+                                          <span>2. แนะนำตรง {p.requiredDirectCount} ID:</span>
+                                          <span
+                                            className={
+                                              p.qualifiedDirectCount >= p.requiredDirectCount
+                                                ? 'text-emerald-400 font-bold'
+                                                : 'text-amber-300 font-bold'
+                                            }
+                                          >
+                                            {p.qualifiedDirectCount} / {p.requiredDirectCount} ID
+                                          </span>
+                                        </div>
+                                        <div className="text-[9.5px] text-slate-400">
+                                          (ต้องดำรงอยู่ใน {p.allowedDirectRanksLabel})
+                                        </div>
+                                        {blockedByPool1 && (
+                                          <div className="text-[9.5px] text-amber-300 font-bold mt-0.5">
+                                            * ต้องผ่านเกณฑ์กองที่ 1 (r-11) ก่อน
+                                          </div>
+                                        )}
+                                      </div>
+                                      <div className="pt-1 border-t border-slate-800/80 flex items-center justify-between text-[9.5px]">
+                                        <span className="text-slate-400">กองละ 25% ({Number(p.poolTotalUsdt || 0).toFixed(2)} U):</span>
+                                        <span className="text-cyan-300 font-extrabold">
+                                          {isQualified ? `รับ +${Number(p.estimatedShareUsdt || 0).toFixed(2)} U` : '0.00 U'}
+                                        </span>
+                                      </div>
                                     </div>
-                                    <div className="text-[9.5px] text-slate-400">
-                                      (ต้องดำรงอยู่ใน {p.allowedDirectRanksLabel})
-                                    </div>
-                                  </div>
-                                  <div className="pt-1 border-t border-slate-800/80 flex items-center justify-between text-[9.5px]">
-                                    <span className="text-slate-400">กองละ 25% ({Number(p.poolTotalUsdt || 0).toFixed(2)} U):</span>
-                                    <span className="text-cyan-300 font-extrabold">
-                                      {p.isQualified ? `รับ +${Number(p.estimatedShareUsdt || 0).toFixed(2)} U` : '0.00 U'}
-                                    </span>
-                                  </div>
-                                </div>
-                              ))}
+                                  );
+                                });
+                              })()}
                             </div>
                           </div>
                         );
