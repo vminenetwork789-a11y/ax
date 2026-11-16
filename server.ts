@@ -6784,12 +6784,12 @@ async function startApp() {
         if (!latestBlock || latestBlock <= 0) return 0;
 
         const eventAbi = [
-          'event UserRegistered(address indexed user, address indexed sponsor, uint256 indexed sponsorNodeId, uint256 mainNodeId)',
+          'event UserRegistered(address indexed user, address indexed sponsor, uint256 sponsorNodeId, uint256 newMainNodeId)',
           'event BatchRegistered(address indexed user, uint256 count, uint256 totalCost)',
           'event NodeCreated(uint8 indexed rank, uint256 indexed nodeId, address indexed owner, address directSponsor, uint256 parentId, bool isLeft, bool isClone, bool isExtraId)',
           'event RankUpgraded(address indexed user, uint8 fromRank, uint8 toRank, uint256 newNodeId, bool isAutoUpgrade)',
           'event AutoNewMainIdCreated(address indexed user, uint256 count, uint256 vaultDiff)',
-          'event AutoExtraIdCreated(address indexed user, uint8 indexed rank, uint256 nodeId)',
+          'event AutoExtraIdCreated(address indexed user, uint8 rank, uint256 newNodeId)',
           'event RewardDistributed(uint256 indexed fromNodeId, uint256 indexed toNodeId, address indexed recipient, uint8 rank, string rewardType, uint256 amount)',
         ];
         const logIface = new ethers.Interface(eventAbi);
@@ -7035,17 +7035,26 @@ async function startApp() {
         for (let toBlk = latestBlock; toBlk >= startBlock; toBlk -= chunkSize) {
           const fromBlk = Math.max(startBlock, toBlk - chunkSize + 1);
           try {
+            let autoLogsOk = true;
             const [regLogs, batchLogs, nodeLogs, upgLogs, autoLogs, extraLogs] = await Promise.all([
               contract.queryFilter(contract.filters.UserRegistered(), fromBlk, toBlk).catch(() => []),
               contract.queryFilter(contract.filters.BatchRegistered(), fromBlk, toBlk).catch(() => []),
               contract.queryFilter(contract.filters.NodeCreated(), fromBlk, toBlk).catch(() => []),
               contract.queryFilter(contract.filters.RankUpgraded(), fromBlk, toBlk).catch(() => []),
-              contract.queryFilter(contract.filters.AutoNewMainIdCreated(), fromBlk, toBlk).catch(() => []),
+              contract.queryFilter(contract.filters.AutoNewMainIdCreated(), fromBlk, toBlk).catch(() => {
+                autoLogsOk = false;
+                return [];
+              }),
               contract.queryFilter(contract.filters.AutoExtraIdCreated(), fromBlk, toBlk).catch(() => []),
             ]);
 
             const autoTxHashSet = new Set<string>(
               autoLogs
+                .map((l: any) => String(l?.transactionHash || '').toLowerCase())
+                .filter((h) => isRealTxHash(h))
+            );
+            const manualTxHashSet = new Set<string>(
+              [...regLogs, ...batchLogs]
                 .map((l: any) => String(l?.transactionHash || '').toLowerCase())
                 .filter((h) => isRealTxHash(h))
             );
@@ -7066,7 +7075,9 @@ async function startApp() {
               const isClone = Boolean(nl?.args?.isClone);
               const isExtra = Boolean(nl?.args?.isExtraId);
               const txHashLower = String(nl?.transactionHash || '').toLowerCase();
-              if (rNum === 1 && nId > 1 && !isClone && !isExtra && txHashLower && !autoTxHashSet.has(txHashLower)) {
+              const isConfirmedManualTx =
+                manualTxHashSet.has(txHashLower) || (autoLogsOk && !autoTxHashSet.has(txHashLower));
+              if (rNum === 1 && nId > 1 && !isClone && !isExtra && txHashLower && isConfirmedManualTx && !autoTxHashSet.has(txHashLower)) {
                 const dbNode = r1NodesInDb.find((n) => n.id === nId);
                 if (dbNode && !dbNode.isClone && !dbNode.isExtraId) {
                   if (dbNode.confirmedOriginType !== 'MANUAL_REGISTER' || dbNode.autoSourceMainId) {
@@ -7129,7 +7140,7 @@ async function startApp() {
                 const isAdminTx = inspectedAdminTxCache.get(String(txHash).toLowerCase()) === true;
 
                 if (item.kind === 'UserRegistered') {
-                  const mainId = Number(args.mainNodeId || 0);
+                  const mainId = Number(args.newMainNodeId ?? args.mainNodeId ?? 0);
                   recordRealTransactionLog({
                     txHash,
                     actionType: 'REGISTER',
@@ -7248,7 +7259,7 @@ async function startApp() {
                   });
                 } else if (item.kind === 'AutoExtraIdCreated') {
                   const rNum = Number(args.rank || 2);
-                  const nId = Number(args.nodeId || 0);
+                  const nId = Number(args.newNodeId ?? args.nodeId ?? 0);
                   recordRealTransactionLog({
                     txHash,
                     actionType: 'EXTRA_ID',
